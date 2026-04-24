@@ -418,7 +418,7 @@ async def run_nuclei_json_async(url, available_tools):
         "-ot",       # omit encoded template to keep output compact
     ]
     if AIRGAP_MODE:
-        cmd.append("-no-update-templates")
+        cmd.append("-duc")   # nuclei v3: disable update check (replaces -no-update-templates)
     raw = await run_command_async(cmd, timeout=45)
     return raw, parse_nuclei_json(raw, url)
 
