@@ -13,6 +13,9 @@ venv/
 # Large wordlists (not needed — program uses system SecLists)
 WordLists/rockyou.txt
 
+# CVE Knowledge Base (JSON file - machine specific accumulated data)
+cve_knowledge_base.json
+
 # CVE database (57 MB CSV — regenerate with CVE/cve-offline/updatecsv.sh)
 CVE/cve-offline/cve-summary.csv
 
@@ -20,20 +23,19 @@ CVE/cve-offline/cve-summary.csv
 CVE/cve-offline/
 rdpscan/
 
+
 # Scan session data (runtime output — not source code)
 sessions/
 session.json
 
 # Nikto scan output files
+/nikto
 nikto_*.txt
 
 # Database files
 reconotron.db
 *.db
 *.sqlite
-
-# CVE knowledge base (runtime data — accumulates per-machine over time)
-cve_knowledge_base.json
 
 # IDE / tool config
 .continue/

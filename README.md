@@ -6,6 +6,49 @@ ReconoTron is a single-file Python tool that runs an automated, LLM-guided penet
 
 ---
 
+## Initial Setup (new install)
+
+> Full manual setup instructions: [Readme/requirements.md](Readme/requirements.md)
+
+On a fresh Kali / Parrot / Debian-based machine, a single script handles everything:
+
+```bash
+git clone https://github.com/PearceTech335/ReconoTron.git
+cd ReconoTron
+chmod +x setup.sh
+./setup.sh
+```
+
+`setup.sh` installs and configures (in order):
+
+| Step | What gets installed |
+|------|---------------------|
+| apt packages | `nmap`, `curl`, `gobuster`, `ffuf`, `hydra`, `ssh-audit`, `perl`, `golang-go`, and more |
+| SecLists | Wordlists via `snap install seclists` |
+| Nuclei | Go-based template scanner (`~/go/bin/nuclei`) |
+| Ollama | Local LLM server + pulls `qwen2.5-coder:7b-instruct-q4_k_m` |
+| Python venv | `.venv/` with `requests`, `jinja2`, `pycryptodome` |
+| CVE database | Clones `CVE/cve-offline/` and builds `cve-summary.csv` |
+| rdpscan | Clones `rdpscan/` helper |
+| Optional tools | `amass`, `dnsenum`, `dnsrecon`, `metasploit-framework` |
+
+You can skip optional/heavy steps with env flags:
+```bash
+NO_MSF=1 ./setup.sh          # skip Metasploit
+NO_OPTIONAL=1 ./setup.sh     # skip all optional tools
+```
+
+After setup completes:
+```bash
+ollama serve &               # start the LLM server
+source .venv/bin/activate    # activate the Python venv
+python3 reconotron.py <target>
+```
+
+Run `./update.sh` monthly to keep all components current.
+
+---
+
 ## Quick Start
 
 ```bash
@@ -190,7 +233,8 @@ Install notes: see [Readme/requirements.md](Readme/requirements.md).
 
 ## Ollama Setup
 
-ReconoTron requires a running Ollama instance:
+ReconoTron requires a running Ollama instance. `setup.sh` handles this automatically.
+Manual install:
 
 ```bash
 # Install Ollama:
@@ -216,6 +260,17 @@ Run `./update.sh` to update everything:
 ```
 
 This updates: apt packages, SecLists (snap), pip dependencies, nuclei binary + templates, Ollama model, CVE database.
+
+---
+
+## Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `setup.sh` | One-shot setup for a fresh install — run once after cloning |
+| `update.sh` | Monthly refresh of all components |
+
+---
 
 ---
 
