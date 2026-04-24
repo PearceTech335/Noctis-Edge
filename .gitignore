@@ -28,8 +28,7 @@ rdpscan/
 sessions/
 session.json
 
-# Nikto scan output files
-/nikto
+# Nikto scan output files (nikto/ directory is the bundled submodule — do NOT ignore it)
 nikto_*.txt
 
 # Database files

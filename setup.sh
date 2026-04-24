@@ -10,15 +10,16 @@
 #    ./setup.sh
 #
 #  What this script does (in order):
-#    1.  apt  — core system packages
-#    2.  snap — SecLists wordlists
-#    3.  Go   — language runtime (needed for Nuclei)
-#    4.  Nuclei — template-based vulnerability scanner
-#    5.  Ollama — local LLM server + model pull
-#    6.  Python venv + pip dependencies
-#    7.  CVE/cve-offline — clone & build the offline CVE database
-#    8.  rdpscan         — clone the RDP scanner helper
-#    9.  Optional tools  — amass, dnsenum, dnsrecon, metasploit-framework
+#    1.  Git submodules — nikto (bundled scanner)
+#    2.  apt  — core system packages
+#    3.  snap — SecLists wordlists
+#    4.  Go   — language runtime (needed for Nuclei)
+#    5.  Nuclei — template-based vulnerability scanner
+#    6.  Ollama — local LLM server + model pull
+#    7.  Python venv + pip dependencies
+#    8.  CVE/cve-offline — clone & build the offline CVE database
+#    9.  rdpscan         — clone the RDP scanner helper
+#   10.  Optional tools  — amass, dnsenum, dnsrecon, metasploit-framework
 #
 #  Skip any step by setting the corresponding NO_* variable, e.g.:
 #    NO_MSF=1 ./setup.sh          ← skip Metasploit install
@@ -59,9 +60,22 @@ need_sudo() {
 }
 
 # =============================================================================
-# 1.  apt — system packages
+# 1.  Git submodules
 # =============================================================================
-header "1/9  System packages (apt)"
+header "1/10  Git submodules (nikto)"
+if [[ -f "$SCRIPT_DIR/.gitmodules" ]]; then
+    info "Initialising and updating git submodules ..."
+    git -C "$SCRIPT_DIR" submodule update --init --recursive \
+        && ok "Submodules up to date (nikto cloned at nikto/)" \
+        || err "Submodule update failed — run: git submodule update --init --recursive"
+else
+    skip ".gitmodules not found — no submodules to initialise"
+fi
+
+# =============================================================================
+# 2.  apt — system packages
+# =============================================================================
+header "2/10  System packages (apt)"
 need_sudo
 info "Updating package lists ..."
 sudo apt update -qq
@@ -92,7 +106,7 @@ ok "apt packages installed"
 # =============================================================================
 # 2.  snap — SecLists
 # =============================================================================
-header "2/9  SecLists wordlists (snap)"
+header "3/10  SecLists wordlists (snap)"
 if command -v snap &>/dev/null; then
     info "Installing seclists via snap ..."
     sudo snap install seclists 2>/dev/null \
@@ -105,7 +119,7 @@ fi
 # =============================================================================
 # 3.  Go PATH — ensure ~/go/bin is in PATH for this session
 # =============================================================================
-header "3/9  Go runtime PATH"
+header "4/10  Go runtime PATH"
 export PATH="$PATH:$HOME/go/bin"
 if ! grep -qF 'go/bin' ~/.bashrc 2>/dev/null; then
     echo 'export PATH="$PATH:$HOME/go/bin"' >> ~/.bashrc
@@ -116,7 +130,7 @@ ok "Go PATH configured ($(go version 2>/dev/null || echo 'version unknown'))"
 # =============================================================================
 # 4.  Nuclei
 # =============================================================================
-header "4/9  Nuclei (template-based scanner)"
+header "5/10  Nuclei (template-based scanner)"
 if command -v nuclei &>/dev/null; then
     skip "nuclei already installed at $(command -v nuclei)"
 else
@@ -133,7 +147,7 @@ nuclei -update-templates -silent 2>/dev/null \
 # =============================================================================
 # 5.  Ollama + model
 # =============================================================================
-header "5/9  Ollama (local LLM server)"
+header "6/10  Ollama (local LLM server)"
 if command -v ollama &>/dev/null; then
     skip "ollama already installed at $(command -v ollama)"
 else
@@ -167,7 +181,7 @@ fi
 # =============================================================================
 # 6.  Python virtual environment + pip packages
 # =============================================================================
-header "6/9  Python virtual environment"
+header "7/10  Python virtual environment"
 VENV="$SCRIPT_DIR/.venv"
 if [[ -d "$VENV" ]]; then
     skip "venv already exists at $VENV"
@@ -188,7 +202,7 @@ ok "Python packages installed (requests, jinja2, pycryptodome)"
 # =============================================================================
 # 7.  CVE offline database
 # =============================================================================
-header "7/9  CVE offline database"
+header "8/10  CVE offline database"
 CVE_DIR="$SCRIPT_DIR/CVE/cve-offline"
 
 if [[ -d "$CVE_DIR/.git" ]]; then
@@ -220,7 +234,7 @@ fi
 # =============================================================================
 # 8.  rdpscan helper
 # =============================================================================
-header "8/9  rdpscan (RDP scanner helper)"
+header "9/10  rdpscan (RDP scanner helper)"
 RDPSCAN_DIR="$SCRIPT_DIR/rdpscan"
 
 if [[ -d "$RDPSCAN_DIR/.git" ]]; then
@@ -239,7 +253,7 @@ fi
 # 9.  Optional tools  (amass, dnsenum, dnsrecon, Metasploit)
 # =============================================================================
 if [[ "${NO_OPTIONAL:-0}" != "1" ]]; then
-    header "9/9  Optional tools"
+    header "10/10  Optional tools"
 
     info "Installing amass, dnsenum, dnsrecon ..."
     sudo apt install -y amass dnsenum dnsrecon 2>/dev/null \

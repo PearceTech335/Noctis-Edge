@@ -8,7 +8,7 @@ Follow each section in order on a fresh Kali/Parrot/Debian-based system.
 ## 1. Clone the Repository
 
 ```bash
-git clone https://github.com/PearceTech335/ReconoTron.git
+git clone --recurse-submodules https://github.com/PearceTech335/ReconoTron.git
 cd ReconoTron
 ```
 
@@ -155,10 +155,24 @@ this service is not running.
 
 ---
 
-## 7. Nikto (Bundled)
+## 7. Nikto (Git Submodule)
 
-Nikto is included in the `nikto/` directory — no separate install is required.
-It runs via Perl; the `perl`, `libxml-writer-perl`, and `libjson-perl` packages
+Nikto is included as a **git submodule** pointing to [sullo/nikto](https://github.com/sullo/nikto).
+No separate install is required — it is cloned automatically when you use `--recurse-submodules`:
+
+```bash
+git clone --recurse-submodules https://github.com/PearceTech335/ReconoTron.git
+```
+
+If you already cloned without that flag, initialise it manually:
+
+```bash
+git submodule update --init --recursive
+```
+
+`setup.sh` also runs this automatically as its first step.
+
+Nikto runs via Perl; the `perl`, `libxml-writer-perl`, and `libjson-perl` packages
 from Section 2 are all it needs.
 
 ---

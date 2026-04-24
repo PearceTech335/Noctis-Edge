@@ -13,16 +13,22 @@ ReconoTron is a single-file Python tool that runs an automated, LLM-guided penet
 On a fresh Kali / Parrot / Debian-based machine, a single script handles everything:
 
 ```bash
-git clone https://github.com/PearceTech335/ReconoTron.git
+git clone --recurse-submodules https://github.com/PearceTech335/ReconoTron.git
 cd ReconoTron
 chmod +x setup.sh
 ./setup.sh
 ```
 
+> If you already cloned without `--recurse-submodules`, initialise nikto manually:
+> ```bash
+> git submodule update --init --recursive
+> ```
+
 `setup.sh` installs and configures (in order):
 
 | Step | What gets installed |
 |------|---------------------|
+| Git submodules | `nikto/` — cloned from [sullo/nikto](https://github.com/sullo/nikto) |
 | apt packages | `nmap`, `curl`, `gobuster`, `ffuf`, `hydra`, `ssh-audit`, `perl`, `golang-go`, and more |
 | SecLists | Wordlists via `snap install seclists` |
 | Nuclei | Go-based template scanner (`~/go/bin/nuclei`) |
@@ -228,6 +234,9 @@ cve_knowledge_base.json           ← cross-engagement CVE test KB (project root
 | `rdpscan` | RDP enumeration | Optional |
 
 Install notes: see [Readme/requirements.md](Readme/requirements.md).
+
+> **Note:** `nikto/` is a git submodule pointing to [sullo/nikto](https://github.com/sullo/nikto).
+> Clone with `--recurse-submodules` or run `git submodule update --init --recursive` after cloning.
 
 ---
 
