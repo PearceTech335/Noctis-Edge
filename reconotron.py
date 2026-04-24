@@ -160,6 +160,25 @@ class Finding:
         return cls(**d)
 
 
+@dataclass
+class TargetInfo:
+    input_target:  str
+    ip_address:    str = ""
+    rdns_hostname: str = ""
+    mac_address:   str = ""
+    mac_vendor:    str = ""
+    os_guess:      str = ""
+    os_accuracy:   int = 0
+    netbios_name:  str = ""
+    asn:           str = ""
+    org:           str = ""
+    open_ports:    int = 0
+    scan_time:     str = ""
+
+    def to_dict(self):
+        return dataclasses.asdict(self)
+
+
 def make_finding_id(tool, target, title):
     raw = f"{tool}:{target}:{title}:{time.time()}"
     return "F-" + hashlib.sha256(raw.encode()).hexdigest()[:12].upper()
@@ -1687,9 +1706,25 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 </head>
 <body>
 <h1>ReconoTron Penetration Test Report</h1>
-<p><strong>Target:</strong> {{ target }} &nbsp;|&nbsp;
+<p><strong>Target:</strong> {{ target }}{% if target_info and target_info.ip_address and target_info.ip_address != target %} ({{ target_info.ip_address }}){% endif %} &nbsp;|&nbsp;
    <strong>Generated:</strong> {{ generated_at }} &nbsp;|&nbsp;
    <strong>Profile:</strong> {{ profile }}</p>
+
+{% if target_info %}
+<h2>Target Summary</h2>
+<table>
+  <tr><th>Field</th><th>Value</th></tr>
+  <tr><td>Input Target</td><td>{{ target_info.input_target }}</td></tr>
+  <tr><td>IP Address</td><td>{{ target_info.ip_address or target }}</td></tr>
+  {% if target_info.rdns_hostname %}<tr><td>Reverse DNS</td><td>{{ target_info.rdns_hostname }}</td></tr>{% endif %}
+  {% if target_info.mac_address %}<tr><td>MAC Address</td><td>{{ target_info.mac_address }}{% if target_info.mac_vendor %} ({{ target_info.mac_vendor }}){% endif %}</td></tr>{% endif %}
+  {% if target_info.os_guess %}<tr><td>OS Guess</td><td>{{ target_info.os_guess }} ({{ target_info.os_accuracy }}% accuracy)</td></tr>{% endif %}
+  {% if target_info.netbios_name %}<tr><td>NetBIOS Name</td><td>{{ target_info.netbios_name }}</td></tr>{% endif %}
+  {% if target_info.asn or target_info.org %}<tr><td>ASN / Org</td><td>{{ target_info.asn }} {{ target_info.org }}</td></tr>{% endif %}
+  <tr><td>Open Ports</td><td>{{ target_info.open_ports }}</td></tr>
+  <tr><td>Scan Time</td><td>{{ target_info.scan_time }}</td></tr>
+</table>
+{% endif %}
 
 <h2>Executive Summary</h2>
 <div class="grid">
@@ -1885,7 +1920,7 @@ def generate_pdf_report(html_content, pdf_path):
 # STRUCTURED REPORT BUILDER
 # ---------------------------------------------------------------------------
 
-def generate_report(target, services, all_findings, scan_records, profile="web"):
+def generate_report(target, services, all_findings, scan_records, profile="web", target_info=None):
     print("\n[+] Generating report ...")
 
     all_findings = deduplicate_findings(all_findings)
@@ -1970,6 +2005,7 @@ def generate_report(target, services, all_findings, scan_records, profile="web")
         "conclusion":    conclusion,
         "cve_test_results": [],
         "msf_validation": [],
+        "target_info":   target_info.to_dict() if target_info else {},
     }
 
 
@@ -2371,6 +2407,182 @@ async def _run_cve_test_phase(report: dict, target: str, session_dir: str) -> di
 
 
 # ---------------------------------------------------------------------------
+# TARGET IDENTITY ENRICHMENT
+# ---------------------------------------------------------------------------
+
+async def gather_target_info(target: str, available_tools: dict, airgap: bool = False) -> TargetInfo:
+    """Resolve enriched identity information for a target (IP, rDNS, MAC, OS, NetBIOS, ASN/Org)."""
+    info = TargetInfo(input_target=target)
+    info.scan_time = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+    # Step 1: Resolve IP address
+    try:
+        ip = socket.gethostbyname(target)
+        info.ip_address = ip
+    except Exception:
+        ip = target
+        info.ip_address = target
+
+    # Step 2: Reverse DNS (synchronous stdlib call — fast enough)
+    try:
+        rdns_result = socket.gethostbyaddr(ip)
+        info.rdns_hostname = rdns_result[0]
+    except Exception:
+        pass
+
+    nmap_path = available_tools.get("nmap")
+
+    async def _get_mac_and_vendor(ip_addr):
+        """Returns (mac, vendor) or ('', '').
+
+        MAC address is only visible on the local subnet when nmap is run as root.
+        """
+        _NULL_MAC = "00:00:00:00:00:00"
+        if nmap_path:
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    nmap_path, "-sn", "-PR", ip_addr,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=20)
+                text = stdout.decode(errors="replace")
+                m = re.search(r"MAC Address:\s+([0-9A-F:]+)\s+\(([^)]*)\)", text, re.IGNORECASE)
+                if m:
+                    return m.group(1), m.group(2)
+            except Exception:
+                pass
+        # Fallback: /proc/net/arp (Linux only, same subnet)
+        try:
+            if os.path.exists("/proc/net/arp"):
+                with open("/proc/net/arp") as fh:
+                    for line in fh:
+                        parts = line.split()
+                        if len(parts) >= 4 and parts[0] == ip_addr:
+                            mac = parts[3]
+                            if mac != _NULL_MAC:
+                                return mac, ""
+        except Exception:
+            pass
+        return "", ""
+
+    async def _get_os(ip_addr):
+        """Returns (os_name, accuracy_int) or ('', 0)."""
+        if not nmap_path:
+            return "", 0
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                nmap_path, "-Pn", "-O", "--osscan-guess", "--max-os-tries", "1",
+                "-oX", "-", ip_addr,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=45)
+            text = stdout.decode(errors="replace")
+            m = re.search(r'<osmatch name="([^"]+)" accuracy="(\d+)"', text)
+            if m:
+                return m.group(1), int(m.group(2))
+        except Exception:
+            pass
+        return "", 0
+
+    async def _get_netbios(ip_addr):
+        """Returns NetBIOS name string or ''."""
+        if not nmap_path:
+            return ""
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                nmap_path, "-p", "137", "--script", "nbstat", "-Pn", ip_addr,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=20)
+            text = stdout.decode(errors="replace")
+            m = re.search(r"NetBIOS name:\s+(\S+)", text, re.IGNORECASE)
+            if m:
+                return m.group(1).strip("<>").strip()
+        except Exception:
+            pass
+        return ""
+
+    async def _get_asn_org(ip_addr):
+        """Returns (asn, org) or ('', ''). Skipped in airgap mode."""
+        if airgap:
+            return "", ""
+        if nmap_path:
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    nmap_path, "--script", "whois-ip", "-sn", ip_addr,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=20)
+                text = stdout.decode(errors="replace")
+                asn, org = "", ""
+                for line in text.splitlines():
+                    if line.startswith("|"):
+                        low = line.lower()
+                        if not asn and ("asn" in low or "originas" in low):
+                            m = re.search(r"AS\d+", line, re.IGNORECASE)
+                            if m:
+                                asn = m.group(0)
+                        if not org and ("orgname" in low or "org-name" in low or "organisation" in low):
+                            parts = line.split(":", 1)
+                            if len(parts) > 1:
+                                org = parts[1].strip()
+                if asn or org:
+                    return asn, org
+            except Exception:
+                pass
+        # Fallback: whois command
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "whois", ip_addr,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=20)
+            text = stdout.decode(errors="replace")
+            asn, org = "", ""
+            for line in text.splitlines():
+                low = line.lower()
+                if not org and (low.startswith("orgname:") or low.startswith("org-name:")):
+                    parts = line.split(":", 1)
+                    if len(parts) > 1:
+                        org = parts[1].strip()
+                if not asn and low.startswith("originas:"):
+                    parts = line.split(":", 1)
+                    if len(parts) > 1:
+                        asn = parts[1].strip()
+            return asn, org
+        except Exception:
+            pass
+        return "", ""
+
+    # Run independent enrichment tasks in parallel
+    results = await asyncio.gather(
+        _get_mac_and_vendor(ip),
+        _get_os(ip),
+        _get_netbios(ip),
+        _get_asn_org(ip),
+        return_exceptions=True,
+    )
+
+    mac_result, os_result, nb_result, asn_result = results
+
+    if isinstance(mac_result, tuple):
+        info.mac_address, info.mac_vendor = mac_result
+    if isinstance(os_result, tuple):
+        info.os_guess, info.os_accuracy = os_result
+    if isinstance(nb_result, str):
+        info.netbios_name = nb_result
+    if isinstance(asn_result, tuple):
+        info.asn, info.org = asn_result
+
+    return info
+
+
+# ---------------------------------------------------------------------------
 # MAIN ASYNC LOOP
 # ---------------------------------------------------------------------------
 
@@ -2485,6 +2697,10 @@ async def main_async():
         sys.exit(0)
 
     services = rank_and_annotate_services(services)
+
+    print("[+] Gathering target identity information ...")
+    target_info = await gather_target_info(target, available_tools, airgap=AIRGAP_MODE)
+    target_info.open_ports = len(services)
 
     # CVE lookup
     print("[+] Searching CVE database ...")
@@ -2611,7 +2827,15 @@ async def main_async():
     print(f"[+] Total scan time: {_fmt_dur(time.monotonic() - loop_start)}")
     print(f"{'=' * 52}")
 
-    report = generate_report(target, services, all_findings, scan_records, profile_name)
+    report = generate_report(target, services, all_findings, scan_records, profile_name, target_info=target_info)
+
+    # Save final session state (includes target_info)
+    save_session({
+        "target":         target,
+        "profile":        profile_name,
+        "findings_count": len(all_findings),
+        "target_info":    target_info.to_dict(),
+    })
 
     if MSF_VALIDATE:
         report = await run_msf_validation(report, target, session_dir, available_tools)
@@ -2648,7 +2872,17 @@ async def main_async():
     print(f"\n{'=' * 52}")
     print("  REPORT SUMMARY")
     print(f"{'=' * 52}")
-    print(f"  Target    : {target}")
+    _ip_str = f"  ({target_info.ip_address})" if target_info.ip_address and target_info.ip_address != target else ""
+    _rdns_str = f"  [{target_info.rdns_hostname}]" if target_info.rdns_hostname else ""
+    print(f"  Target    : {target}{_ip_str}{_rdns_str}")
+    if target_info.mac_address:
+        print(f"  MAC       : {target_info.mac_address}  {target_info.mac_vendor}".rstrip())
+    if target_info.os_guess:
+        print(f"  OS Guess  : {target_info.os_guess}")
+    if target_info.netbios_name:
+        print(f"  NetBIOS   : {target_info.netbios_name}")
+    if target_info.asn or target_info.org:
+        print(f"  ASN / Org : {target_info.asn}  {target_info.org}".rstrip())
     print(f"  Profile   : {profile['name']}")
     svc_strs = [f"{s['name']}:{s['port']}" for s in report.get("services", [])]
     print(f"  Services  : {', '.join(svc_strs) or 'none'}")
