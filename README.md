@@ -19,11 +19,6 @@ chmod +x setup.sh
 ./setup.sh
 ```
 
-> If you already cloned without `--recurse-submodules`, initialise nikto manually:
-> ```bash
-> git submodule update --init --recursive
-> ```
-
 `setup.sh` installs and configures (in order):
 
 | Step | What gets installed |
