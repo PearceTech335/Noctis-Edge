@@ -11,7 +11,7 @@ import subprocess
 import sys
 import threading
 import tkinter as tk
-from tkinter import messagebox, scrolledtext, ttk
+from tkinter import messagebox
 
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 RECONOTRON  = os.path.join(BASE_DIR, "reconotron.py")
@@ -43,6 +43,14 @@ TAG_DIM     = "#6a6a6a"   # comments / dim
 TAG_NORMAL  = "#d4d4d4"
 
 PROFILES    = ["web", "external", "internal_ad", "api", "cloud"]
+
+PROFILE_DESCRIPTIONS = {
+    "web":         "Web Application Assessment — curl, nikto, nuclei, gobuster, ffuf",
+    "external":    "External Perimeter Review — nmap, curl, nuclei, gobuster, dns_enum",
+    "internal_ad": "Internal AD Assessment — nmap, nxc (SMB/LDAP)",
+    "api":         "API Assessment — curl, nuclei, ffuf",
+    "cloud":       "Cloud Exposure Review — curl, nuclei, dns_enum",
+}
 
 FLAGS = [
     ("--aggressive",   "Disable safe-mode: run gobuster / ffuf / hydra without approval"),
@@ -105,20 +113,6 @@ class ReconoTronGUI:
         root.minsize(820, 580)
         root.geometry("1000x740")
 
-        # Apply ttk theme early so combobox picks it up
-        style = ttk.Style()
-        try:
-            style.theme_use("clam")
-        except Exception:
-            pass
-        style.configure(
-            "TCombobox",
-            fieldbackground=BG_INPUT, background=BG_PANEL,
-            foreground=FG, selectbackground=ACCENT, selectforeground=BTN_FG,
-            arrowcolor=FG,
-        )
-        style.map("TCombobox", fieldbackground=[("readonly", BG_INPUT)])
-
         self._build_ui()
         self._poll_queue()
 
@@ -139,7 +133,7 @@ class ReconoTronGUI:
             font=("Consolas", 10), bg=BG_PANEL, fg=FG_DIM,
         ).pack(side=tk.LEFT, pady=4)
 
-        # ── Target + profile row ─────────────────────────────────────────────
+        # ── Target row ───────────────────────────────────────────────────────
         row1 = tk.Frame(self.root, bg=BG, padx=12, pady=6)
         row1.pack(fill=tk.X)
 
@@ -154,20 +148,34 @@ class ReconoTronGUI:
             highlightthickness=1, highlightcolor=ACCENT,
             highlightbackground=FG_DIM,
         )
-        target_entry.pack(side=tk.LEFT, padx=(5, 20), ipady=3)
+        target_entry.pack(side=tk.LEFT, padx=(5, 0), ipady=3)
         target_entry.bind("<Return>", lambda _: self._start_scan())
         _Tooltip(target_entry, "Hostname or IP address to scan (e.g. 192.168.0.1)")
 
-        tk.Label(row1, text="Profile:", bg=BG, fg=FG,
-                 font=("Consolas", 11)).pack(side=tk.LEFT)
+        # ── Profiles (multi-select checkboxes) ───────────────────────────────
+        profiles_outer = tk.Frame(self.root, bg=BG, padx=12)
+        profiles_outer.pack(fill=tk.X)
 
-        self.profile_var = tk.StringVar(value="web")
-        profile_cb = ttk.Combobox(
-            row1, textvariable=self.profile_var, values=PROFILES,
-            state="readonly", width=16, font=("Consolas", 11),
+        profiles_frame = tk.LabelFrame(
+            profiles_outer, text="  Profiles (select one or more)  ",
+            bg=BG_PANEL, fg=FG_DIM,
+            font=("Consolas", 9), bd=1, relief=tk.GROOVE,
+            padx=10, pady=8,
         )
-        profile_cb.pack(side=tk.LEFT, padx=(5, 0), ipady=2)
-        _Tooltip(profile_cb, "web · external · internal_ad · api · cloud")
+        profiles_frame.pack(fill=tk.X)
+
+        self.profile_vars: dict[str, tk.BooleanVar] = {}
+        for col, name in enumerate(PROFILES):
+            var = tk.BooleanVar(value=(name == "web"))  # web checked by default
+            self.profile_vars[name] = var
+            cb = tk.Checkbutton(
+                profiles_frame, text=name, variable=var,
+                bg=BG_PANEL, fg=FG, selectcolor=BG_INPUT,
+                activebackground=BG_PANEL, activeforeground=FG,
+                font=("Consolas", 10),
+            )
+            cb.grid(row=0, column=col, padx=14, sticky=tk.W)
+            _Tooltip(cb, PROFILE_DESCRIPTIONS[name])
 
         # ── Flags ────────────────────────────────────────────────────────────
         flags_outer = tk.Frame(self.root, bg=BG, padx=12)
@@ -320,7 +328,10 @@ class ReconoTronGUI:
                 "Please enter a target hostname or IP address.",
             )
             return None
-        cmd = [PYTHON, "-u", RECONOTRON, target, self.profile_var.get()]
+        selected_profiles = [p for p, var in self.profile_vars.items() if var.get()]
+        if not selected_profiles:
+            selected_profiles = ["web"]
+        cmd = [PYTHON, "-u", RECONOTRON, target] + selected_profiles
         for flag, var in self.flag_vars.items():
             if var.get():
                 cmd.append(flag)

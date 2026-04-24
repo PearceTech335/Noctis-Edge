@@ -2377,17 +2377,17 @@ async def main_async():
     global SAFE_MODE, AIRGAP_MODE, MSF_VALIDATE, CVE_TEST, SESSION_FILE
 
     if len(sys.argv) < 2:
-        print("Usage: python3 reconotron.py <target> [profile] [--resume] [--aggressive] [--airgap] [--msf-validate] [--cve-test]")
-        print("Profiles:", ", ".join(PROFILES))
+        print("Usage: python3 reconotron.py <target> [profile ...] [--resume] [--aggressive] [--airgap] [--msf-validate] [--cve-test]")
+        print("Profiles (one or more):", ", ".join(PROFILES))
         sys.exit(1)
 
-    target       = sys.argv[1]
-    profile_name = "web"
-    resume       = False
+    target        = sys.argv[1]
+    profile_names: list = []
+    resume        = False
 
     for arg in sys.argv[2:]:
         if arg in PROFILES:
-            profile_name = arg
+            profile_names.append(arg)
         elif arg == "--resume":
             resume = True
         elif arg == "--aggressive":
@@ -2406,7 +2406,29 @@ async def main_async():
             print("[!] No internet access detected — automatically enabling --airgap mode.")
             print(f"[!] Internet-dependent tools disabled: {', '.join(sorted(INTERNET_ONLY_TOOLS))}")
 
-    profile = PROFILES[profile_name]
+    if not profile_names:
+        profile_names = ["web"]
+
+    # Merge selected profiles (deduplicated union of tools + escalation)
+    _merged_tools:      list = []
+    _merged_escalation: list = []
+    _seen: set = set()
+    for _pname in profile_names:
+        for _t in PROFILES[_pname]["tools"]:
+            if _t not in _seen:
+                _merged_tools.append(_t)
+                _seen.add(_t)
+        for _t in PROFILES[_pname]["escalation"]:
+            if _t not in _seen:
+                _merged_escalation.append(_t)
+                _seen.add(_t)
+
+    profile_name = "+".join(profile_names)
+    profile = {
+        "name":       " + ".join(PROFILES[n]["name"] for n in profile_names),
+        "tools":      _merged_tools,
+        "escalation": _merged_escalation,
+    }
     safe_tgt = re.sub(r"[^a-zA-Z0-9_-]", "_", target)
 
     # Determine session directory

@@ -58,8 +58,14 @@ Run `./update.sh` monthly to keep all components current.
 # Standard web scan:
 python3 reconotron.py 192.168.0.1
 
-# Named profile:
+# Single profile:
 python3 reconotron.py 192.168.0.1 web
+
+# Multiple profiles (tools from both are merged):
+python3 reconotron.py 192.168.0.1 web external
+
+# Three profiles at once:
+python3 reconotron.py 192.168.0.1 web external api
 
 # With CVE test scripts:
 python3 reconotron.py 192.168.0.1 web --cve-test
@@ -85,7 +91,8 @@ python3 reconotron_gui.py
 
 The GUI provides:
 
-- **Target** field and **Profile** dropdown (`web`, `external`, `internal_ad`, `api`, `cloud`)
+- **Target** field
+- **Profiles** checkboxes — select one or more (`web`, `external`, `internal_ad`, `api`, `cloud`); tools from all selected profiles are merged at scan time
 - Checkboxes for all scan flags (`--aggressive`, `--airgap`, `--msf-validate`, `--cve-test`, `--resume`)
 - Live colour-coded terminal output (findings highlighted in green/amber/red)
 - **Prompt reply** input bar with quick **Y** / **N** buttons for approval gates
@@ -111,7 +118,7 @@ The GUI launches `reconotron.py` as a subprocess — all behaviour, output, and 
 
 ## Assessment Profiles
 
-Pass a profile name as the second argument. The profile controls which tools the LLM is offered.
+Pass one or more profile names after the target. Tools from all selected profiles are merged into a single deduplicated list for the scan.
 
 | Profile | Focus | Key Tools |
 |---------|-------|-----------|
