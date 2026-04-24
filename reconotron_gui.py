@@ -56,11 +56,13 @@ FLAGS = [
 # ── Small helpers ───────────────────────────────────────────────────────────
 
 def _flat_btn(parent, text, command, bg, fg=BTN_FG, **kw):
+    kw.setdefault("padx", 14)
+    kw.setdefault("pady", 5)
     return tk.Button(
         parent, text=text, command=command,
         bg=bg, fg=fg, activebackground=bg, activeforeground=fg,
         relief=tk.FLAT, bd=0, cursor="hand2",
-        font=("Consolas", 10, "bold"), padx=14, pady=5,
+        font=("Consolas", 10, "bold"),
         **kw,
     )
 
