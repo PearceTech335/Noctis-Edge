@@ -98,8 +98,15 @@ With the venv active, install all required Python packages:
 
 ```bash
 pip install --upgrade pip
-pip install requests jinja2 pycryptodome
+pip install requests jinja2 pycryptodome weasyprint
 ```
+
+| Package        | Purpose                                             |
+|----------------|-----------------------------------------------------|
+| `requests`     | HTTP calls to the Ollama LLM API                    |
+| `jinja2`       | HTML report templating                              |
+| `pycryptodome` | DES3 decryption used by `rdpscan/RPDscan.py`        |
+| `weasyprint`   | PDF report generation from HTML                     |
 
 | Package        | Purpose                                             |
 |----------------|-----------------------------------------------------|

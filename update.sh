@@ -55,7 +55,7 @@ if [[ -f "$VENV/bin/activate" ]]; then
     # shellcheck disable=SC1091
     source "$VENV/bin/activate"
     pip install --upgrade pip --quiet
-    pip install --upgrade requests jinja2 pycryptodome netexec --quiet
+    pip install --upgrade requests jinja2 pycryptodome weasyprint netexec --quiet
     ok "pip done (requests, jinja2, pycryptodome, netexec)"
     deactivate
 else

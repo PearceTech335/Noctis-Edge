@@ -46,8 +46,9 @@ else:
 CVE_CSV      = os.path.join(BASE_DIR, "CVE", "cve-offline", "cve-summary.csv")
 SESSION_FILE = os.path.join(BASE_DIR, "session.json")
 
-OLLAMA_URL  = "http://localhost:11434/api/generate"
-MODEL       = "qwen2.5-coder:7b-instruct-q4_k_m"
+OLLAMA_URL     = "http://localhost:11434/api/generate"
+MODEL          = "qwen2.5-coder:7b-instruct-q4_k_m"
+OLLAMA_TIMEOUT = 300   # seconds — CPU-only inference can take 1-3 min per call
 #"qwen2.5-coder:7b-instruct-q6_K"
 #"qwen2.5-coder:3b-instruct-fp16"
 #"qwen2.5-coder:7b-instruct-q4_k_m"
@@ -1395,7 +1396,7 @@ Or if done:
             response = requests.post(
                 OLLAMA_URL,
                 json={"model": MODEL, "prompt": prompt, "stream": False},
-                timeout=60,
+                timeout=OLLAMA_TIMEOUT,
             )
             payload = response.json()
             if "error" in payload or "response" not in payload:
@@ -1931,7 +1932,7 @@ def generate_report(target, services, all_findings, scan_records, profile="web")
                 OLLAMA_URL,
                 json={"model": MODEL, "stream": False,
                       "prompt": f"Write a two-sentence penetration testing conclusion. Be concise. Data: {json.dumps(mini_summary, separators=(',', ':'))}"},
-                timeout=60,
+                timeout=OLLAMA_TIMEOUT,
             )
             payload = resp.json()
             if "response" in payload:
