@@ -62,7 +62,8 @@ AIRGAP_MODE     = False  # set via --airgap; disables tools/features that requir
 MSF_VALIDATE    = False  # set via --msf-validate; runs safe MSF check probes for each CVE match
 CVE_TEST        = False  # set via --cve-test; LLM generates test scripts per matched CVE
 CVE_KB_PATH     = os.path.join(BASE_DIR, "cve_knowledge_base.json")
-CVE_TEST_ATTEMPTS = 5    # number of independent LLM script attempts per CVE (increase for thoroughness)
+CVE_TEST_ATTEMPTS = 15   # LLM attempts per CVE; KB scripts replayed first, new scripts fill remaining slots
+CVE_VERIFY_ATTEMPTS = 2  # independent verifier scripts run when any attempt returns VULNERABLE
 
 # Tools that rely on internet OSINT sources and should be skipped in airgap mode
 INTERNET_ONLY_TOOLS = {"amass", "dnsenum", "dnsrecon"}
@@ -1834,23 +1835,45 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 {% if cve_test_results %}
 {% for r in cve_test_results %}
 <div style="margin-bottom:1.5em;border:1px solid #333;border-radius:6px;padding:1em">
-  <div style="display:flex;align-items:center;gap:1em;margin-bottom:.5em">
+  <div style="display:flex;align-items:center;gap:1em;margin-bottom:.5em;flex-wrap:wrap">
     <span style="font-size:1.05em;font-weight:600;color:#e0e0e0">{{ r.cve_id }}</span>
     <span style="font-size:.8em;color:#aaa">{{ r.vulnerability_type }}</span>
     <span style="font-size:.8em;color:#aaa">{{ r.service }}</span>
-    {% if r.overall_verdict == "VULNERABLE" %}
-    <span style="background:#b71c1c;color:#fff;padding:2px 8px;border-radius:4px;font-size:.82em;font-weight:700">VULNERABLE</span>
+    {% if r.overall_verdict == "CONFIRMED_VULNERABLE" %}
+    <span style="background:#b71c1c;color:#fff;padding:2px 10px;border-radius:4px;font-size:.82em;font-weight:700;border:2px solid #ff1744">&#10003; CONFIRMED VULNERABLE</span>
+    {% elif r.overall_verdict == "VULNERABLE" %}
+    <span style="background:#e65100;color:#fff;padding:2px 8px;border-radius:4px;font-size:.82em;font-weight:700">VULNERABLE (unverified)</span>
     {% elif r.overall_verdict == "NOT_VULNERABLE" %}
     <span style="background:#1b5e20;color:#fff;padding:2px 8px;border-radius:4px;font-size:.82em;font-weight:700">NOT VULNERABLE</span>
     {% else %}
-    <span style="background:#e65100;color:#fff;padding:2px 8px;border-radius:4px;font-size:.82em;font-weight:700">INCONCLUSIVE</span>
+    <span style="background:#4a4a4a;color:#fff;padding:2px 8px;border-radius:4px;font-size:.82em;font-weight:700">INCONCLUSIVE</span>
     {% endif %}
-    <span style="font-size:.78em;color:#777">{{ r.attempts_run }} attempts &mdash; V:{{ r.verdict_counts.VULNERABLE }} N:{{ r.verdict_counts.NOT_VULNERABLE }} I:{{ r.verdict_counts.INCONCLUSIVE }}</span>
+    <span style="font-size:.78em;color:#777">{{ r.attempts_run }} attempts &mdash; V:{{ r.verdict_counts.VULNERABLE }} N:{{ r.verdict_counts.NOT_VULNERABLE }} I:{{ r.verdict_counts.INCONCLUSIVE }} &mdash; KB replayed:{{ r.kb_replayed }}</span>
   </div>
+
+  {% if r.verification_results %}
+  <div style="background:#1a2a1a;border-left:3px solid {% if r.verified %}#4caf50{% else %}#ff9800{% endif %};padding:.6em .8em;margin-bottom:.6em;border-radius:0 4px 4px 0;font-size:.85em">
+    <strong style="color:{% if r.verified %}#4caf50{% else %}#ff9800{% endif %}">
+      {% if r.verified %}&#10003; False-Positive Check: CONFIRMED{% else %}&#9888; False-Positive Check: UNCONFIRMED (possible false positive){% endif %}
+    </strong>
+    <div style="margin-top:.4em">
+    {% for v in r.verification_results %}
+      <span style="margin-right:.8em">
+        V{{ v.verifier_num }}: <em>{{ v.strategy[:60] }}</em> &rarr;
+        {% if v.verdict == "VULNERABLE" %}<span style="color:#ef9a9a">VULNERABLE</span>
+        {% elif v.verdict == "NOT_VULNERABLE" %}<span style="color:#a5d6a7">NOT_VULNERABLE</span>
+        {% else %}<span style="color:#ffcc80">INCONCLUSIVE</span>{% endif %}
+      </span>
+    {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
   {% for a in r.attempts %}
   <details style="margin:.4em 0;font-size:.85em">
     <summary style="cursor:pointer;color:#90caf9">
       [{{ "%02d"|format(a.attempt_num) }}]
+      {% if a.get('source') == 'kb_replay' %}<span style="color:#ce93d8;font-size:.8em">[KB]</span>{% endif %}
       {% if a.verdict == "VULNERABLE" %}<span style="color:#ef9a9a">&#9679;</span>
       {% elif a.verdict == "NOT_VULNERABLE" %}<span style="color:#a5d6a7">&#9679;</span>
       {% else %}<span style="color:#ffcc80">&#9679;</span>{% endif %}
@@ -2165,6 +2188,87 @@ or
     return None
 
 
+def _generate_verification_script(cve: dict, target: str, triggering_attempt: dict) -> dict | None:
+    """
+    Generate a verification script that uses a DIFFERENT technique from the triggering attempt
+    to confirm or deny a VULNERABLE result and reduce false positives.
+    Returns {language, strategy, script} or None on failure.
+    """
+    prompt = f"""You are a penetration testing assistant performing FALSE-POSITIVE VERIFICATION.
+
+A previous test script returned VULNERABLE for the following CVE. Your job is to INDEPENDENTLY
+CONFIRM or DENY this result using a completely different technique.
+
+CVE DETAILS:
+  ID:               {cve.get('cve_id', '')}
+  Summary:          {cve.get('summary', '')[:300]}
+  Vulnerability:    {cve.get('vulnerability_type', '')}
+  Affected product: {cve.get('product', '')} {cve.get('version_range', '')}
+  Safe test method: {cve.get('safe_validation_method', '')}
+
+TARGET:
+  Host:    {target}
+  Service: {cve.get('service', '')}
+
+TRIGGERING RESULT (DO NOT REPEAT THIS TECHNIQUE):
+  Strategy: {triggering_attempt.get('strategy', '')}
+  Language: {triggering_attempt.get('language', '')}
+  Output:   {triggering_attempt.get('output', '')[:300]}
+
+VERIFICATION REQUIREMENTS — CRITICAL:
+  - You MUST use a DIFFERENT method, endpoint, or protocol layer than the triggering attempt
+  - If the triggering attempt used HTTP headers → use a different request type or port
+  - If the triggering attempt checked a version string → probe the actual vulnerable behaviour
+  - If the triggering attempt used a timing side-channel → use a content-based check instead
+  - Think: "what second independent piece of evidence would confirm this is truly vulnerable?"
+
+SAFE PROBING RULES:
+  ALLOWED:  HTTP GET/HEAD requests, TCP banner grabs, DNS lookups, version string comparison,
+            reading public endpoints, timing/behaviour probes, canary/oracle requests
+  FORBIDDEN: Any payload that writes/deletes files on the target, reverse shells, credential
+             brute-force, denial-of-service, buffer overflows, actual exploit code
+
+SCRIPT REQUIREMENTS:
+  - The script MUST print exactly one line containing one of:
+      VERDICT: VULNERABLE
+      VERDICT: NOT_VULNERABLE
+      VERDICT: INCONCLUSIVE
+  - Self-contained, stdlib + requests only, network calls max 10s timeout
+
+Respond with ONLY a single JSON object:
+{{"language": "python", "strategy": "<one sentence describing the DIFFERENT technique>", "script": "<full script>"}}
+or
+{{"language": "bash", "strategy": "<one sentence describing the DIFFERENT technique>", "script": "<full script>"}}"""
+
+    for attempt in range(MAX_LLM_RETRIES):
+        try:
+            resp = requests.post(
+                OLLAMA_URL,
+                json={"model": MODEL, "prompt": prompt, "stream": False},
+                timeout=180,
+            )
+            payload = resp.json()
+            raw = payload.get("response", "")
+            stripped = raw.strip()
+            if stripped.startswith("```"):
+                stripped = re.sub(r"^```[a-z]*\n?", "", stripped)
+                stripped = re.sub(r"\n?```$", "", stripped.strip())
+            obj = json.loads(stripped)
+            if (
+                isinstance(obj, dict)
+                and obj.get("language") in ("python", "bash")
+                and isinstance(obj.get("strategy"), str)
+                and isinstance(obj.get("script"), str)
+                and len(obj["script"]) > 20
+            ):
+                return obj
+        except requests.exceptions.Timeout:
+            break
+        except Exception:
+            pass
+    return None
+
+
 class _Spinner:
     """Inline terminal spinner for long blocking steps (no extra deps)."""
     _FRAMES = ("|", "/", "-", "\\")
@@ -2219,24 +2323,27 @@ def _print_timing(start: float, done: int, total: int) -> None:
 async def run_cve_tests(cve_matches: list, target: str,
                         session_dir: str, kb: dict) -> tuple[list, dict]:
     """
-    For each CVE run 15 independent LLM-generated test scripts.
+    For each CVE:
+      1. Replay any scripts already in the knowledge base (different techniques proven in prior runs).
+      2. Generate up to CVE_TEST_ATTEMPTS new LLM scripts to fill remaining slots.
+      3. On the first VULNERABLE result, run CVE_VERIFY_ATTEMPTS independent verifier scripts
+         using a different technique to confirm and avoid false positives.
     Returns (cve_test_results, updated_kb).
     """
     cve_tests_dir = os.path.join(session_dir, "cve_tests")
     os.makedirs(cve_tests_dir, exist_ok=True)
 
     cve_test_results = []
-    total_cves     = len(cve_matches)
-    total_attempts = total_cves * CVE_TEST_ATTEMPTS
-    done_attempts  = 0
-    scan_start     = time.monotonic()
+    total_cves    = len(cve_matches)
+    scan_start    = time.monotonic()
 
     for cve_idx, cve in enumerate(cve_matches, 1):
         cve_start = time.monotonic()
-        cve_id   = cve.get("cve_id", "UNKNOWN")
-        kb_entry = kb.get(cve_id)
-        kb_count = len(kb_entry["scripts"]) if kb_entry else 0
-        kb_label = f"{kb_count} prior script(s) in KB" if kb_count else "new to KB"
+        cve_id    = cve.get("cve_id", "UNKNOWN")
+        kb_entry  = kb.get(cve_id)
+        kb_scripts = kb_entry["scripts"] if kb_entry else []
+        kb_count   = len(kb_scripts)
+        kb_label   = f"{kb_count} prior script(s) in KB" if kb_count else "new to KB"
 
         print(f"\n{'=' * 52}")
         print(f"  CVE TEST: {cve_id}  [{cve_idx}/{total_cves}]")
@@ -2244,21 +2351,75 @@ async def run_cve_tests(cve_matches: list, target: str,
         print(f"  KB      : {kb_label}")
         print(f"{'=' * 52}")
 
-        attempts      = []
-        verdict_counts = {"VULNERABLE": 0, "NOT_VULNERABLE": 0, "INCONCLUSIVE": 0}
+        attempts: list       = []
+        verdict_counts       = {"VULNERABLE": 0, "NOT_VULNERABLE": 0, "INCONCLUSIVE": 0}
+        vulnerable_found     = False
+        verification_results: list = []
+        verified             = False  # True if ≥1 verifier independently confirms VULNERABLE
 
-        for i in range(1, CVE_TEST_ATTEMPTS + 1):
-            sp = _Spinner(f"[{i:02d}/{CVE_TEST_ATTEMPTS:02d}] Generating script ...").start()
+        # ------------------------------------------------------------------
+        # Phase 1: Replay KB scripts (proven techniques from prior runs)
+        # ------------------------------------------------------------------
+        if kb_scripts:
+            print(f"  [KB] Replaying {kb_count} known script(s) ...")
+        for kb_idx, kb_script in enumerate(kb_scripts, 1):
+            language   = kb_script.get("language", "python")
+            strategy   = kb_script.get("strategy", "KB replay")
+            script     = kb_script.get("script", "")
+            if not script:
+                continue
+            ext        = ".py" if language == "python" else ".sh"
+            safe_cve   = re.sub(r"[^a-zA-Z0-9_-]", "_", cve_id)
+            script_path = os.path.join(cve_tests_dir, f"{safe_cve}_kb_{kb_idx:02d}{ext}")
+            with open(script_path, "w", encoding="utf-8") as fh:
+                fh.write(script)
 
-            generated = _generate_cve_test_script(cve, target, attempts, kb_entry, i)
+            attempt_num = len(attempts) + 1
+            sp = _Spinner(f"[KB {kb_idx:02d}/{kb_count:02d}] Replaying ({language}) ...").start()
+            run_result = await asyncio.get_event_loop().run_in_executor(
+                None, lambda s=script, l=language: _run_script(s, l, cve_tests_dir, timeout=30)
+            )
+            output = run_result["output"]
+            if run_result["timed_out"]:
+                output = f"[TIMED OUT]\n{output}"
+            elif run_result["error"]:
+                output = f"[ERROR: {run_result['error']}]\n{output}"
+            m       = re.search(r"VERDICT:\s*(VULNERABLE|NOT_VULNERABLE|INCONCLUSIVE)", output)
+            verdict = m.group(1) if m else "INCONCLUSIVE"
+            verdict_counts[verdict] = verdict_counts.get(verdict, 0) + 1
+            if verdict == "VULNERABLE":
+                vulnerable_found = True
+            sp.stop(f" {verdict}")
+
+            attempts.append({
+                "attempt_num": attempt_num,
+                "source":      "kb_replay",
+                "strategy":    f"[KB] {strategy}",
+                "language":    language,
+                "script":      script,
+                "script_path": script_path,
+                "output":      output[:600],
+                "verdict":     verdict,
+            })
+
+        # ------------------------------------------------------------------
+        # Phase 2: Generate new LLM scripts to fill remaining slots
+        # ------------------------------------------------------------------
+        new_slots   = max(0, CVE_TEST_ATTEMPTS - len(attempts))
+        done_new    = 0
+        for i in range(1, new_slots + 1):
+            attempt_num = len(attempts) + 1
+            sp = _Spinner(f"[{i:02d}/{new_slots:02d}] Generating script ...").start()
+            generated = _generate_cve_test_script(cve, target, attempts, kb_entry, attempt_num)
             if not generated:
                 sp.stop(" SKIPPED (LLM parse failure)")
-                done_attempts += 1
-                _print_timing(scan_start, done_attempts, total_attempts)
+                done_new += 1
                 attempts.append({
-                    "attempt_num": i, "strategy": "LLM parse failure",
-                    "language": "", "script": "", "script_path": "",
-                    "output": "", "verdict": "INCONCLUSIVE",
+                    "attempt_num": attempt_num,
+                    "source":      "llm_generated",
+                    "strategy":    "LLM parse failure",
+                    "language":    "", "script": "", "script_path": "",
+                    "output":      "", "verdict": "INCONCLUSIVE",
                 })
                 verdict_counts["INCONCLUSIVE"] += 1
                 continue
@@ -2269,40 +2430,37 @@ async def run_cve_tests(cve_matches: list, target: str,
             script   = generated["script"]
             ext      = ".py" if language == "python" else ".sh"
             safe_cve = re.sub(r"[^a-zA-Z0-9_-]", "_", cve_id)
-            script_fname = f"{safe_cve}_attempt_{i:02d}{ext}"
+            script_fname = f"{safe_cve}_attempt_{attempt_num:02d}{ext}"
             script_path  = os.path.join(cve_tests_dir, script_fname)
-
             with open(script_path, "w", encoding="utf-8") as fh:
                 fh.write(script)
 
-            # Show the generated script before running it
             print(f"  Strategy: {strategy}")
             print(f"  ---- script ({language}) ----")
             for line in script.splitlines():
                 print(f"  {line}")
             print(f"  ---- end script ----")
 
-            sp2 = _Spinner(f"[{i:02d}/{CVE_TEST_ATTEMPTS:02d}] Running ({language}) ...").start()
+            sp2 = _Spinner(f"[{i:02d}/{new_slots:02d}] Running ({language}) ...").start()
             run_result = await asyncio.get_event_loop().run_in_executor(
                 None, lambda s=script, l=language: _run_script(s, l, cve_tests_dir, timeout=30)
             )
-
-            output   = run_result["output"]
+            output = run_result["output"]
             if run_result["timed_out"]:
                 output = f"[TIMED OUT]\n{output}"
             elif run_result["error"]:
                 output = f"[ERROR: {run_result['error']}]\n{output}"
-
             m       = re.search(r"VERDICT:\s*(VULNERABLE|NOT_VULNERABLE|INCONCLUSIVE)", output)
             verdict = m.group(1) if m else "INCONCLUSIVE"
             verdict_counts[verdict] = verdict_counts.get(verdict, 0) + 1
-
+            if verdict == "VULNERABLE":
+                vulnerable_found = True
             sp2.stop(f" {verdict}")
-            done_attempts += 1
-            _print_timing(scan_start, done_attempts, total_attempts)
+            done_new += 1
 
             attempt_record = {
-                "attempt_num": i,
+                "attempt_num": attempt_num,
+                "source":      "llm_generated",
                 "strategy":    strategy,
                 "language":    language,
                 "script":      script,
@@ -2312,7 +2470,7 @@ async def run_cve_tests(cve_matches: list, target: str,
             }
             attempts.append(attempt_record)
 
-            # Update KB entry
+            # Update KB
             script_hash = hashlib.sha256(script.encode()).hexdigest()[:16]
             if cve_id not in kb:
                 kb[cve_id] = {
@@ -2328,48 +2486,111 @@ async def run_cve_tests(cve_matches: list, target: str,
             entry["test_count"]  = entry.get("test_count", 0) + 1
             vc = entry.setdefault("verdict_counts", {"VULNERABLE": 0, "NOT_VULNERABLE": 0, "INCONCLUSIVE": 0})
             vc[verdict] = vc.get(verdict, 0) + 1
-
             existing_hashes = {s["script_hash"] for s in entry["scripts"]}
             if script_hash not in existing_hashes:
                 entry["scripts"].append({
-                    "script_hash":   script_hash,
-                    "strategy":      strategy,
-                    "language":      language,
-                    "script":        script,
-                    "verdict":       verdict,
-                    "output_sample": output[:400],
+                    "script_hash":    script_hash,
+                    "strategy":       strategy,
+                    "language":       language,
+                    "script":         script,
+                    "verdict":        verdict,
+                    "output_sample":  output[:400],
                     "target_context": f"{cve.get('product', '')} {cve.get('service', '')}".strip(),
-                    "tested_at":     datetime.now(timezone.utc).isoformat(),
+                    "tested_at":      datetime.now(timezone.utc).isoformat(),
                 })
-
-            # Update best_verdict: VULNERABLE > INCONCLUSIVE > NOT_VULNERABLE
             _verdict_rank = {"VULNERABLE": 3, "INCONCLUSIVE": 2, "NOT_VULNERABLE": 1}
             if _verdict_rank.get(verdict, 0) > _verdict_rank.get(entry["best_verdict"], 0):
                 entry["best_verdict"] = verdict
 
-        # Overall verdict for this CVE
-        if verdict_counts["VULNERABLE"] > 0:
+        # ------------------------------------------------------------------
+        # Phase 3: False-positive verification — triggered by ANY VULNERABLE
+        # ------------------------------------------------------------------
+        if vulnerable_found:
+            triggering = next((a for a in attempts if a["verdict"] == "VULNERABLE"), None)
+            print(f"\n  [VERIFY] VULNERABLE found — running {CVE_VERIFY_ATTEMPTS} independent verifier(s) ...")
+            verify_confirmed = 0
+            for v_i in range(1, CVE_VERIFY_ATTEMPTS + 1):
+                sp = _Spinner(f"  [V{v_i}/{CVE_VERIFY_ATTEMPTS}] Generating verifier ...").start()
+                v_gen = _generate_verification_script(cve, target, triggering)
+                if not v_gen:
+                    sp.stop(" SKIPPED (LLM parse failure)")
+                    verification_results.append({
+                        "verifier_num": v_i, "strategy": "LLM parse failure",
+                        "language": "", "script": "", "output": "", "verdict": "INCONCLUSIVE",
+                    })
+                    continue
+                sp.stop()
+
+                v_lang   = v_gen["language"]
+                v_strat  = v_gen["strategy"]
+                v_script = v_gen["script"]
+                v_ext    = ".py" if v_lang == "python" else ".sh"
+                safe_cve = re.sub(r"[^a-zA-Z0-9_-]", "_", cve_id)
+                v_path   = os.path.join(cve_tests_dir, f"{safe_cve}_verify_{v_i:02d}{v_ext}")
+                with open(v_path, "w", encoding="utf-8") as fh:
+                    fh.write(v_script)
+
+                print(f"  Verifier strategy: {v_strat}")
+                sp2 = _Spinner(f"  [V{v_i}/{CVE_VERIFY_ATTEMPTS}] Running verifier ({v_lang}) ...").start()
+                v_result = await asyncio.get_event_loop().run_in_executor(
+                    None, lambda s=v_script, l=v_lang: _run_script(s, l, cve_tests_dir, timeout=30)
+                )
+                v_output = v_result["output"]
+                if v_result["timed_out"]:
+                    v_output = f"[TIMED OUT]\n{v_output}"
+                elif v_result["error"]:
+                    v_output = f"[ERROR: {v_result['error']}]\n{v_output}"
+                vm = re.search(r"VERDICT:\s*(VULNERABLE|NOT_VULNERABLE|INCONCLUSIVE)", v_output)
+                v_verdict = vm.group(1) if vm else "INCONCLUSIVE"
+                if v_verdict == "VULNERABLE":
+                    verify_confirmed += 1
+                sp2.stop(f" {v_verdict}")
+
+                verification_results.append({
+                    "verifier_num": v_i,
+                    "strategy":    v_strat,
+                    "language":    v_lang,
+                    "script":      v_script,
+                    "output":      v_output[:600],
+                    "verdict":     v_verdict,
+                })
+
+            verified = verify_confirmed >= 1
+            if verified:
+                print(f"  [VERIFY] CONFIRMED ({verify_confirmed}/{CVE_VERIFY_ATTEMPTS} verifiers agree)")
+            else:
+                print(f"  [VERIFY] UNCONFIRMED — possible false positive "
+                      f"({verify_confirmed}/{CVE_VERIFY_ATTEMPTS} verifiers agree)")
+
+        # ------------------------------------------------------------------
+        # Overall verdict
+        # ------------------------------------------------------------------
+        if vulnerable_found and verified:
+            overall = "CONFIRMED_VULNERABLE"
+        elif vulnerable_found:
             overall = "VULNERABLE"
-        elif verdict_counts["NOT_VULNERABLE"] >= max(1, CVE_TEST_ATTEMPTS // 2 + 1):
+        elif verdict_counts["NOT_VULNERABLE"] >= max(1, len(attempts) // 2 + 1):
             overall = "NOT_VULNERABLE"
         else:
             overall = "INCONCLUSIVE"
 
-        clean_attempts = verdict_counts["VULNERABLE"] + verdict_counts["NOT_VULNERABLE"]
         cve_elapsed = _fmt_dur(time.monotonic() - cve_start)
         print(f"  Overall : {overall}  "
               f"(V:{verdict_counts['VULNERABLE']} N:{verdict_counts['NOT_VULNERABLE']} "
-              f"I:{verdict_counts['INCONCLUSIVE']}, {clean_attempts} clean)  "
+              f"I:{verdict_counts['INCONCLUSIVE']}, KB:{kb_count} replayed)  "
               f"[CVE time: {cve_elapsed}]")
 
         cve_test_results.append({
-            "cve_id":         cve_id,
-            "vulnerability_type": cve.get("vulnerability_type", ""),
-            "service":        cve.get("service", ""),
-            "overall_verdict": overall,
-            "verdict_counts": verdict_counts,
-            "attempts_run":   len(attempts),
-            "attempts":       attempts,
+            "cve_id":               cve_id,
+            "vulnerability_type":   cve.get("vulnerability_type", ""),
+            "service":              cve.get("service", ""),
+            "overall_verdict":      overall,
+            "verdict_counts":       verdict_counts,
+            "attempts_run":         len(attempts),
+            "kb_replayed":          kb_count,
+            "verified":             verified,
+            "verification_results": verification_results,
+            "attempts":             attempts,
         })
 
     return cve_test_results, kb
