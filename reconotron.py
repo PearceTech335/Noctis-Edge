@@ -67,7 +67,7 @@ CVE_TEST_ATTEMPTS = 5    # number of independent LLM script attempts per CVE (in
 INTERNET_ONLY_TOOLS = {"amass", "dnsenum", "dnsrecon"}
 
 # ---------------------------------------------------------------------------
-# TOOL CONFIDENCE WEIGHTS  (todo item 11)
+# TOOL CONFIDENCE WEIGHTS
 # ---------------------------------------------------------------------------
 
 TOOL_CONFIDENCE: dict = {
@@ -689,7 +689,7 @@ async def run_dns_enum(domain, available_tools):
 
 
 # ---------------------------------------------------------------------------
-# MYSQL ENUMERATION  (todo item 19)
+# MYSQL ENUMERATION
 # ---------------------------------------------------------------------------
 
 async def run_mysql_enum(host, port, available_tools):
@@ -740,7 +740,7 @@ async def run_mysql_enum(host, port, available_tools):
 
 
 # ---------------------------------------------------------------------------
-# MSSQL ENUMERATION  (todo items 20 + 21 NetExec)
+# MSSQL ENUMERATION
 # ---------------------------------------------------------------------------
 
 async def run_mssql_enum(host, port, available_tools):
@@ -770,7 +770,7 @@ async def run_mssql_enum(host, port, available_tools):
         )
         findings.append(f)
 
-    # NetExec preferred over legacy CrackMapExec  (todo item 21)
+    # NetExec preferred over legacy CrackMapExec
     if "nxc" in available_tools:
         nxc_out = await run_command_async(
             ["nxc", "mssql", host, "-p", port], timeout=20
@@ -781,7 +781,7 @@ async def run_mssql_enum(host, port, available_tools):
 
 
 # ---------------------------------------------------------------------------
-# CVE LOOKUP  (todo item 9)
+# CVE LOOKUP
 # ---------------------------------------------------------------------------
 # CVE ENRICHMENT METADATA
 # ---------------------------------------------------------------------------
@@ -1198,7 +1198,7 @@ def cves_for_service(service):
 
 
 # ---------------------------------------------------------------------------
-# NMAP  (todo item 5)
+# NMAP
 # ---------------------------------------------------------------------------
 
 def run_nmap(target):
@@ -1297,7 +1297,7 @@ def rank_and_annotate_services(services):
 
 
 # ---------------------------------------------------------------------------
-# VERIFICATION STAGE  (todo item 3)
+# VERIFICATION STAGE
 # ---------------------------------------------------------------------------
 
 async def verify_finding(finding):
@@ -1603,7 +1603,7 @@ async def execute_async(action, available_tools, session_dir=None):
 
 
 # ---------------------------------------------------------------------------
-# SESSION MANAGEMENT  (todo item 7)
+# SESSION MANAGEMENT
 # ---------------------------------------------------------------------------
 
 def save_session(state):
@@ -1648,7 +1648,7 @@ def find_latest_session_dir(target):
 
 
 # ---------------------------------------------------------------------------
-# HTML / PDF REPORTING  (todo item 12)
+# HTML / PDF REPORTING
 # ---------------------------------------------------------------------------
 
 HTML_TEMPLATE = """<!DOCTYPE html>
@@ -2438,14 +2438,14 @@ async def main_async():
     print(f"  Session : {session_id}")
     print(f"  Dir     : {session_dir}")
 
-    # Tool validation  (todo item 22)
+    # Tool validation
     available_tools, unavailable_tools = validate_tools()
     if AIRGAP_MODE:
         for t in INTERNET_ONLY_TOOLS:
             available_tools.pop(t, None)
     print_tool_status(available_tools, unavailable_tools)
 
-    # Session resume  (todo item 7)
+    # Session resume
     if resume:
         if resume_state:
             print(f"[+] Resuming session for {resume_state.get('target', target)} "
@@ -2453,7 +2453,7 @@ async def main_async():
         else:
             print("[!] No saved session found — starting fresh.")
 
-    # Nmap  (todo item 5)
+    # Nmap
     nmap_xml = run_nmap(target)
     services = parse_nmap(nmap_xml)
 
@@ -2558,7 +2558,7 @@ async def main_async():
             if findings:
                 print(f"[+] {len(findings)} structured finding(s) extracted")
 
-        # Verification stage  (todo item 3)
+        # Verification stage
         if findings and not broken:
             findings = await verify_findings_batch(findings)
             all_findings.extend(findings)

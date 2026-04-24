@@ -2,7 +2,7 @@
 
 **AI-Assisted Penetration Testing Platform**
 
-ReconoTron is a single-file Python tool that runs an automated, LLM-guided penetration test against a target, collects and verifies findings, generates HTML/PDF reports, and optionally validates CVEs using Metasploit or LLM-generated probe scripts.
+ReconoTron is a Python-based AI-assisted penetration testing platform. It runs an automated, LLM-guided penetration test against a target, collects and verifies findings, generates HTML/PDF reports, and optionally validates CVEs using Metasploit or LLM-generated probe scripts. It can be run from the **command line** (`reconotron.py`) or via the included **Tkinter GUI** (`reconotron_gui.py`).
 
 ---
 
@@ -52,6 +52,8 @@ Run `./update.sh` monthly to keep all components current.
 
 ## Quick Start
 
+### Command Line
+
 ```bash
 # Standard web scan:
 python3 reconotron.py 192.168.0.1
@@ -71,6 +73,25 @@ python3 reconotron.py 192.168.0.1 --aggressive --msf-validate --cve-test
 # Resume an interrupted scan:
 python3 reconotron.py 192.168.0.1 --resume
 ```
+
+### GUI
+
+A Tkinter-based graphical front-end is included for users who prefer not to use the terminal:
+
+```bash
+source .venv/bin/activate
+python3 reconotron_gui.py
+```
+
+The GUI provides:
+
+- **Target** field and **Profile** dropdown (`web`, `external`, `internal_ad`, `api`, `cloud`)
+- Checkboxes for all scan flags (`--aggressive`, `--airgap`, `--msf-validate`, `--cve-test`, `--resume`)
+- Live colour-coded terminal output (findings highlighted in green/amber/red)
+- **Prompt reply** input bar with quick **Y** / **N** buttons for approval gates
+- Stop button to terminate a running scan at any time
+
+The GUI launches `reconotron.py` as a subprocess — all behaviour, output, and session files are identical to the command-line version.
 
 ---
 
