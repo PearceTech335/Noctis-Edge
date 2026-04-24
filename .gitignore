@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Large wordlists (not needed — program uses system SecLists)
+WordLists/rockyou.txt
+
+# CVE database (57 MB CSV — regenerate with CVE/cve-offline/updatecsv.sh)
+CVE/cve-offline/cve-summary.csv
+
+# Embedded git repos — tracked separately, not as submodules
+CVE/cve-offline/
+rdpscan/
+
+# Scan session data (runtime output — not source code)
+sessions/
+session.json
+
+# Nikto scan output files
+nikto_*.txt
+
+# Database files
+reconotron.db
+*.db
+*.sqlite
+
+# CVE knowledge base (runtime data — accumulates per-machine over time)
+cve_knowledge_base.json
+
+# IDE / tool config
+.continue/
+.idea/
+.vscode/
+
+# OS noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
