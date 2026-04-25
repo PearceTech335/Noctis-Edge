@@ -11,7 +11,7 @@ import subprocess
 import sys
 import threading
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, filedialog
 
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 RECONOTRON  = os.path.join(BASE_DIR, "reconotron.py")
@@ -214,7 +214,10 @@ class ReconoTronGUI:
         self.stop_btn.pack(side=tk.LEFT, padx=(0, 6))
 
         _flat_btn(toolbar, "Clear", self._clear_output,
-                  BG_PANEL, fg=FG_DIM).pack(side=tk.LEFT, padx=(0, 16))
+                  BG_PANEL, fg=FG_DIM).pack(side=tk.LEFT, padx=(0, 6))
+
+        _flat_btn(toolbar, "Report", self._generate_report,
+                  "#7d3c98").pack(side=tk.LEFT, padx=(0, 16))
 
         self.cmd_label = tk.Label(
             toolbar, text="", bg=BG, fg=FG_DIM,
@@ -344,8 +347,12 @@ class ReconoTronGUI:
         if cmd is None:
             return
 
-        self._clear_output()
         display = " ".join(cmd[3:])   # strip python + -u + script path
+        self._launch_process(cmd, display)
+
+    def _launch_process(self, cmd: list[str], display: str):
+        """Start a reconotron.py subprocess and stream its output."""
+        self._clear_output()
         self.cmd_label.configure(text=f"$ python3 reconotron.py {display}")
         self._append(f"[*] Launching: python3 reconotron.py {display}\n\n")
         self._set_status("Running …")
@@ -366,6 +373,23 @@ class ReconoTronGUI:
             env=env,
         )
         threading.Thread(target=self._reader_thread, daemon=True).start()
+
+    def _generate_report(self):
+        """Open a JSON report file and regenerate HTML/PDF via reconotron.py --report."""
+        if self.running:
+            messagebox.showwarning(
+                "Busy",
+                "A process is already running. Please wait for it to finish.",
+            )
+            return
+        json_file = filedialog.askopenfilename(
+            title="Select JSON Report File",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+        )
+        if not json_file:
+            return
+        cmd = [PYTHON, "-u", RECONOTRON, "--report", json_file]
+        self._launch_process(cmd, f"--report \"{json_file}\"")
 
     def _stop_scan(self):
         if self.process and self.process.poll() is None:

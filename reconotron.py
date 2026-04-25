@@ -2812,6 +2812,7 @@ async def main_async():
 
     if len(sys.argv) < 2:
         print("Usage: python3 reconotron.py <target> [profile ...] [--resume] [--aggressive] [--airgap] [--msf-validate] [--cve-test]")
+        print("       python3 reconotron.py --report <json_file>")
         print("Profiles (one or more):", ", ".join(PROFILES))
         sys.exit(1)
 
@@ -3145,11 +3146,76 @@ async def main_async():
 
 
 # ---------------------------------------------------------------------------
+# REPORT-FROM-JSON
+# ---------------------------------------------------------------------------
+
+def _report_from_json(json_path: str):
+    """Load an existing JSON report and regenerate HTML/PDF outputs."""
+    if not os.path.isfile(json_path):
+        print(f"[-] File not found: {json_path}")
+        sys.exit(1)
+
+    print(f"[*] Loading report from: {json_path}")
+    with open(json_path, encoding="utf-8") as fh:
+        report = json.load(fh)
+
+    base      = os.path.splitext(os.path.abspath(json_path))[0]
+    html_path = base + ".html"
+    pdf_path  = base + ".pdf"
+
+    html_content = generate_html_report(report)
+    with open(html_path, "w", encoding="utf-8") as fh:
+        fh.write(html_content)
+    print(f"[+] HTML report → {html_path}")
+
+    pdf_ok = generate_pdf_report(html_content, pdf_path)
+    if pdf_ok:
+        print(f"[+] PDF  report → {pdf_path}")
+
+    target = report.get("target", "unknown")
+    counts = report.get("counts", {})
+    print(f"\n{'=' * 52}")
+    print("  REPORT SUMMARY")
+    print(f"{'=' * 52}")
+    print(f"  Target    : {target}")
+    print(f"  Profile   : {report.get('profile', 'unknown')}")
+    svc_strs = [f"{s.get('name', '')}:{s.get('port', '')}" for s in report.get("services", [])]
+    print(f"  Services  : {', '.join(svc_strs) or 'none'}")
+    print(f"\n  Severity Breakdown:")
+    print(f"    Critical : {counts.get('critical', 0)}")
+    print(f"    High     : {counts.get('high', 0)}")
+    print(f"    Medium   : {counts.get('medium', 0)}")
+    print(f"    Low      : {counts.get('low', 0)}")
+    print(f"    Info     : {counts.get('info', 0)}")
+
+    cve_matches = report.get("cve_matches", [])
+    if cve_matches:
+        print(f"\n  CVE Matches: {len(cve_matches)}")
+        for c in cve_matches[:5]:
+            print(f"    [{c.get('severity', '?'):8}] {c.get('cve_id', '')} — {c.get('summary', '')[:60]}")
+
+    print(f"\n  Conclusion : {report.get('conclusion', '')}")
+    print(f"\n  Reports:")
+    print(f"    JSON : {json_path}")
+    print(f"    HTML : {html_path}")
+    if pdf_ok:
+        print(f"    PDF  : {pdf_path}")
+    print(f"{'=' * 52}")
+
+
+# ---------------------------------------------------------------------------
 # ENTRY POINT
 # ---------------------------------------------------------------------------
 
 def main():
-    asyncio.run(main_async())
+    if "--report" in sys.argv:
+        idx = sys.argv.index("--report")
+        if idx + 1 >= len(sys.argv):
+            print("Usage: python3 reconotron.py --report <json_file>")
+            sys.exit(1)
+        _report_from_json(sys.argv[idx + 1])
+    else:
+        asyncio.run(main_async())
 
 
 if __name__ == "__main__":
