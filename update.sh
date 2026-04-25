@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  ReconoTron — Monthly Update Script
+#  NoctisCore — Monthly Update Script
 #  Run: ./update.sh
 #  Updates: apt packages, snap, pip deps, nuclei, Ollama model, CVE database
 # =============================================================================
@@ -131,13 +131,13 @@ else
 fi
 
 # =============================================================================
-# 7. ReconoTron itself
+# 7. NoctisCore itself
 # =============================================================================
-header "7/7  ReconoTron repository"
+header "7/7  NoctisCore repository"
 if [[ -d "$SCRIPT_DIR/.git" ]]; then
-    info "Pulling latest ReconoTron ..."
+    info "Pulling latest NoctisCore ..."
     git -C "$SCRIPT_DIR" pull --quiet \
-        && ok "ReconoTron up to date" \
+        && ok "NoctisCore up to date" \
         || err "git pull failed (may have uncommitted changes)"
 else
     info "No .git directory found — skipping self-update"

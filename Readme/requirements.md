@@ -1,6 +1,6 @@
-# ReconoTron — Setup & Requirements
+# NoctisCore — Setup & Requirements
 
-A complete, repeatable setup guide for the ReconoTron AI-Assisted Penetration Testing Platform.
+A complete, repeatable setup guide for the NoctisCore AI-Assisted Penetration Testing Platform.
 Follow each section in order on a fresh Kali/Parrot/Debian-based system.
 
 ---
@@ -8,8 +8,8 @@ Follow each section in order on a fresh Kali/Parrot/Debian-based system.
 ## 1. Clone the Repository
 
 ```bash
-git clone --recurse-submodules https://github.com/PearceTech335/ReconoTron.git
-cd ReconoTron
+git clone --recurse-submodules https://github.com/PearceTech335/NoctisCore.git
+cd NoctisCore
 ```
 
 ---
@@ -38,7 +38,7 @@ sudo apt update && sudo apt install -y \
 
 | Package              | Purpose                                                  |
 |----------------------|----------------------------------------------------------|
-| `python3`            | Runtime for ReconoTron                                   |
+| `python3`            | Runtime for NoctisCore                                   |
 | `python3-venv`       | Creates isolated Python virtual environments             |
 | `python3-pip`        | Python package installer                                 |
 | `nmap`               | Port and service discovery                               |
@@ -63,7 +63,7 @@ sudo apt update && sudo apt install -y \
 sudo snap install seclists
 ```
 
-Snap installs the wordlists to `/snap/seclists/current/`. ReconoTron will look for
+Snap installs the wordlists to `/snap/seclists/current/`. NoctisCore will look for
 its primary wordlist at `/snap/seclists/current/Discovery/Web-Content/common.txt`
 automatically at startup.
 
@@ -72,11 +72,11 @@ automatically at startup.
 ## 3. Python Virtual Environment
 
 > **Always create and activate the venv before running any `pip install` commands.**
-> This keeps ReconoTron's dependencies isolated from system Python packages
+> This keeps NoctisCore's dependencies isolated from system Python packages
 > and makes the environment fully reproducible.
 
 ```bash
-# From the ReconoTron project root:
+# From the NoctisCore project root:
 python3 -m venv .venv
 
 # Activate the venv (do this every time you open a new terminal):
@@ -144,20 +144,20 @@ nuclei -update-templates
 
 ## 6. Ollama (Local LLM)
 
-ReconoTron uses a local Ollama instance to drive its AI reasoning loop.
+NoctisCore uses a local Ollama instance to drive its AI reasoning loop.
 
 ```bash
 # Install Ollama:
 curl -fsSL https://ollama.com/install.sh | sh
 
-# Pull the model used by ReconoTron:
+# Pull the model used by NoctisCore:
 ollama pull qwen2.5-coder:7b-instruct-q4_k_m
 
-# Start the Ollama server (must be running before launching ReconoTron):
+# Start the Ollama server (must be running before launching NoctisCore):
 ollama serve
 ```
 
-Ollama listens on `http://localhost:11434` by default. ReconoTron will fail to start if
+Ollama listens on `http://localhost:11434` by default. NoctisCore will fail to start if
 this service is not running.
 
 ---
@@ -168,7 +168,7 @@ Nikto is included as a **git submodule** pointing to [sullo/nikto](https://githu
 No separate install is required — it is cloned automatically when you use `--recurse-submodules`:
 
 ```bash
-git clone --recurse-submodules https://github.com/PearceTech335/ReconoTron.git
+git clone --recurse-submodules https://github.com/PearceTech335/NoctisCore.git
 ```
 
 If you already cloned without that flag, initialise it manually:
@@ -205,7 +205,7 @@ cd CVE/cve-offline && git pull && ./updatecsv.sh && cd ../..
 
 ## 9. Wordlists
 
-ReconoTron uses `seclists` (installed via snap in Section 2b) as its primary wordlist source.
+NoctisCore uses `seclists` (installed via snap in Section 2b) as its primary wordlist source.
 No internet access is required at runtime — the files are on disk after the snap install.
 
 At startup the program looks for the wordlist in this order:
@@ -219,14 +219,14 @@ To verify the wordlist is present after a fresh install:
 ls /snap/seclists/current/Discovery/Web-Content/common.txt
 ```
 
-`rockyou.txt` is a password list and is **not used** by ReconoTron for directory enumeration.
+`rockyou.txt` is a password list and is **not used** by NoctisCore for directory enumeration.
 It does not need to be present.
 
 ---
 
 ## 10. CVE Test Phase (`--cve-test`)
 
-The `--cve-test` flag enables an additional post-scan phase where ReconoTron uses the LLM
+The `--cve-test` flag enables an additional post-scan phase where NoctisCore uses the LLM
 to generate and execute safe, read-only probe scripts for each CVE discovered during the scan.
 
 ### How it works

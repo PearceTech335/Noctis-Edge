@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  ReconoTron — One-Shot Setup Script
+#  NoctisCore — One-Shot Setup Script
 #
 #  Run once on a fresh Kali / Parrot / Debian-based system after cloning:
 #
