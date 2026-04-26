@@ -34,10 +34,10 @@ OLLAMA_MODEL="qwen2.5-coder:7b-instruct-q4_k_m"
 CVE_REPO="https://github.com/trickest/cve.git"
 CVE_OFFLINE_REPO="https://github.com/trickest/cve-offline.git"
 
-# Fallback: use the cve-offline repo that ships the needed scripts
-CVE_OFFLINE_ACTUAL="https://github.com/PearceTech335/cve-offline.git"
+# Fallback upstream for cve-offline scripts
+CVE_OFFLINE_ACTUAL="https://github.com/trickest/cve-offline.git"
 
-RDPSCAN_REPO="https://github.com/PearceTech335/rdpscan.git"
+RDPSCAN_REPO="https://github.com/PearceTech335/NoctisEdge.git"
 
 # ── colour helpers ──────────────────────────────────────────────────────────
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; CYAN='\033[0;36m'; NC='\033[0m'
@@ -205,13 +205,12 @@ ok "Python packages installed (requests, jinja2, pycryptodome)"
 header "8/10  CVE offline database"
 CVE_DIR="$SCRIPT_DIR/CVE/cve-offline"
 
-if [[ -d "$CVE_DIR/.git" ]]; then
-    skip "CVE/cve-offline already cloned — skipping (run ./update.sh to refresh)"
+if [[ -d "$CVE_DIR" && -f "$CVE_DIR/updatecsv.sh" ]]; then
+    skip "CVE/cve-offline already present — skipping (run ./update.sh to refresh)"
 else
     info "Cloning CVE offline database ..."
     mkdir -p "$SCRIPT_DIR/CVE"
 
-    # Try the project-specific mirror first, fall back gracefully
     if git clone --depth=1 "$CVE_OFFLINE_ACTUAL" "$CVE_DIR" 2>/dev/null; then
         ok "CVE/cve-offline cloned"
     else
@@ -237,8 +236,8 @@ fi
 header "9/10  rdpscan (RDP scanner helper)"
 RDPSCAN_DIR="$SCRIPT_DIR/rdpscan"
 
-if [[ -d "$RDPSCAN_DIR/.git" ]]; then
-    skip "rdpscan already cloned at $RDPSCAN_DIR"
+if [[ -d "$RDPSCAN_DIR" && -n "$(ls -A "$RDPSCAN_DIR" 2>/dev/null)" ]]; then
+    skip "rdpscan already present at $RDPSCAN_DIR"
 else
     info "Cloning rdpscan ..."
     if git clone --depth=1 "$RDPSCAN_REPO" "$RDPSCAN_DIR" 2>/dev/null; then
@@ -292,7 +291,7 @@ echo "  Next steps:"
 echo ""
 echo "  1. Start Ollama:           ollama serve"
 echo "  2. Activate the venv:      source .venv/bin/activate"
-echo "  3. Run a scan:             python3 reconotron.py <target>"
+echo "  3. Run a scan:             python3 noctis.py <target>"
 echo ""
 echo "  Run ./update.sh monthly to keep everything current."
 echo ""
