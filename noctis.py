@@ -2811,8 +2811,8 @@ async def main_async():
     global SAFE_MODE, AIRGAP_MODE, MSF_VALIDATE, CVE_TEST, SESSION_FILE
 
     if len(sys.argv) < 2:
-        print("Usage: python3 reconotron.py <target> [profile ...] [--resume] [--aggressive] [--airgap] [--msf-validate] [--cve-test]")
-        print("       python3 reconotron.py --report <json_file>")
+        print("Usage: python3 noctis.py <target> [profile ...] [--resume] [--aggressive] [--airgap] [--msf-validate] [--cve-test]")
+        print("       python3 noctis.py --report <json_file>")
         print("Profiles (one or more):", ", ".join(PROFILES))
         sys.exit(1)
 
@@ -3211,7 +3211,7 @@ def main():
     if "--report" in sys.argv:
         idx = sys.argv.index("--report")
         if idx + 1 >= len(sys.argv):
-            print("Usage: python3 reconotron.py --report <json_file>")
+            print("Usage: python3 noctis.py --report <json_file>")
             sys.exit(1)
         _report_from_json(sys.argv[idx + 1])
     else:

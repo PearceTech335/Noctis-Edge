@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Noctis Edge GUI — Tkinter front-end for reconotron.py
+Noctis Edge GUI — Tkinter front-end for noctis.py
 
-Run with:  python3 reconotron_gui.py
+Run with:  python3 noctis_gui.py
 """
 
 import os
@@ -14,7 +14,7 @@ import tkinter as tk
 from tkinter import messagebox, filedialog
 
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
-RECONOTRON  = os.path.join(BASE_DIR, "reconotron.py")
+NOCTIS      = os.path.join(BASE_DIR, "noctis.py")
 PYTHON      = sys.executable
 
 # ── Colour palette (VS Code Dark+ inspired) ────────────────────────────────
@@ -101,7 +101,7 @@ class _Tooltip:
 
 # ── Main application ────────────────────────────────────────────────────────
 
-class ReconoTronGUI:
+class NoctisEdgeGUI:
     def __init__(self, root: tk.Tk):
         self.root    = root
         self.process: subprocess.Popen | None = None
@@ -334,7 +334,7 @@ class ReconoTronGUI:
         selected_profiles = [p for p, var in self.profile_vars.items() if var.get()]
         if not selected_profiles:
             selected_profiles = ["web"]
-        cmd = [PYTHON, "-u", RECONOTRON, target] + selected_profiles
+        cmd = [PYTHON, "-u", NOCTIS, target] + selected_profiles
         for flag, var in self.flag_vars.items():
             if var.get():
                 cmd.append(flag)
@@ -351,10 +351,10 @@ class ReconoTronGUI:
         self._launch_process(cmd, display)
 
     def _launch_process(self, cmd: list[str], display: str):
-        """Start a reconotron.py subprocess and stream its output."""
+        """Start a noctis.py subprocess and stream its output."""
         self._clear_output()
-        self.cmd_label.configure(text=f"$ python3 reconotron.py {display}")
-        self._append(f"[*] Launching: python3 reconotron.py {display}\n\n")
+        self.cmd_label.configure(text=f"$ python3 noctis.py {display}")
+        self._append(f"[*] Launching: python3 noctis.py {display}\n\n")
         self._set_status("Running …")
         self.run_btn.configure(state=tk.DISABLED)
         self.stop_btn.configure(state=tk.NORMAL)
@@ -375,7 +375,7 @@ class ReconoTronGUI:
         threading.Thread(target=self._reader_thread, daemon=True).start()
 
     def _generate_report(self):
-        """Open a JSON report file and regenerate HTML/PDF via reconotron.py --report."""
+        """Open a JSON report file and regenerate HTML/PDF via noctis.py --report."""
         if self.running:
             messagebox.showwarning(
                 "Busy",
@@ -388,7 +388,7 @@ class ReconoTronGUI:
         )
         if not json_file:
             return
-        cmd = [PYTHON, "-u", RECONOTRON, "--report", json_file]
+        cmd = [PYTHON, "-u", NOCTIS, "--report", json_file]
         self._launch_process(cmd, f"--report \"{json_file}\"")
 
     def _stop_scan(self):
@@ -478,7 +478,7 @@ class ReconoTronGUI:
 
 def main():
     root = tk.Tk()
-    ReconoTronGUI(root)
+    NoctisEdgeGUI(root)
     root.mainloop()
 
 

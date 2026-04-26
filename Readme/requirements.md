@@ -257,10 +257,10 @@ the same `requests` dependency already required for Ollama communication. No ext
 
 ```bash
 # Run a scan and enable CVE testing:
-python reconotron.py <target> web --cve-test
+python noctis.py <target> web --cve-test
 
 # Run with Metasploit validation AND CVE testing:
-python reconotron.py <target> --msf-validate --cve-test
+python noctis.py <target> --msf-validate --cve-test
 ```
 
 ### Timing expectations
@@ -306,7 +306,7 @@ sudo apt install -y metasploit-framework
 
 ## 12. Quick-Start Checklist
 
-Before running `python reconotron.py`, confirm:
+Before running `python noctis.py`, confirm:
 
 - [ ] Virtual environment is activated: `source .venv/bin/activate`
 - [ ] Ollama is running: `ollama serve`
@@ -317,11 +317,11 @@ Before running `python reconotron.py`, confirm:
 ```bash
 # Standard scan:
 source .venv/bin/activate
-python reconotron.py 192.168.0.1
+python noctis.py 192.168.0.1
 
 # Web assessment with CVE testing enabled:
-python reconotron.py 192.168.0.1 web --cve-test
+python noctis.py 192.168.0.1 web --cve-test
 
 # Aggressive scan with Metasploit validation and CVE testing:
-python reconotron.py 192.168.0.1 --aggressive --msf-validate --cve-test
+python noctis.py 192.168.0.1 --aggressive --msf-validate --cve-test
 ```

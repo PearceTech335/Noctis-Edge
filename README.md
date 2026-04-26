@@ -314,7 +314,7 @@ The following are excluded from version control (see `.gitignore`):
 |------|--------|
 | `sessions/` | Runtime scan output |
 | `cve_knowledge_base.json` | Machine-specific accumulated data |
-| `reconotron.db` | Runtime database |
+| `noctis.db` | Runtime database |
 | `WordLists/rockyou.txt` | 139 MB — not needed for directory enumeration |
 | `CVE/cve-offline/cve-summary.csv` | 57 MB — regenerate with `updatecsv.sh` |
 | `CVE/cve-offline/` | Separate git repo |
