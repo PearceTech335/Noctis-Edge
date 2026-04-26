@@ -2,7 +2,7 @@
 
 **Security Through Exposure**
 
-Noctis Edge is a Python-based AI-assisted penetration testing platform. It runs an automated, LLM-guided penetration test against a target, collects and verifies findings, generates HTML/PDF reports, and optionally validates CVEs using Metasploit or LLM-generated probe scripts. It can be run from the **command line** (`reconotron.py`) or via the included **Tkinter GUI** (`reconotron_gui.py`).
+Noctis Edge is a Python-based AI-assisted penetration testing platform. It runs an automated, LLM-guided penetration test against a target, collects and verifies findings, generates HTML/PDF reports, and optionally validates CVEs using Metasploit or LLM-generated probe scripts. It can be run from the **command line** (`noctis.py`) or via the included **Tkinter GUI** (`noctis_gui.py`).
 
 ---
 
@@ -43,7 +43,7 @@ After setup completes:
 ```bash
 ollama serve &               # start the LLM server
 source .venv/bin/activate    # activate the Python venv
-python3 reconotron.py <target>
+python3 noctis.py <target>
 ```
 
 Run `./update.sh` monthly to keep all components current.
@@ -56,28 +56,28 @@ Run `./update.sh` monthly to keep all components current.
 
 ```bash
 # Standard web scan:
-python3 reconotron.py 192.168.0.1
+python3 noctis.py 192.168.0.1
 
 # Single profile:
-python3 reconotron.py 192.168.0.1 web
+python3 noctis.py 192.168.0.1 web
 
 # Multiple profiles (tools from both are merged):
-python3 reconotron.py 192.168.0.1 web external
+python3 noctis.py 192.168.0.1 web external
 
 # Three profiles at once:
-python3 reconotron.py 192.168.0.1 web external api
+python3 noctis.py 192.168.0.1 web external api
 
 # With CVE test scripts:
-python3 reconotron.py 192.168.0.1 web --cve-test
+python3 noctis.py 192.168.0.1 web --cve-test
 
 # No internet access:
-python3 reconotron.py 192.168.0.1 --airgap
+python3 noctis.py 192.168.0.1 --airgap
 
 # Full aggressive run:
-python3 reconotron.py 192.168.0.1 --aggressive --msf-validate --cve-test
+python3 noctis.py 192.168.0.1 --aggressive --msf-validate --cve-test
 
 # Resume an interrupted scan:
-python3 reconotron.py 192.168.0.1 --resume
+python3 noctis.py 192.168.0.1 --resume
 ```
 
 ### GUI
@@ -86,7 +86,7 @@ A Tkinter-based graphical front-end is included for users who prefer not to use 
 
 ```bash
 source .venv/bin/activate
-python3 reconotron_gui.py
+python3 noctis_gui.py
 ```
 
 The GUI provides:
@@ -98,7 +98,7 @@ The GUI provides:
 - **Prompt reply** input bar with quick **Y** / **N** buttons for approval gates
 - Stop button to terminate a running scan at any time
 
-The GUI launches `reconotron.py` as a subprocess — all behaviour, output, and session files are identical to the command-line version.
+The GUI launches `noctis.py` as a subprocess — all behaviour, output, and session files are identical to the command-line version.
 
 ---
 
@@ -225,7 +225,7 @@ cve_knowledge_base.json           ← cross-engagement CVE test KB (project root
 
 ---
 
-## Configuration (top of `reconotron.py`)
+## Configuration (top of `noctis.py`)
 
 | Constant | Default | Description |
 |----------|---------|-------------|
