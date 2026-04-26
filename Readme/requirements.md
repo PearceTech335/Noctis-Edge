@@ -283,8 +283,9 @@ a CPU-only machine. Progress is shown as:
 
 ## 11. Optional Tools (OSINT / AD Assessment)
 
-These tools are only needed for specific assessment profiles. They are skipped
-automatically in `--airgap` mode.
+These tools are only needed for specific assessment profiles. `dnsenum` and
+`dnsrecon` are installed by `setup.sh` so DNS enumeration works out of the box.
+Internet-dependent tooling is still skipped automatically in `--airgap` mode.
 
 ```bash
 # NetExec (replaces CrackMapExec) — internal AD / SMB / MSSQL enumeration:
@@ -293,7 +294,7 @@ pip install netexec          # or follow https://github.com/Pennyw0rth/NetExec
 # amass — external subdomain enumeration (internet required):
 sudo apt install -y amass
 
-# dnsenum / dnsrecon — DNS enumeration:
+# dnsenum / dnsrecon — DNS enumeration (installed by setup.sh, listed here for manual installs):
 sudo apt install -y dnsenum dnsrecon
 
 # Metasploit — non-destructive CVE validation probes (--msf-validate flag):

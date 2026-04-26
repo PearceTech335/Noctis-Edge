@@ -24,19 +24,19 @@ chmod +x setup.sh
 | Step | What gets installed |
 |------|---------------------|
 | Git submodules | `nikto/` — cloned from [sullo/nikto](https://github.com/sullo/nikto) |
-| apt packages | `nmap`, `curl`, `gobuster`, `ffuf`, `hydra`, `ssh-audit`, `perl`, `golang-go`, and more |
+| apt packages | `nmap`, `curl`, `gobuster`, `ffuf`, `hydra`, `ssh-audit`, `dnsenum`, `dnsrecon`, `perl`, `golang-go`, and more |
 | SecLists | Wordlists via `snap install seclists` |
 | Nuclei | Go-based template scanner (`~/go/bin/nuclei`) |
 | Ollama | Local LLM server + pulls `qwen2.5-coder:7b-instruct-q4_k_m` |
 | Python venv | `.venv/` with `requests`, `jinja2`, `pycryptodome` |
 | CVE database | Clones `CVE/cve-offline/` and builds `cve-summary.csv` |
 | rdpscan | Clones `rdpscan/` helper |
-| Optional tools | `amass`, `dnsenum`, `dnsrecon`, `metasploit-framework` |
+| Additional tools | `amass`, `metasploit-framework` |
 
-You can skip optional/heavy steps with env flags:
+You can skip extra/heavy steps with env flags:
 ```bash
 NO_MSF=1 ./setup.sh          # skip Metasploit
-NO_OPTIONAL=1 ./setup.sh     # skip all optional tools
+NO_OPTIONAL=1 ./setup.sh     # skip amass + Metasploit
 ```
 
 After setup completes:
@@ -251,7 +251,7 @@ cve_knowledge_base.json           ← cross-engagement CVE test KB (project root
 | `hydra` | Credential brute-forcing (aggressive only) | Optional |
 | `ssh-audit` | SSH configuration auditing | Optional |
 | `amass` | Subdomain enumeration (internet required) | Optional |
-| `dnsenum` / `dnsrecon` | DNS enumeration (internet required) | Optional |
+| `dnsenum` / `dnsrecon` | DNS enumeration (internet required, installed by `setup.sh`) | Yes |
 | `nxc` (NetExec) | SMB/LDAP enumeration for AD assessments | Optional |
 | `msfconsole` | MSF validation (`--msf-validate`) | Optional |
 | `rdpscan` | RDP enumeration | Optional |

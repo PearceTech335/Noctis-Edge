@@ -23,6 +23,19 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
 
+if __name__ == "__main__":
+    _BOOTSTRAP_BASE = os.path.dirname(os.path.abspath(__file__))
+    _BOOTSTRAP_VENV = os.path.join(_BOOTSTRAP_BASE, ".venv", "bin", "python3")
+    if os.path.exists(_BOOTSTRAP_VENV):
+        current_python = os.path.realpath(sys.executable)
+        venv_python = os.path.realpath(_BOOTSTRAP_VENV)
+        if current_python != venv_python:
+            env = os.environ.copy()
+            venv_bin = os.path.dirname(_BOOTSTRAP_VENV)
+            env["PATH"] = venv_bin + os.pathsep + env.get("PATH", "")
+            env["VIRTUAL_ENV"] = os.path.dirname(venv_bin)
+            os.execve(_BOOTSTRAP_VENV, [_BOOTSTRAP_VENV, __file__, *sys.argv[1:]], env)
+
 import requests
 from jinja2 import Template
 
@@ -47,8 +60,8 @@ CVE_CSV      = os.path.join(BASE_DIR, "CVE", "cve-offline", "cve-summary.csv")
 SESSION_FILE = os.path.join(BASE_DIR, "session.json")
 
 OLLAMA_URL     = "http://localhost:11434/api/generate"
-MODEL          = "qwen2.5-coder:7b-instruct-q4_k_m"
-OLLAMA_TIMEOUT = 300   # seconds — CPU-only inference can take 1-3 min per call
+MODEL          = os.getenv("NOCTIS_OLLAMA_MODEL", "qwen2.5-coder:7b-instruct-q4_k_m")
+OLLAMA_TIMEOUT = int(os.getenv("NOCTIS_OLLAMA_TIMEOUT", "300"))   # seconds — CPU-only inference can take 1-3 min per call
 #"qwen2.5-coder:7b-instruct-q6_K"
 #"qwen2.5-coder:3b-instruct-fp16"
 #"qwen2.5-coder:7b-instruct-q4_k_m"
@@ -258,7 +271,7 @@ def deduplicate_findings(findings):
 
 TOOL_REGISTRY = {
     "nmap":      ("nmap",      None),
-    "nuclei":    ("nuclei",    "/home/alfred/go/bin/nuclei"),
+    "nuclei":    ("nuclei",    os.path.join(os.path.expanduser("~"), "go", "bin", "nuclei")),
     "nikto":     ("nikto",     None),
     "curl":      ("curl",      None),
     "gobuster":  ("gobuster",  None),
@@ -705,6 +718,22 @@ async def run_dns_enum(domain, available_tools):
         out = await run_command_async(["dig", rtype, domain, "+short"], timeout=10)
         if out.strip():
             outputs.append(f"[dig-{rtype}]\n{out}")
+
+    if "dnsenum" in available_tools:
+        dnsenum_out = await run_command_async(
+            [available_tools["dnsenum"], domain],
+            timeout=60,
+        )
+        if dnsenum_out.strip():
+            outputs.append(f"[dnsenum]\n{dnsenum_out}")
+
+    if "dnsrecon" in available_tools:
+        dnsrecon_out = await run_command_async(
+            [available_tools["dnsrecon"], "-d", domain],
+            timeout=60,
+        )
+        if dnsrecon_out.strip():
+            outputs.append(f"[dnsrecon]\n{dnsrecon_out}")
 
     return "\n\n".join(outputs), findings
 
@@ -1965,7 +1994,7 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
     _TOOL_DISPLAY = {
         "ssh_enum":   "ssh-audit / nmap",
         "rdp_enum":   "nmap (rdp-enum-encryption)",
-        "dns_enum":   "dig",
+        "dns_enum":   "dig / dnsenum / dnsrecon",
         "mysql_enum": "nmap (mysql-scripts)",
         "mssql_enum": "nmap (ms-sql-scripts)",
     }

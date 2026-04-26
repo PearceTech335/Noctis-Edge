@@ -30,6 +30,8 @@ header "1/7  System packages (apt)"
 info "Running apt update + upgrade ..."
 sudo apt update -qq
 sudo apt upgrade -y
+info "Ensuring required DNS tools are installed ..."
+sudo apt install -y dnsenum dnsrecon
 sudo apt autoremove -y
 ok "apt done"
 
@@ -51,16 +53,20 @@ fi
 header "3/7  Python dependencies (pip)"
 VENV="$SCRIPT_DIR/.venv"
 if [[ -f "$VENV/bin/activate" ]]; then
-    info "Activating venv at $VENV ..."
-    # shellcheck disable=SC1091
-    source "$VENV/bin/activate"
-    pip install --upgrade pip --quiet
-    pip install --upgrade requests jinja2 pycryptodome weasyprint netexec --quiet
-    ok "pip done (requests, jinja2, pycryptodome, netexec)"
-    deactivate
+    info "Updating packages in venv at $VENV ..."
+    "$VENV/bin/python3" -m pip install --upgrade pip --quiet
+    "$VENV/bin/python3" -m pip install --upgrade \
+        requests \
+        jinja2 \
+        pycryptodome \
+        weasyprint \
+        pdfkit \
+        netexec \
+        --quiet
+    ok "pip done (requests, jinja2, pycryptodome, weasyprint, pdfkit, netexec)"
 else
     info "No venv found — installing to system Python (consider creating a venv)"
-    pip3 install --upgrade requests jinja2 pycryptodome netexec --quiet
+    pip3 install --upgrade requests jinja2 pycryptodome weasyprint pdfkit netexec --quiet
     ok "pip done"
 fi
 

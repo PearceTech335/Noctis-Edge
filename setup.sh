@@ -19,11 +19,11 @@
 #    7.  Python venv + pip dependencies
 #    8.  CVE/cve-offline — clone & build the offline CVE database
 #    9.  rdpscan         — clone the RDP scanner helper
-#   10.  Optional tools  — amass, dnsenum, dnsrecon, metasploit-framework
+#   10.  Additional tools — amass, metasploit-framework
 #
 #  Skip any step by setting the corresponding NO_* variable, e.g.:
 #    NO_MSF=1 ./setup.sh          ← skip Metasploit install
-#    NO_OPTIONAL=1 ./setup.sh     ← skip all optional tools
+#    NO_OPTIONAL=1 ./setup.sh     ← skip extra tools (amass + Metasploit)
 # =============================================================================
 
 set -euo pipefail
@@ -44,6 +44,7 @@ GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; CYAN='\033[0;36m'; NC
 ok()      { echo -e "${GREEN}[OK]${NC}    $*"; }
 info()    { echo -e "${YELLOW}[ > ]${NC}   $*"; }
 err()     { echo -e "${RED}[ERR]${NC}   $*"; }
+fail()    { err "$*"; SETUP_INCOMPLETE=1; }
 header()  {
     echo ""
     echo -e "${CYAN}============================================================${NC}"
@@ -51,6 +52,7 @@ header()  {
     echo -e "${CYAN}============================================================${NC}"
 }
 skip()    { echo -e "${YELLOW}[SKIP]${NC}  $*"; }
+SETUP_INCOMPLETE=0
 
 # ── require root for apt/snap steps ────────────────────────────────────────
 need_sudo() {
@@ -93,15 +95,26 @@ sudo apt install -y \
     hydra \
     ssh-audit \
     dnsutils \
+    dnsenum \
+    dnsrecon \
     perl \
     libxml-writer-perl \
     libjson-perl \
     golang-go \
     git \
+    wkhtmltopdf \
     libssl-dev \
     build-essential
 
 ok "apt packages installed"
+
+for required_cmd in dnsenum dnsrecon; do
+    if command -v "$required_cmd" &>/dev/null; then
+        ok "$required_cmd installed at $(command -v "$required_cmd")"
+    else
+        fail "$required_cmd is required but was not installed successfully"
+    fi
+done
 
 # =============================================================================
 # 2.  snap — SecLists
@@ -192,12 +205,20 @@ else
 fi
 
 info "Installing Python dependencies into venv ..."
-# shellcheck disable=SC1091
-source "$VENV/bin/activate"
-pip install --upgrade pip --quiet
-pip install --upgrade requests jinja2 pycryptodome weasyprint --quiet
-deactivate
-ok "Python packages installed (requests, jinja2, pycryptodome)"
+"$VENV/bin/python3" -m pip install --upgrade pip --quiet
+"$VENV/bin/python3" -m pip install --upgrade \
+    requests \
+    jinja2 \
+    pycryptodome \
+    weasyprint \
+    pdfkit \
+    netexec \
+    --quiet \
+    && ok "Python packages installed (requests, jinja2, pycryptodome, weasyprint, pdfkit, netexec)" \
+    || fail "Python package installation failed"
+
+chmod +x "$SCRIPT_DIR/noctis.py" "$SCRIPT_DIR/noctis_gui.py" 2>/dev/null || true
+ok "Executable entry points prepared"
 
 # =============================================================================
 # 7.  CVE offline database
@@ -230,6 +251,12 @@ elif [[ -n "${CVE_DIR:-}" ]]; then
     err "updatecsv.sh not found in $CVE_DIR — cannot build CVE database automatically"
 fi
 
+if [[ -f "$SCRIPT_DIR/CVE/cve-offline/cve-summary.csv" ]]; then
+    ok "CVE database ready"
+else
+    fail "CVE database missing — Noctis will run without offline CVE enrichment until CVE/cve-offline/cve-summary.csv exists"
+fi
+
 # =============================================================================
 # 8.  rdpscan helper
 # =============================================================================
@@ -248,16 +275,22 @@ else
     fi
 fi
 
+if [[ -f "$RDPSCAN_DIR/RPDscan.py" ]]; then
+    ok "rdpscan helper ready"
+else
+    fail "rdpscan clone incomplete — rdp validation will be unavailable"
+fi
+
 # =============================================================================
-# 9.  Optional tools  (amass, dnsenum, dnsrecon, Metasploit)
+# 9.  Additional tools  (amass, Metasploit)
 # =============================================================================
 if [[ "${NO_OPTIONAL:-0}" != "1" ]]; then
-    header "10/10  Optional tools"
+    header "10/10  Additional tools"
 
-    info "Installing amass, dnsenum, dnsrecon ..."
-    sudo apt install -y amass dnsenum dnsrecon 2>/dev/null \
-        && ok "amass / dnsenum / dnsrecon installed" \
-        || skip "One or more optional DNS tools unavailable via apt on this system"
+    info "Installing amass ..."
+    sudo apt install -y amass 2>/dev/null \
+        && ok "amass installed" \
+        || skip "amass unavailable via apt on this system"
 
     if [[ "${NO_MSF:-0}" != "1" ]]; then
         info "Checking for Metasploit Framework ..."
@@ -276,22 +309,32 @@ if [[ "${NO_OPTIONAL:-0}" != "1" ]]; then
         skip "Metasploit install skipped (NO_MSF=1)"
     fi
 else
-    skip "Optional tools skipped (NO_OPTIONAL=1)"
+    skip "Additional tools skipped (NO_OPTIONAL=1)"
 fi
 
 # =============================================================================
 # Done
 # =============================================================================
 echo ""
-echo -e "${GREEN}============================================================${NC}"
-echo -e "${GREEN}  Setup complete!${NC}"
-echo -e "${GREEN}============================================================${NC}"
+if [[ "$SETUP_INCOMPLETE" == "0" ]]; then
+    echo -e "${GREEN}============================================================${NC}"
+    echo -e "${GREEN}  Setup complete!${NC}"
+    echo -e "${GREEN}============================================================${NC}"
+else
+    echo -e "${RED}============================================================${NC}"
+    echo -e "${RED}  Setup finished with missing core components${NC}"
+    echo -e "${RED}============================================================${NC}"
+fi
 echo ""
 echo "  Next steps:"
 echo ""
 echo "  1. Start Ollama:           ollama serve"
-echo "  2. Activate the venv:      source .venv/bin/activate"
-echo "  3. Run a scan:             python3 noctis.py <target>"
+echo "  2. Run a scan:             ./noctis.py <target>"
+echo "  3. Optional shell access:  source .venv/bin/activate"
 echo ""
 echo "  Run ./update.sh monthly to keep everything current."
 echo ""
+
+if [[ "$SETUP_INCOMPLETE" != "0" ]]; then
+    exit 1
+fi
