@@ -21,7 +21,6 @@ CVE/cve-offline/cve-summary.csv
 
 # Embedded git repos — tracked separately, not as submodules
 CVE/cve-offline/
-rdpscan/
 
 
 # Scan session data (runtime output — not source code)

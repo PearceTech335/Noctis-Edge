@@ -37,7 +37,7 @@ CVE_OFFLINE_REPO="https://github.com/trickest/cve-offline.git"
 # Fallback upstream for cve-offline scripts
 CVE_OFFLINE_ACTUAL="https://github.com/trickest/cve-offline.git"
 
-RDPSCAN_REPO="https://github.com/PearceTech335/NoctisEdge.git"
+RDPSCAN_REPO="https://github.com/robertdavidgraham/rdpscan.git"
 
 # ── colour helpers ──────────────────────────────────────────────────────────
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; CYAN='\033[0;36m'; NC='\033[0m'
