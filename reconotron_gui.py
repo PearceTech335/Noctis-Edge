@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ReconoTron GUI — Tkinter front-end for reconotron.py
+Noctis Edge GUI — Tkinter front-end for reconotron.py
 
 Run with:  python3 reconotron_gui.py
 """
@@ -108,7 +108,7 @@ class ReconoTronGUI:
         self.q:       queue.Queue = queue.Queue()
         self.running  = False
 
-        root.title("ReconoTron — AI-Assisted Penetration Testing")
+        root.title("Noctis Edge — Security Through Exposure")
         root.configure(bg=BG)
         root.minsize(820, 580)
         root.geometry("1000x740")
@@ -124,12 +124,12 @@ class ReconoTronGUI:
         hdr.pack(fill=tk.X)
 
         tk.Label(
-            hdr, text="ReconoTron",
+            hdr, text="Noctis Edge",
             font=("Consolas", 18, "bold"), bg=BG_PANEL, fg=ACCENT,
         ).pack(side=tk.LEFT)
 
         tk.Label(
-            hdr, text="  AI-Assisted Penetration Testing Platform",
+            hdr, text="  Security Through Exposure",
             font=("Consolas", 10), bg=BG_PANEL, fg=FG_DIM,
         ).pack(side=tk.LEFT, pady=4)
 

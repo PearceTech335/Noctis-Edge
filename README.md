@@ -1,8 +1,8 @@
-# ReconoTron
+# Noctis Edge
 
-**AI-Assisted Penetration Testing Platform**
+**Security Through Exposure**
 
-ReconoTron is a Python-based AI-assisted penetration testing platform. It runs an automated, LLM-guided penetration test against a target, collects and verifies findings, generates HTML/PDF reports, and optionally validates CVEs using Metasploit or LLM-generated probe scripts. It can be run from the **command line** (`reconotron.py`) or via the included **Tkinter GUI** (`reconotron_gui.py`).
+Noctis Edge is a Python-based AI-assisted penetration testing platform. It runs an automated, LLM-guided penetration test against a target, collects and verifies findings, generates HTML/PDF reports, and optionally validates CVEs using Metasploit or LLM-generated probe scripts. It can be run from the **command line** (`reconotron.py`) or via the included **Tkinter GUI** (`reconotron_gui.py`).
 
 ---
 
@@ -13,8 +13,8 @@ ReconoTron is a Python-based AI-assisted penetration testing platform. It runs a
 On a fresh Kali / Parrot / Debian-based machine, a single script handles everything:
 
 ```bash
-git clone --recurse-submodules https://github.com/PearceTech335/ReconoTron.git
-cd ReconoTron
+git clone --recurse-submodules https://github.com/PearceTech335/NoctisEdge.git
+cd NoctisEdge
 chmod +x setup.sh
 ./setup.sh
 ```
@@ -146,7 +146,7 @@ The core loop asks the local Ollama LLM what to do next based on:
 - List of disabled/broken tools
 
 The LLM responds with a single JSON action `{"tool": "<name>", "args": "<value>"}`.
-ReconoTron executes the tool, parses structured findings from the output, and feeds results back into context for the next iteration.
+Noctis Edge executes the tool, parses structured findings from the output, and feeds results back into context for the next iteration.
 
 Tools that time out with no findings or return error signals are auto-disabled for the session.
 In `SAFE` mode (default), aggressive tools (gobuster, ffuf, hydra) require operator approval before running.
@@ -265,7 +265,7 @@ Install notes: see [Readme/requirements.md](Readme/requirements.md).
 
 ## Ollama Setup
 
-ReconoTron requires a running Ollama instance. `setup.sh` handles this automatically.
+Noctis Edge requires a running Ollama instance. `setup.sh` handles this automatically.
 Manual install:
 
 ```bash
@@ -275,7 +275,7 @@ curl -fsSL https://ollama.com/install.sh | sh
 # Pull the model:
 ollama pull qwen2.5-coder:7b-instruct-q4_k_m
 
-# Start server (must be running before launching ReconoTron):
+# Start server (must be running before launching Noctis Edge):
 ollama serve
 ```
 

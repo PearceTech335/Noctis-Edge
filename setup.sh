@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  ReconoTron — One-Shot Setup Script
+#  Noctis Edge — One-Shot Setup Script
 #
 #  Run once on a fresh Kali / Parrot / Debian-based system after cloning:
 #
-#    git clone https://github.com/PearceTech335/ReconoTron.git
-#    cd ReconoTron
+#    git clone https://github.com/PearceTech335/NoctisEdge.git
+#    cd NoctisEdge
 #    chmod +x setup.sh
 #    ./setup.sh
 #

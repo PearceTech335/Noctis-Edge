@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  ReconoTron — Monthly Update Script
+#  Noctis Edge — Monthly Update Script
 #  Run: ./update.sh
 #  Updates: apt packages, snap, pip deps, nuclei, Ollama model, CVE database
 # =============================================================================
@@ -131,13 +131,13 @@ else
 fi
 
 # =============================================================================
-# 7. ReconoTron itself
+# 7. Noctis Edge itself
 # =============================================================================
-header "7/7  ReconoTron repository"
+header "7/7  Noctis Edge repository"
 if [[ -d "$SCRIPT_DIR/.git" ]]; then
-    info "Pulling latest ReconoTron ..."
+    info "Pulling latest Noctis Edge ..."
     git -C "$SCRIPT_DIR" pull --quiet \
-        && ok "ReconoTron up to date" \
+        && ok "Noctis Edge up to date" \
         || err "git pull failed (may have uncommitted changes)"
 else
     info "No .git directory found — skipping self-update"
