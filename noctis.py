@@ -1823,10 +1823,16 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   .conclusion{background:#16213e;border-left:4px solid #00d4ff;padding:15px 20px;
               border-radius:0 8px 8px 0;margin:20px 0}
   footer{margin-top:40px;color:#555;font-size:.85em;text-align:center}
+  .header{display:flex;align-items:center;gap:18px;border-bottom:2px solid #00d4ff;padding-bottom:10px;margin-bottom:6px}
+  .header img{height:64px;width:64px;object-fit:contain;flex-shrink:0}
+  .header h1{color:#00d4ff;margin:0;border:none;padding:0}
 </style>
 </head>
 <body>
+<div class="header">
+{% if logo_b64 %}<img src="data:image/png;base64,{{ logo_b64 }}" alt="Noctis Edge logo">{% endif %}
 <h1>Noctis Edge Penetration Test Report</h1>
+</div>
 <p><strong>Target:</strong> {{ target }}{% if target_info and target_info.ip_address and target_info.ip_address != target %} ({{ target_info.ip_address }}){% endif %} &nbsp;|&nbsp;
    <strong>Generated:</strong> {{ generated_at }} &nbsp;|&nbsp;
    <strong>Profile:</strong> {{ profile }}</p>
@@ -2047,7 +2053,14 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
 
 def generate_html_report(report_data):
-    return Template(HTML_TEMPLATE).render(**report_data)
+    import base64
+    logo_b64 = ""
+    logo_path = os.path.join(BASE_DIR, "noctis_logo.png")
+    if os.path.isfile(logo_path):
+        with open(logo_path, "rb") as fh:
+            logo_b64 = base64.b64encode(fh.read()).decode()
+    data = dict(report_data, logo_b64=logo_b64)
+    return Template(HTML_TEMPLATE).render(**data)
 
 
 def generate_pdf_report(html_content, pdf_path):
