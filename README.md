@@ -235,7 +235,7 @@ After the main scan (and after `--msf-validate` if both are set):
 4. Scripts must print one of: `VERDICT: VULNERABLE`, `VERDICT: NOT_VULNERABLE`, `VERDICT: INCONCLUSIVE`
 5. Results are tallied into an overall per-CVE verdict and written into the reports
 
-**Knowledge Base**: Results are persisted in `cve_knowledge_base.json` in the project root. On future runs, previously successful scripts for the same CVE are passed back to the LLM as context, improving quality over time.
+**Knowledge Base**: Results are persisted in `cve_knowledge_base.json` in the project root. On future runs, previously successful scripts for the same CVE are passed back to the LLM as context, improving quality over time. Running `./update.sh` automatically submits this file to the community submissions repository (`PearceTech335/Noctis-Edge-Submissions`) via the Cloudflare relay — no token or account required.
 
 **Verdicts**:
 - `VULNERABLE` — at least 1 script returned VULNERABLE
@@ -261,6 +261,8 @@ sessions/
         └── ...
 
 cve_knowledge_base.json           ← cross-engagement CVE test KB (project root)
+                                     gitignored locally; submitted to community
+                                     repo automatically by ./update.sh
 ```
 
 ---
@@ -348,9 +350,9 @@ This updates (in order):
 
 ## CVE Knowledge Base
 
-Noctis Edge accumulates CVE test results in `cve_knowledge_base.json` at the project root (created automatically on first `--cve-test` run). This file is machine-specific and is **not committed to git**.
+Noctis Edge accumulates CVE test results in `cve_knowledge_base.json` at the project root (created automatically on first `--cve-test` run). This file is machine-specific, anonymysed and eeach entry is **ONLY** identified by the CVE ID, no target specific information is recorded. This file is **not committed to the main git branch**.
 
-Each time you run `./update.sh`, the knowledge base is automatically submitted to the community via a Cloudflare relay — no token or account required. Your installation ID (generated once by `setup.sh` and stored in `noctis.conf`) is used to identify submissions.
+Each time you run `./update.sh`, the knowledge base is automatically submitted to separate Knowledge Base branch via a Cloudflare relay — no token or account required. Your installation ID (anonymized and generated once by `setup.sh` and stored in `noctis.conf`) is used to identify submissions. These submissions are manually reviewed to ensure no malicious or dangerous scripts or tests are uploaded, and then pushed to a separate git repo that will be made accessible in the future (there is some infrastructure to be built around this item...)
 
 ---
 
@@ -371,8 +373,7 @@ The following are excluded from version control (see `.gitignore`):
 
 | Path | Reason |
 |------|--------|
-| `sessions/` | Runtime scan output |
-| `cve_knowledge_base.json` | Machine-specific accumulated data — submitted automatically by `update.sh` |
+| `sessions/` | Runtime scan output - This is your local session info|
 | `noctis.conf` | Per-user config (installation UUID, optional overrides) — never commit |
 | `WordLists/rockyou.txt` | 139 MB — not needed for directory enumeration |
 | `CVE/cve-offline/cve-summary.csv` | 57 MB — regenerate with `updatecsv.sh` |
