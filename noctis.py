@@ -103,6 +103,117 @@ TOOL_CONFIDENCE: dict = {
 AGGRESSIVE_TOOLS = {"gobuster", "ffuf", "hydra", "nuclei_aggressive"}
 
 # ---------------------------------------------------------------------------
+# SAFE ARG VALIDATION — enumeration-only guardrails
+# ---------------------------------------------------------------------------
+# Tools accept optional extra fields from the LLM. Every field is validated
+# against an allowlist before being used in subprocess.exec args to prevent
+# injection and ensure no tool ever modifies server state or exploits targets.
+
+_RE_EXTENSIONS  = re.compile(r'^[a-zA-Z0-9]+(,[a-zA-Z0-9]+)*$')          # e.g. "php,html,txt"
+_RE_TAGS        = re.compile(r'^[a-zA-Z0-9_,/.-]+$')                      # nuclei template tags
+_RE_MATCH_CODES = re.compile(r'^\d+(,\d+)*$')                              # e.g. "200,301,403"
+_RE_SEVERITY    = re.compile(r'^(info|low|medium|high|critical)(,(info|low|medium|high|critical))*$', re.I)
+_RE_HEADER_NAME = re.compile(r'^[a-zA-Z0-9_-]+$')
+
+# HTTP methods that are read-only / do not modify server state
+_SAFE_HTTP_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "POST"})
+# PUT, DELETE, PATCH, CONNECT are excluded — they write/remove resources
+
+
+def _safe_tool_args(tool: str, raw) -> dict:
+    """Normalise and validate LLM-provided tool args.
+
+    Only allowlisted fields are kept.  Anything with unexpected format is
+    dropped and a warning is printed.  Guarantees that no exploit-class flags
+    or server-modifying HTTP methods can reach subprocess.exec.
+    """
+    # Legacy: plain string means it's a URL/target
+    if not isinstance(raw, dict):
+        return {"url": str(raw)}
+
+    cleaned: dict = {}
+
+    if tool in ("gobuster", "ffuf"):
+        cleaned["url"]      = str(raw.get("url", ""))
+        cleaned["wordlist"] = str(raw.get("wordlist", WORDLIST))
+
+        exts = str(raw.get("extensions", "")).strip()
+        if exts:
+            if _RE_EXTENSIONS.match(exts):
+                cleaned["extensions"] = exts
+            else:
+                print(f"[!] [safe-args] unsafe 'extensions' value dropped: {exts!r}")
+
+        if tool == "gobuster":
+            cleaned["follow_redirects"] = bool(raw.get("follow_redirects", False))
+
+        if tool == "ffuf":
+            method = str(raw.get("method", "GET")).upper()
+            if method in _SAFE_HTTP_METHODS:
+                cleaned["method"] = method
+            else:
+                print(f"[!] [safe-args] HTTP method {method!r} not allowed — defaulting to GET")
+                cleaned["method"] = "GET"
+
+            mc = str(raw.get("match_codes", "")).strip()
+            if mc:
+                if _RE_MATCH_CODES.match(mc):
+                    cleaned["match_codes"] = mc
+                else:
+                    print(f"[!] [safe-args] unsafe 'match_codes' dropped: {mc!r}")
+
+    elif tool == "nuclei":
+        cleaned["url"] = str(raw.get("url", raw.get("_raw", "")))
+
+        tags = str(raw.get("tags", "")).strip()
+        if tags:
+            if _RE_TAGS.match(tags):
+                cleaned["tags"] = tags
+            else:
+                print(f"[!] [safe-args] unsafe 'tags' value dropped: {tags!r}")
+
+        sev = str(raw.get("severity", "")).strip()
+        if sev:
+            if _RE_SEVERITY.match(sev):
+                cleaned["severity"] = sev.lower()
+            else:
+                print(f"[!] [safe-args] unsafe 'severity' dropped: {sev!r}")
+
+    elif tool == "curl":
+        cleaned["url"] = str(raw.get("url", raw.get("_raw", "")))
+
+        method = str(raw.get("method", "GET")).upper()
+        if method in _SAFE_HTTP_METHODS:
+            cleaned["method"] = method
+        else:
+            print(f"[!] [safe-args] HTTP method {method!r} not allowed — defaulting to GET")
+            cleaned["method"] = "GET"
+
+        hdrs = raw.get("headers", {})
+        safe_hdrs: dict = {}
+        if isinstance(hdrs, dict):
+            for k, v in hdrs.items():
+                k, v = str(k), str(v)
+                if _RE_HEADER_NAME.match(k):
+                    # Strip CR/LF to prevent CRLF-injection in header values
+                    safe_hdrs[k] = v.replace("\r", "").replace("\n", "")
+                else:
+                    print(f"[!] [safe-args] unsafe header name dropped: {k!r}")
+        cleaned["headers"] = safe_hdrs
+
+    elif tool == "nikto":
+        cleaned["url"] = str(raw.get("url", raw.get("_raw", "")))
+        cleaned["ssl"] = bool(raw.get("ssl", False))
+
+    else:
+        # ssh_enum, rdp_enum, mysql_enum, mssql_enum, dns_enum — pass-through known fields
+        for key in ("host", "port", "domain"):
+            if key in raw:
+                cleaned[key] = str(raw[key])
+
+    return cleaned
+
+# ---------------------------------------------------------------------------
 # ASSESSMENT PROFILES
 # ---------------------------------------------------------------------------
 
@@ -471,14 +582,14 @@ async def run_curl_async(url):
     return await run_command_async(["curl", "-s", "-L", "-m", "15", url], timeout=20)
 
 
-async def run_nikto_async(url, session_dir=None):
+async def run_nikto_async(url, session_dir=None, extra_flags=None):
     # Capture findings via stdout so parse_nikto_output can see them.
     # -maxtime is a hint to nikto; asyncio timeout is the hard limit.
-    raw = await run_command_async(
-        ["perl", NIKTO_PL, "-h", url, "-Format", "txt",
-         "-nointeractive", "-maxtime", "90s"],
-        timeout=100,
-    )
+    cmd = ["perl", NIKTO_PL, "-h", url, "-Format", "txt",
+           "-nointeractive", "-maxtime", "90s"]
+    if extra_flags:
+        cmd.extend(extra_flags)
+    raw = await run_command_async(cmd, timeout=100)
     # Print any Nikto administrative/version messages to terminal only — they must
     # not appear in the report (parse_nikto_output already filters them as findings,
     # but they would still surface in the execution log output preview).
@@ -506,18 +617,20 @@ async def run_nikto_async(url, session_dir=None):
 # NUCLEI JSON PARSING
 # ---------------------------------------------------------------------------
 
-async def run_nuclei_json_async(url, available_tools):
+async def run_nuclei_json_async(url, available_tools, tags=None, severity=None):
     nuclei_path = available_tools.get("nuclei", "nuclei")
     cmd = [
         nuclei_path,
         "-u", url,
-        "-s", "low,medium,high,critical",
+        "-s", severity or "low,medium,high,critical",
         "-silent",
         "-nc",
         "-timeout", "10",
         "-j",        # JSONL output (one JSON object per line)
         "-ot",       # omit encoded template to keep output compact
     ]
+    if tags:
+        cmd += ["-tags", tags]
     if AIRGAP_MODE:
         cmd.append("-duc")   # nuclei v3: disable update check (replaces -no-update-templates)
     raw = await run_command_async(cmd, timeout=45)
@@ -1468,10 +1581,11 @@ def query_llm(context, broken_tools=None, available_tools=None, used_actions=Non
 
     all_tool_descs = {
         "curl":       'curl: "http://target:port"',
-        "nikto":      'nikto: "http://target:port"',
-        "nuclei":     'nuclei: "http://target:port"',
-        "gobuster":   f'gobuster: {{"url": "...", "wordlist": "{WORDLIST}"}}',
-        "ffuf":       f'ffuf: {{"url": "...", "wordlist": "{WORDLIST}"}}',
+        "nikto":      'nikto: {"url": "http://target:port", "ssl": false}  — optional: ssl:true to force SSL',
+        "nuclei":     'nuclei: {"url": "http://target:port", "tags": "cve,lfi,sqli", "severity": "medium,high,critical"}  — optional: tags (template filter), severity filter',
+        "gobuster":   f'gobuster: {{"url": "http://target:port", "wordlist": "{WORDLIST}", "extensions": "php,html,txt", "follow_redirects": false}}  — optional: extensions (csv), follow_redirects',
+        "ffuf":       f'ffuf: {{"url": "http://target:port", "wordlist": "{WORDLIST}", "extensions": "php,html", "method": "GET", "match_codes": "200,301,302,401,403"}}  — optional: extensions, method (GET/POST/HEAD/OPTIONS), match_codes',
+        "curl":       'curl: {"url": "http://target:port/path", "method": "GET", "headers": {"Authorization": "Bearer token"}}  — optional: method (GET/POST/HEAD/OPTIONS), headers dict',
         "ssh_enum":   'ssh_enum: {"host": "...", "port": "22"}',
         "rdp_enum":   'rdp_enum: {"host": "...", "port": "3389"}',
         "dns_enum":   'dns_enum: {"domain": "..."}',
@@ -1641,20 +1755,38 @@ def _describe_cmd(tool, args, available_tools):
     if tool == "nmap":
         return f"nmap -Pn -T5 --open -oX - {args}"
     if tool == "curl":
-        return f"curl -s -L -m 15 {args}"
+        a   = _safe_tool_args("curl", args)
+        url = a["url"]
+        m   = a.get("method", "GET")
+        hdrs = " ".join(f'-H "{k}: {v}"' for k, v in a.get("headers", {}).items())
+        return f"curl -s -L -m 15{' -X ' + m if m != 'GET' else ''}{' ' + hdrs if hdrs else ''} {url}"
     if tool == "nikto":
-        return f"perl {NIKTO_PL} -h {args} -Format txt -nointeractive -maxtime 90s"
+        a   = _safe_tool_args("nikto", args)
+        url = a["url"]
+        ssl = " -ssl" if a.get("ssl") else ""
+        return f"perl {NIKTO_PL} -h {url}{ssl} -Format txt -nointeractive -maxtime 90s"
     if tool == "nuclei":
+        a          = _safe_tool_args("nuclei", args)
+        url        = a["url"]
         nuclei_path = available_tools.get("nuclei", "nuclei")
-        return f"{nuclei_path} -u {args} -s low,medium,high,critical -silent -j -ot"
+        sev        = a.get("severity", "low,medium,high,critical")
+        tags_part  = f" -tags {a['tags']}" if a.get("tags") else ""
+        return f"{nuclei_path} -u {url} -s {sev}{tags_part} -silent -j -ot"
     if tool == "gobuster":
-        url = args.get("url", "") if isinstance(args, dict) else str(args)
-        wl  = args.get("wordlist", WORDLIST) if isinstance(args, dict) else WORDLIST
-        return f"gobuster dir -u {url} -w {wl} -q -t 20 --timeout 10s"
+        a    = _safe_tool_args("gobuster", args)
+        url  = a["url"]
+        wl   = a["wordlist"]
+        ext  = f" -x {a['extensions']}" if a.get("extensions") else ""
+        redir = " -r" if a.get("follow_redirects") else ""
+        return f"gobuster dir -u {url} -w {wl} -q -t 20 --timeout 10s{ext}{redir}"
     if tool == "ffuf":
-        url = args.get("url", "") if isinstance(args, dict) else str(args)
-        wl  = args.get("wordlist", WORDLIST) if isinstance(args, dict) else WORDLIST
-        return f"ffuf -u {url}/FUZZ -w {wl} -mc 200 -t 20 -maxtime 30"
+        a    = _safe_tool_args("ffuf", args)
+        url  = a["url"]
+        wl   = a["wordlist"]
+        mc   = a.get("match_codes", "200")
+        ext  = f" -e .{a['extensions'].replace(',', ',.')}" if a.get("extensions") else ""
+        meth = f" -X {a['method']}" if a.get("method", "GET") != "GET" else ""
+        return f"ffuf -u {url}/FUZZ -w {wl} -mc {mc} -t 20 -maxtime 30{ext}{meth}"
     if tool == "ssh_enum":
         host = args.get("host", "") if isinstance(args, dict) else str(args)
         port = args.get("port", "22") if isinstance(args, dict) else "22"
@@ -1689,6 +1821,9 @@ async def execute_async(action, available_tools, session_dir=None):
         print("[!] Invalid action blocked")
         return None, []
 
+    # Sanitise and validate all LLM-provided args before use
+    args = _safe_tool_args(tool, args)
+
     if tool in AGGRESSIVE_TOOLS:
         if not request_approval(tool, args, "Directory brute-force / aggressive scan"):
             print(f"[!] {tool} denied by operator.")
@@ -1697,32 +1832,56 @@ async def execute_async(action, available_tools, session_dir=None):
     print(f"[+] Executing: {tool}  |  args: {args}")
 
     if tool == "curl":
-        output = await run_curl_async(args)
+        url  = args["url"]
+        meth = args.get("method", "GET")
+        hdrs = args.get("headers", {})
+        cmd  = ["curl", "-s", "-L", "-m", "15"]
+        if meth != "GET":
+            cmd += ["-X", meth]
+        for k, v in hdrs.items():
+            cmd += ["-H", f"{k}: {v}"]
+        cmd.append(url)
+        output = await run_command_async(cmd, timeout=20)
         return output, []
 
     if tool == "nikto":
-        output   = await run_nikto_async(args, session_dir=session_dir)
-        findings = parse_nikto_output(output, args) if not is_tool_broken(output) else []
+        url = args["url"]
+        extra = ["-ssl"] if args.get("ssl") else []
+        output   = await run_nikto_async(url, session_dir=session_dir, extra_flags=extra)
+        findings = parse_nikto_output(output, url) if not is_tool_broken(output) else []
         return output, findings
 
     if tool == "nuclei":
-        return await run_nuclei_json_async(args, available_tools)
+        url  = args["url"]
+        tags = args.get("tags")
+        sev  = args.get("severity", "low,medium,high,critical")
+        return await run_nuclei_json_async(url, available_tools, tags=tags, severity=sev)
 
     if tool == "gobuster":
-        output = await run_command_async(
-            ["gobuster", "dir", "-u", args["url"], "-w", args["wordlist"],
-             "-q", "-t", "20", "--timeout", "10s"],
-            timeout=60,
-        )
-        findings = parse_gobuster_output(output, args["url"])
+        url  = args["url"]
+        wl   = args["wordlist"]
+        cmd  = ["gobuster", "dir", "-u", url, "-w", wl, "-q", "-t", "20", "--timeout", "10s"]
+        if args.get("extensions"):
+            cmd += ["-x", args["extensions"]]
+        if args.get("follow_redirects"):
+            cmd += ["-r"]
+        output   = await run_command_async(cmd, timeout=60)
+        findings = parse_gobuster_output(output, url)
         return output, findings
 
     if tool == "ffuf":
-        output = await run_command_async(
-            ["ffuf", "-u", f"{args['url']}/FUZZ", "-w", args["wordlist"],
-             "-mc", "200", "-t", "20", "-maxtime", "30"],
-            timeout=40,
-        )
+        url  = args["url"]
+        wl   = args["wordlist"]
+        mc   = args.get("match_codes", "200")
+        meth = args.get("method", "GET")
+        cmd  = ["ffuf", "-u", f"{url}/FUZZ", "-w", wl, "-mc", mc, "-t", "20", "-maxtime", "30"]
+        if args.get("extensions"):
+            # ffuf expects extensions with leading dots: .php,.html
+            ext_str = ",".join(f".{e}" for e in args["extensions"].split(","))
+            cmd += ["-e", ext_str]
+        if meth != "GET":
+            cmd += ["-X", meth]
+        output = await run_command_async(cmd, timeout=40)
         return output, []
 
     if tool == "ssh_enum":
