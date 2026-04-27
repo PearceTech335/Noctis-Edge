@@ -99,8 +99,11 @@ python3 noctis.py 192.168.0.1 web external api
 # With CVE test scripts:
 python3 noctis.py 192.168.0.1 web --cve-test
 
-# No internet access:
-python3 noctis.py 192.168.0.1 --airgap
+# No internet / DNS enumeration not needed (default — no flag required):
+python3 noctis.py 192.168.0.1
+
+# Opt in to DNS enumeration (requires internet):
+python3 noctis.py 192.168.0.1 --dns-enum
 
 # Full aggressive run:
 python3 noctis.py 192.168.0.1 --aggressive --msf-validate --cve-test
@@ -122,7 +125,7 @@ The GUI provides:
 
 - **Target** field
 - **Profiles** checkboxes — select one or more (`web`, `external`, `internal_ad`, `api`, `cloud`); tools from all selected profiles are merged at scan time
-- Checkboxes for all scan flags (`--aggressive`, `--airgap`, `--msf-validate`, `--cve-test`, `--resume`)
+- Checkboxes for all scan flags (`--aggressive`, `--dns-enum`, `--msf-validate`, `--cve-test`, `--resume`)
 - Live colour-coded terminal output (findings highlighted in green/amber/red)
 - **Prompt reply** input bar with quick **Y** / **N** buttons for approval gates
 - Stop button to terminate a running scan at any time
@@ -138,7 +141,7 @@ The GUI launches `noctis.py` as a subprocess — all behaviour, output, and sess
 | `<target>` | IP address or hostname to scan (required) |
 | `[profile]` | Assessment profile (default: `web`). See Profiles section below. |
 | `--aggressive` | Disable safe mode — runs gobuster, ffuf, hydra without asking for approval |
-| `--airgap` | Disable all internet-dependent tools (amass, dnsenum, dnsrecon). Auto-detected if no internet found. |
+| `--dns-enum` | Enable DNS enumeration tools (amass, dnsenum, dnsrecon) — disabled by default, requires internet access |
 | `--msf-validate` | After scan, use Metasploit `check` commands to non-destructively validate each CVE match |
 | `--cve-test` | After scan, use the LLM to generate and execute safe probe scripts for each matched CVE |
 | `--resume` | Resume the most recent interrupted scan session for this target |
@@ -164,7 +167,7 @@ Pass one or more profile names after the target. Tools from all selected profile
 ### 1. Startup Checks
 - Checks if Ollama is serving — starts `ollama serve` automatically if not
 - Validates all tool binaries are present and prints a status table
-- Checks internet connectivity — automatically enables `--airgap` if offline
+- DNS enumeration tools (amass, dnsenum, dnsrecon) are disabled by default — pass `--dns-enum` to enable them
 - Runs `nmap` against the target to discover open ports and services
 - Searches the offline CVE database (`CVE/cve-offline/cve-summary.csv`) for matches on each service
 
