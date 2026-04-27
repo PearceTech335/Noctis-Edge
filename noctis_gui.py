@@ -141,7 +141,7 @@ class NoctisEdgeGUI:
             img = img.resize((wm_size, wm_size), Image.LANCZOS)
             # Fade alpha channel to 12 % opacity
             r, g, b, a = img.split()
-            a = a.point(lambda v: int(v * 0.28))
+            a = a.point(lambda v: int(v * 0.65))
             img = Image.merge("RGBA", (r, g, b, a))
             # Composite onto terminal background colour so it is safe for canvas
             bg_r = int(BG_TERMINAL[1:3], 16)
@@ -328,27 +328,35 @@ class NoctisEdgeGUI:
 
     # ── Terminal canvas helpers ──────────────────────────────────────────────
 
-    def _draw_watermark(self):
-        """Draw (or reposition) the faded logo watermark centered on the canvas."""
+    def _draw_watermark(self, cy: int | None = None):
+        """Draw (or reposition) the faded logo centred in the current viewport."""
         if self._logo_wm_img is None:
             return
-        w = self._term_canvas.winfo_width()  or 500
-        h = self._term_canvas.winfo_height() or 400
-        cx, cy = w // 2, h // 2
+        tc = self._term_canvas
+        cw = tc.winfo_width()  or 500
+        ch = tc.winfo_height() or 400
+        cx = cw // 2
+        if cy is None:
+            # Centre within the visible viewport using the current scroll position
+            top, bot = tc.yview()
+            sr = tc.cget("scrollregion")
+            try:
+                total_h = int(str(sr).split()[3])
+            except Exception:
+                total_h = ch
+            cy = int((top + bot) / 2 * total_h)
         if self._wm_img_id is not None:
-            self._term_canvas.coords(self._wm_img_id, cx, cy)
+            tc.coords(self._wm_img_id, cx, cy)
         else:
-            self._wm_img_id = self._term_canvas.create_image(
+            self._wm_img_id = tc.create_image(
                 cx, cy, image=self._logo_wm_img, anchor=tk.CENTER, tags="watermark"
             )
-        self._term_canvas.tag_lower("watermark")
+        tc.tag_lower("watermark")
 
     def _on_terminal_configure(self, event):
         """Reposition watermark and update text wrap width when canvas is resized."""
         self._term_w = max(100, event.width - 24)
-        if self._wm_img_id is not None:
-            self._term_canvas.coords(self._wm_img_id, event.width // 2, event.height // 2)
-            self._term_canvas.tag_lower("watermark")
+        self._draw_watermark()  # recalculate viewport centre on resize
         sr = self._term_canvas.bbox("output_text")
         if sr:
             self._term_canvas.configure(
@@ -388,6 +396,7 @@ class NoctisEdgeGUI:
             self._y_cursor = (bbox[3] if bbox else self._y_cursor + 16) + 3
         tc.configure(scrollregion=(0, 0, max(tc.winfo_width(), w + 24), self._y_cursor + 10))
         tc.yview_moveto(1.0)
+        self._draw_watermark()  # keep watermark centred in the now-scrolled viewport
 
     def _clear_output(self):
         self._term_canvas.delete("output_text")
