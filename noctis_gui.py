@@ -6,9 +6,20 @@ Run with:  python3 noctis_gui.py
 """
 
 import os
+import sys
+
+if __name__ == "__main__":
+    _BASE = os.path.dirname(os.path.abspath(__file__))
+    _VENV_PY = os.path.join(_BASE, ".venv", "bin", "python3")
+    _VENV_PREFIX = os.path.realpath(os.path.join(_BASE, ".venv"))
+    if os.path.exists(_VENV_PY) and os.path.realpath(sys.prefix) != _VENV_PREFIX:
+        _env = os.environ.copy()
+        _env["PATH"] = os.path.dirname(_VENV_PY) + os.pathsep + _env.get("PATH", "")
+        _env["VIRTUAL_ENV"] = _VENV_PREFIX
+        os.execve(_VENV_PY, [_VENV_PY, __file__, *sys.argv[1:]], _env)
+
 import queue
 import subprocess
-import sys
 import threading
 import tkinter as tk
 from tkinter import messagebox, filedialog
@@ -150,7 +161,8 @@ class NoctisEdgeGUI:
             bg = Image.new("RGBA", (wm_size, wm_size), (bg_r, bg_g, bg_b, 255))
             bg.alpha_composite(img)
             self._logo_wm_img = ImageTk.PhotoImage(bg.convert("RGB"))
-        except Exception:
+        except Exception as e:
+            print(f"[noctis_gui] Logo load failed: {e}")
             self._logo_wm_img = None
 
     # ── UI construction ─────────────────────────────────────────────────────

@@ -26,15 +26,13 @@ from typing import Optional
 if __name__ == "__main__":
     _BOOTSTRAP_BASE = os.path.dirname(os.path.abspath(__file__))
     _BOOTSTRAP_VENV = os.path.join(_BOOTSTRAP_BASE, ".venv", "bin", "python3")
-    if os.path.exists(_BOOTSTRAP_VENV):
-        current_python = os.path.realpath(sys.executable)
-        venv_python = os.path.realpath(_BOOTSTRAP_VENV)
-        if current_python != venv_python:
-            env = os.environ.copy()
-            venv_bin = os.path.dirname(_BOOTSTRAP_VENV)
-            env["PATH"] = venv_bin + os.pathsep + env.get("PATH", "")
-            env["VIRTUAL_ENV"] = os.path.dirname(venv_bin)
-            os.execve(_BOOTSTRAP_VENV, [_BOOTSTRAP_VENV, __file__, *sys.argv[1:]], env)
+    _BOOTSTRAP_PREFIX = os.path.realpath(os.path.join(_BOOTSTRAP_BASE, ".venv"))
+    if os.path.exists(_BOOTSTRAP_VENV) and os.path.realpath(sys.prefix) != _BOOTSTRAP_PREFIX:
+        env = os.environ.copy()
+        venv_bin = os.path.dirname(_BOOTSTRAP_VENV)
+        env["PATH"] = venv_bin + os.pathsep + env.get("PATH", "")
+        env["VIRTUAL_ENV"] = _BOOTSTRAP_PREFIX
+        os.execve(_BOOTSTRAP_VENV, [_BOOTSTRAP_VENV, __file__, *sys.argv[1:]], env)
 
 import requests
 from jinja2 import Template
