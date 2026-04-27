@@ -141,7 +141,7 @@ class NoctisEdgeGUI:
             img = img.resize((wm_size, wm_size), Image.LANCZOS)
             # Fade alpha channel to 12 % opacity
             r, g, b, a = img.split()
-            a = a.point(lambda v: int(v * 0.12))
+            a = a.point(lambda v: int(v * 0.28))
             img = Image.merge("RGBA", (r, g, b, a))
             # Composite onto terminal background colour so it is safe for canvas
             bg_r = int(BG_TERMINAL[1:3], 16)
