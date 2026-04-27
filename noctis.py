@@ -1497,28 +1497,33 @@ Or if done:
 {{"tool": "none"}}"""
 
     raw = ""
-    for attempt in range(MAX_LLM_RETRIES):
-        try:
-            response = requests.post(
-                OLLAMA_URL,
-                json={"model": MODEL, "prompt": prompt, "stream": False},
-                timeout=OLLAMA_TIMEOUT,
-            )
-            payload = response.json()
-            if "error" in payload or "response" not in payload:
-                continue
-            raw = payload["response"]
-            stripped = raw.strip()
-            if stripped.startswith("```"):
-                stripped = stripped.split("\n", 1)[-1]
-                stripped = stripped.rsplit("```", 1)[0]
-            action = json.loads(stripped.strip())
-            if validate_action(action):
-                return action
-        except json.JSONDecodeError:
-            pass
-        except Exception as e:
-            print(f"[!] LLM error (attempt {attempt + 1}): {e}")
+    _t0 = time.monotonic()
+    _sp = _Spinner("[ LLM ]  Deciding next action ...").start()
+    try:
+        for attempt in range(MAX_LLM_RETRIES):
+            try:
+                response = requests.post(
+                    OLLAMA_URL,
+                    json={"model": MODEL, "prompt": prompt, "stream": False},
+                    timeout=OLLAMA_TIMEOUT,
+                )
+                payload = response.json()
+                if "error" in payload or "response" not in payload:
+                    continue
+                raw = payload["response"]
+                stripped = raw.strip()
+                if stripped.startswith("```"):
+                    stripped = stripped.split("\n", 1)[-1]
+                    stripped = stripped.rsplit("```", 1)[0]
+                action = json.loads(stripped.strip())
+                if validate_action(action):
+                    return action
+            except json.JSONDecodeError:
+                pass
+            except Exception as e:
+                print(f"[!] LLM error (attempt {attempt + 1}): {e}")
+    finally:
+        _sp.stop(f" done ({_fmt_dur(time.monotonic() - _t0)})")  # always clears the line
 
     print("[!] LLM retries exhausted — stopping.")
     return {"tool": "none"}
@@ -2070,21 +2075,26 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
     }
 
     conclusion = "No conclusion generated."
-    for attempt in range(MAX_LLM_RETRIES):
-        try:
-            resp    = requests.post(
-                OLLAMA_URL,
-                json={"model": MODEL, "stream": False,
-                      "prompt": f"Write a two-sentence penetration testing conclusion. Be concise. Data: {json.dumps(mini_summary, separators=(',', ':'))}"},
-                timeout=OLLAMA_TIMEOUT,
-            )
-            payload = resp.json()
-            if "response" in payload:
-                conclusion = payload["response"].strip()
+    _t0 = time.monotonic()
+    _sp = _Spinner("[ LLM ]  Writing conclusion ...").start()
+    try:
+        for attempt in range(MAX_LLM_RETRIES):
+            try:
+                resp    = requests.post(
+                    OLLAMA_URL,
+                    json={"model": MODEL, "stream": False,
+                          "prompt": f"Write a two-sentence penetration testing conclusion. Be concise. Data: {json.dumps(mini_summary, separators=(',', ':'))}"},
+                    timeout=OLLAMA_TIMEOUT,
+                )
+                payload = resp.json()
+                if "response" in payload:
+                    conclusion = payload["response"].strip()
+                    break
+            except Exception as e:
+                print(f"[!] Conclusion LLM error: {e}")
                 break
-        except Exception as e:
-            print(f"[!] Conclusion LLM error: {e}")
-            break
+    finally:
+        _sp.stop(f" done ({_fmt_dur(time.monotonic() - _t0)})")
 
     generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")
 
@@ -2245,32 +2255,37 @@ or
 
 {{"language": "bash", "strategy": "<one sentence>", "script": "<full script>"}}"""
 
-    for attempt in range(MAX_LLM_RETRIES):
-        try:
-            resp = requests.post(
-                OLLAMA_URL,
-                json={"model": MODEL, "prompt": prompt, "stream": False},
-                timeout=180,
-            )
-            payload = resp.json()
-            raw = payload.get("response", "")
-            stripped = raw.strip()
-            if stripped.startswith("```"):
-                stripped = re.sub(r"^```[a-z]*\n?", "", stripped)
-                stripped = re.sub(r"\n?```$", "", stripped.strip())
-            obj = json.loads(stripped)
-            if (
-                isinstance(obj, dict)
-                and obj.get("language") in ("python", "bash")
-                and isinstance(obj.get("strategy"), str)
-                and isinstance(obj.get("script"), str)
-                and len(obj["script"]) > 20
-            ):
-                return obj
-        except requests.exceptions.Timeout:
-            break  # no point retrying a timeout — LLM is too slow right now
-        except Exception:
-            pass
+    _t0 = time.monotonic()
+    _sp = _Spinner(f"[ LLM ]  Generating test script for {cve.get('cve_id', 'CVE')} ...").start()
+    try:
+        for attempt in range(MAX_LLM_RETRIES):
+            try:
+                resp = requests.post(
+                    OLLAMA_URL,
+                    json={"model": MODEL, "prompt": prompt, "stream": False},
+                    timeout=180,
+                )
+                payload = resp.json()
+                raw = payload.get("response", "")
+                stripped = raw.strip()
+                if stripped.startswith("```"):
+                    stripped = re.sub(r"^```[a-z]*\n?", "", stripped)
+                    stripped = re.sub(r"\n?```$", "", stripped.strip())
+                obj = json.loads(stripped)
+                if (
+                    isinstance(obj, dict)
+                    and obj.get("language") in ("python", "bash")
+                    and isinstance(obj.get("strategy"), str)
+                    and isinstance(obj.get("script"), str)
+                    and len(obj["script"]) > 20
+                ):
+                    return obj
+            except requests.exceptions.Timeout:
+                break  # no point retrying a timeout — LLM is too slow right now
+            except Exception:
+                pass
+    finally:
+        _sp.stop(f" done ({_fmt_dur(time.monotonic() - _t0)})")
     return None
 
 
@@ -2326,32 +2341,37 @@ Respond with ONLY a single JSON object:
 or
 {{"language": "bash", "strategy": "<one sentence describing the DIFFERENT technique>", "script": "<full script>"}}"""
 
-    for attempt in range(MAX_LLM_RETRIES):
-        try:
-            resp = requests.post(
-                OLLAMA_URL,
-                json={"model": MODEL, "prompt": prompt, "stream": False},
-                timeout=180,
-            )
-            payload = resp.json()
-            raw = payload.get("response", "")
-            stripped = raw.strip()
-            if stripped.startswith("```"):
-                stripped = re.sub(r"^```[a-z]*\n?", "", stripped)
-                stripped = re.sub(r"\n?```$", "", stripped.strip())
-            obj = json.loads(stripped)
-            if (
-                isinstance(obj, dict)
-                and obj.get("language") in ("python", "bash")
-                and isinstance(obj.get("strategy"), str)
-                and isinstance(obj.get("script"), str)
-                and len(obj["script"]) > 20
-            ):
-                return obj
-        except requests.exceptions.Timeout:
-            break
-        except Exception:
-            pass
+    _t0 = time.monotonic()
+    _sp = _Spinner("[ LLM ]  Generating verification script ...").start()
+    try:
+        for attempt in range(MAX_LLM_RETRIES):
+            try:
+                resp = requests.post(
+                    OLLAMA_URL,
+                    json={"model": MODEL, "prompt": prompt, "stream": False},
+                    timeout=180,
+                )
+                payload = resp.json()
+                raw = payload.get("response", "")
+                stripped = raw.strip()
+                if stripped.startswith("```"):
+                    stripped = re.sub(r"^```[a-z]*\n?", "", stripped)
+                    stripped = re.sub(r"\n?```$", "", stripped.strip())
+                obj = json.loads(stripped)
+                if (
+                    isinstance(obj, dict)
+                    and obj.get("language") in ("python", "bash")
+                    and isinstance(obj.get("strategy"), str)
+                    and isinstance(obj.get("script"), str)
+                    and len(obj["script"]) > 20
+                ):
+                    return obj
+            except requests.exceptions.Timeout:
+                break
+            except Exception:
+                pass
+    finally:
+        _sp.stop(f" done ({_fmt_dur(time.monotonic() - _t0)})")
     return None
 
 
