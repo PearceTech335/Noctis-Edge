@@ -12,13 +12,13 @@ Noctis Edge is a Python-based AI-assisted penetration testing platform. It runs 
 
 ## System Requirements
 
-| Component | Minimum | Recommended |
-|-----------|---------|-------------|
-| **RAM** | 8 GB | 16 GB+ |
-| **Storage** | 15 GB free | 30 GB+ free |
-| **CPU** | 4 cores | 8 cores+ |
-| **OS** | Kali / Parrot / Ubuntu / Debian-based | Kali Linux (latest) |
-| **Python** | 3.10+ | 3.13 |
+| Component | Minimum |
+|-----------|---------|
+| **RAM** | 8 GB |
+| **Storage** | 15 GB free |
+| **CPU** | 4 cores |
+| **OS** | Kali / Parrot / Ubuntu / Debian-based |
+| **Python** | 3.10+ |
 
 **Storage breakdown** (approximate):
 
