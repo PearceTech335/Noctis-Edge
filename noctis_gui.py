@@ -18,7 +18,6 @@ NOCTIS      = os.path.join(BASE_DIR, "noctis.py")
 PYTHON      = sys.executable
 
 LOGO_PATH   = os.path.join(BASE_DIR, "noctis_logo.png")
-LOGO_SIZE   = 72   # display height/width in pixels
 
 
 def _ensure_logo() -> str | None:
@@ -115,7 +114,10 @@ class NoctisEdgeGUI:
         self.process: subprocess.Popen | None = None
         self.q:       queue.Queue = queue.Queue()
         self.running  = False
-        self._logo_img: tk.PhotoImage | None = None
+        self._logo_wm_img = None   # PIL watermark PhotoImage for canvas background
+        self._wm_img_id:  int | None = None  # canvas item id of the watermark
+        self._y_cursor:   int = 10           # current y insertion point on canvas
+        self._term_w:     int = 940          # canvas text wrap width (updated on resize)
 
         root.title("Noctis Edge — Security Through Exposure")
         root.configure(bg=BG)
@@ -127,16 +129,29 @@ class NoctisEdgeGUI:
         self._poll_queue()
 
     def _load_logo(self):
-        """Load the logo image (downloading it first if not cached locally)."""
+        """Load the logo as a faded watermark image using PIL (12 % opacity)."""
         logo_path = _ensure_logo()
-        if logo_path:
-            try:
-                raw = tk.PhotoImage(file=logo_path)
-                # subsample to fit within LOGO_SIZE px (use largest dimension)
-                factor = max(1, max(raw.width(), raw.height()) // LOGO_SIZE)
-                self._logo_img = raw.subsample(factor, factor)
-            except Exception:
-                self._logo_img = None
+        if not logo_path:
+            return
+        try:
+            from PIL import Image, ImageTk
+            img = Image.open(logo_path).convert("RGBA")
+            # Resize to a comfortable watermark size
+            wm_size = 340
+            img = img.resize((wm_size, wm_size), Image.LANCZOS)
+            # Fade alpha channel to 12 % opacity
+            r, g, b, a = img.split()
+            a = a.point(lambda v: int(v * 0.12))
+            img = Image.merge("RGBA", (r, g, b, a))
+            # Composite onto terminal background colour so it is safe for canvas
+            bg_r = int(BG_TERMINAL[1:3], 16)
+            bg_g = int(BG_TERMINAL[3:5], 16)
+            bg_b = int(BG_TERMINAL[5:7], 16)
+            bg = Image.new("RGBA", (wm_size, wm_size), (bg_r, bg_g, bg_b, 255))
+            bg.alpha_composite(img)
+            self._logo_wm_img = ImageTk.PhotoImage(bg.convert("RGB"))
+        except Exception:
+            self._logo_wm_img = None
 
     # ── UI construction ─────────────────────────────────────────────────────
 
@@ -144,12 +159,6 @@ class NoctisEdgeGUI:
         # ── Header bar ──────────────────────────────────────────────────────
         hdr = tk.Frame(self.root, bg=BG_PANEL, pady=10, padx=14)
         hdr.pack(fill=tk.X)
-
-        if self._logo_img:
-            tk.Label(
-                hdr, image=self._logo_img,
-                bg=BG_PANEL, bd=0,
-            ).pack(side=tk.LEFT, padx=(0, 10))
 
         tk.Label(
             hdr, text="Noctis Edge",
@@ -253,33 +262,31 @@ class NoctisEdgeGUI:
         )
         self.cmd_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
-        # ── Terminal output ──────────────────────────────────────────────────
-        out_frame = tk.Frame(self.root, bg=BG, padx=12)
-        out_frame.pack(fill=tk.BOTH, expand=True)
+        # ── Terminal output (Canvas-based so the watermark shows through text) ─
+        out_frame = tk.Frame(self.root, bg=BG_TERMINAL)
+        out_frame.pack(fill=tk.BOTH, expand=True, padx=12)
 
-        self.output = tk.Text(
-            out_frame,
-            bg=BG_TERMINAL, fg=TAG_NORMAL,
-            font=("Consolas", 10), wrap=tk.WORD,
-            state=tk.DISABLED, relief=tk.FLAT,
-            insertbackground=FG, selectbackground=ACCENT,
-            padx=10, pady=8,
-        )
-        vsb = tk.Scrollbar(out_frame, command=self.output.yview,
-                           bg=BG_PANEL, troughcolor=BG, activebackground=ACCENT)
-        self.output.configure(yscrollcommand=vsb.set)
+        vsb = tk.Scrollbar(out_frame, bg=BG_PANEL, troughcolor=BG, activebackground=ACCENT)
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        self.output.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        # colour tags
-        self.output.tag_config("good",   foreground=TAG_GOOD)
-        self.output.tag_config("warn",   foreground=TAG_WARN)
-        self.output.tag_config("bad",    foreground=TAG_BAD)
-        self.output.tag_config("info",   foreground=TAG_INFO)
-        self.output.tag_config("head",   foreground=TAG_HEAD)
-        self.output.tag_config("userinp",foreground=TAG_INPUT)
-        self.output.tag_config("dim",    foreground=TAG_DIM)
-        self.output.tag_config("normal", foreground=TAG_NORMAL)
+        self._term_canvas = tk.Canvas(
+            out_frame,
+            bg=BG_TERMINAL, bd=0, highlightthickness=0,
+            yscrollcommand=vsb.set,
+        )
+        vsb.configure(command=self._term_canvas.yview)
+        self._term_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        self._term_canvas.bind("<Configure>", self._on_terminal_configure)
+        self._term_canvas.bind("<MouseWheel>",
+            lambda e: self._term_canvas.yview_scroll(-1 * (e.delta // 120), "units"))
+        self._term_canvas.bind("<Button-4>",
+            lambda _: self._term_canvas.yview_scroll(-3, "units"))
+        self._term_canvas.bind("<Button-5>",
+            lambda _: self._term_canvas.yview_scroll(3, "units"))
+
+        # Draw watermark once the canvas is first mapped
+        self.root.after(100, self._draw_watermark)
 
         # ── Input row ────────────────────────────────────────────────────────
         inp_row = tk.Frame(self.root, bg=BG_PANEL, padx=12, pady=6)
@@ -319,32 +326,78 @@ class NoctisEdgeGUI:
             font=("Consolas", 9), anchor=tk.W,
         ).pack(side=tk.LEFT)
 
+    # ── Terminal canvas helpers ──────────────────────────────────────────────
+
+    def _draw_watermark(self):
+        """Draw (or reposition) the faded logo watermark centered on the canvas."""
+        if self._logo_wm_img is None:
+            return
+        w = self._term_canvas.winfo_width()  or 500
+        h = self._term_canvas.winfo_height() or 400
+        cx, cy = w // 2, h // 2
+        if self._wm_img_id is not None:
+            self._term_canvas.coords(self._wm_img_id, cx, cy)
+        else:
+            self._wm_img_id = self._term_canvas.create_image(
+                cx, cy, image=self._logo_wm_img, anchor=tk.CENTER, tags="watermark"
+            )
+        self._term_canvas.tag_lower("watermark")
+
+    def _on_terminal_configure(self, event):
+        """Reposition watermark and update text wrap width when canvas is resized."""
+        self._term_w = max(100, event.width - 24)
+        if self._wm_img_id is not None:
+            self._term_canvas.coords(self._wm_img_id, event.width // 2, event.height // 2)
+            self._term_canvas.tag_lower("watermark")
+        sr = self._term_canvas.bbox("output_text")
+        if sr:
+            self._term_canvas.configure(
+                scrollregion=(0, 0, event.width, sr[3] + 10)
+            )
+
+    def _line_color(self, line: str) -> str:
+        """Return a hex colour for a terminal output line."""
+        s = line.lstrip()
+        if s.startswith("[+]"): return TAG_GOOD
+        if s.startswith("[!]"): return TAG_WARN
+        if s.startswith("[-]"): return TAG_BAD
+        if s.startswith("[*]"): return TAG_INFO
+        if s.startswith("> "):  return TAG_INPUT
+        if s.startswith("===") or s.startswith("---"): return TAG_HEAD
+        if s.startswith("#"):   return TAG_DIM
+        return TAG_NORMAL
+
     # ── Helpers ─────────────────────────────────────────────────────────────
 
     def _append(self, text: str):
-        """Append coloured text to the output widget."""
-        self.output.configure(state=tk.NORMAL)
-        tag = self._classify(text)
-        self.output.insert(tk.END, text, tag)
-        self.output.see(tk.END)
-        self.output.configure(state=tk.DISABLED)
-
-    def _classify(self, line: str) -> str:
-        s = line.lstrip()
-        if s.startswith("[+]"):            return "good"
-        if s.startswith("[!]"):            return "warn"
-        if s.startswith("[-]"):            return "bad"
-        if s.startswith("[*]"):            return "info"
-        if s.startswith("> "):             return "userinp"
-        if s.startswith("===") or s.startswith("---") or s.startswith("===="):
-            return "head"
-        if s.startswith("#"):              return "dim"
-        return "normal"
+        """Append coloured text to the canvas terminal."""
+        tc = self._term_canvas
+        w  = self._term_w
+        for raw_line in text.split("\n"):
+            if not raw_line:
+                self._y_cursor += 5
+                continue
+            color = self._line_color(raw_line)
+            item = tc.create_text(
+                12, self._y_cursor,
+                text=raw_line, fill=color,
+                anchor=tk.NW, font=("Consolas", 10),
+                width=w, tags="output_text",
+            )
+            bbox = tc.bbox(item)
+            self._y_cursor = (bbox[3] if bbox else self._y_cursor + 16) + 3
+        tc.configure(scrollregion=(0, 0, max(tc.winfo_width(), w + 24), self._y_cursor + 10))
+        tc.yview_moveto(1.0)
 
     def _clear_output(self):
-        self.output.configure(state=tk.NORMAL)
-        self.output.delete("1.0", tk.END)
-        self.output.configure(state=tk.DISABLED)
+        self._term_canvas.delete("output_text")
+        self._y_cursor = 10
+        self._draw_watermark()
+        self._term_canvas.configure(
+            scrollregion=(0, 0,
+                          self._term_canvas.winfo_width() or 960,
+                          self._term_canvas.winfo_height() or 600)
+        )
 
     def _set_status(self, msg: str):
         self.status_var.set(msg)
