@@ -69,7 +69,7 @@ MAX_OUTPUT      = 3000
 MAX_ITERATIONS  = 10
 MAX_LLM_RETRIES = 3
 SAFE_MODE       = True   # can also be used with --aggressive flag for aggressive scanning an enumeration
-AIRGAP_MODE     = False  # set via --airgap; disables tools/features that require internet
+AIRGAP_MODE     = True   # default on; --dns opts in to internet-dependent DNS enumeration tools
 MSF_VALIDATE    = False  # set via --msf-validate; runs safe MSF check probes for each CVE match
 CVE_TEST        = False  # set via --cve-test; LLM generates test scripts per matched CVE
 CVE_KB_PATH     = os.path.join(BASE_DIR, "cve_knowledge_base.json")
@@ -377,8 +377,8 @@ def print_tool_status(available, unavailable):
         print(f"  [OK]      {name:<14} {available[name]}")
     for name in sorted(unavailable):
         print(f"  [MISSING] {name}")
-    if AIRGAP_MODE:
-        print(f"\n  [AIRGAP]  Internet-only tools disabled:")
+    if not AIRGAP_MODE:
+        print(f"\n  [DNS]     DNS enumeration enabled:")
         for name in sorted(INTERNET_ONLY_TOOLS):
             print(f"            {name}")
     print(f"{'=' * 52}\n")
@@ -3030,7 +3030,7 @@ async def main_async():
     global SAFE_MODE, AIRGAP_MODE, MSF_VALIDATE, CVE_TEST, SESSION_FILE
 
     if len(sys.argv) < 2:
-        print("Usage: python3 noctis.py <target> [profile ...] [--resume] [--aggressive] [--airgap] [--msf-validate] [--cve-test]")
+        print("Usage: python3 noctis.py <target> [profile ...] [--resume] [--aggressive] [--dns] [--msf-validate] [--cve-test]")
         print("       python3 noctis.py --report <json_file>")
         print("Profiles (one or more):", ", ".join(PROFILES))
         sys.exit(1)
@@ -3046,19 +3046,12 @@ async def main_async():
             resume = True
         elif arg == "--aggressive":
             SAFE_MODE = False
-        elif arg == "--airgap":
-            AIRGAP_MODE = True
+        elif arg == "--dns":
+            AIRGAP_MODE = False
         elif arg == "--msf-validate":
             MSF_VALIDATE = True
         elif arg == "--cve-test":
             CVE_TEST = True
-
-    # Auto-detect airgap if not explicitly set
-    if not AIRGAP_MODE:
-        if not _check_internet():
-            AIRGAP_MODE = True
-            print("[!] No internet access detected — automatically enabling --airgap mode.")
-            print(f"[!] Internet-dependent tools disabled: {', '.join(sorted(INTERNET_ONLY_TOOLS))}")
 
     # Ensure Ollama is running before we attempt any LLM calls
     if not ensure_ollama_running():
@@ -3114,8 +3107,10 @@ async def main_async():
     print(f"  Profile : {profile['name']}")
     mode_str = "AGGRESSIVE" if not SAFE_MODE else "SAFE (approval required for aggressive tools)"
     print(f"  Mode    : {mode_str}")
-    if AIRGAP_MODE:
-        print(f"  Airgap  : ENABLED — internet-dependent tools disabled ({', '.join(sorted(INTERNET_ONLY_TOOLS))})")
+    if not AIRGAP_MODE:
+        print(f"  DNS     : ENABLED — {', '.join(sorted(INTERNET_ONLY_TOOLS))} active")
+    else:
+        print(f"  DNS     : disabled (use --dns to enable DNS enumeration)")
     print(f"  Session : {session_id}")
     print(f"  Dir     : {session_dir}")
 
