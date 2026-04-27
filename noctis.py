@@ -479,6 +479,17 @@ async def run_nikto_async(url, session_dir=None):
          "-nointeractive", "-maxtime", "90s"],
         timeout=100,
     )
+    # Print any Nikto administrative/version messages to terminal only — they must
+    # not appear in the report (parse_nikto_output already filters them as findings,
+    # but they would still surface in the execution log output preview).
+    clean_lines = []
+    for line in raw.splitlines():
+        text = line.strip()
+        if text.startswith("+ ") and any(p in text[2:].lower() for p in _NIKTO_ADMIN_PHRASES):
+            print(f"[nikto] {text[2:]}")
+        else:
+            clean_lines.append(line)
+    raw = "\n".join(clean_lines)
     # Save a copy into the session directory for reference.
     if session_dir:
         safe_url = re.sub(r"[^a-zA-Z0-9_-]", "_", url).strip("_")
@@ -570,6 +581,21 @@ def parse_nuclei_json(raw_output, target):
 # NIKTO FINDING PARSER
 # ---------------------------------------------------------------------------
 
+# Nikto lines that are administrative noise — should print to terminal, not appear in report.
+_NIKTO_ADMIN_PHRASES = (
+    "out of date",
+    "git pull",
+    "update to the latest version of nikto",
+    "ssl info:",
+    "target ip:",
+    "target hostname:",
+    "target port:",
+    "start time:",
+    "end time:",
+    "host summary:",
+)
+
+
 def parse_nikto_output(output, target):
     findings = []
     for line in output.splitlines():
@@ -580,6 +606,9 @@ def parse_nikto_output(output, target):
             continue
         text = stripped[2:]
         if len(text) < 15:
+            continue
+        # Skip Nikto admin/meta messages — they are printed to terminal by run_nikto_async
+        if any(p in text.lower() for p in _NIKTO_ADMIN_PHRASES):
             continue
         f = Finding(
             finding_id=make_finding_id("nikto", target, text[:50]),
@@ -1977,6 +2006,14 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     </details>
   </details>
   {% endfor %}
+
+  {% if r.remediation %}
+  <div style="background:#0d2137;border-left:3px solid #29b6f6;padding:.7em .9em;margin-top:.6em;border-radius:0 4px 4px 0;font-size:.87em">
+    <strong style="color:#29b6f6">&#128295; Suggested Remediation</strong>
+    <div style="color:#cfd8dc;margin-top:.45em;white-space:pre-wrap;line-height:1.55">{{ r.remediation }}</div>
+    <div style="color:#546e7a;font-size:.78em;margin-top:.4em;font-style:italic">AI-generated guidance — verify against vendor advisories before applying.</div>
+  </div>
+  {% endif %}
 </div>
 {% endfor %}
 {% else %}
@@ -2702,6 +2739,68 @@ async def run_cve_tests(cve_matches: list, target: str,
     return cve_test_results, kb
 
 
+# ---------------------------------------------------------------------------
+# CVE REMEDIATION SUGGESTIONS
+# ---------------------------------------------------------------------------
+
+def _generate_remediation(cve: dict) -> str:
+    """
+    Ask the LLM for a concise remediation path for a single confirmed-vulnerable CVE.
+    Returns a plain-text remediation string, or a short fallback on failure.
+    """
+    prompt = (
+        f"You are a security engineer writing a remediation guide for a penetration test report.\n\n"
+        f"CVE ID:        {cve.get('cve_id', 'Unknown')}\n"
+        f"Description:   {cve.get('summary', '')[:400]}\n"
+        f"Affected:      {cve.get('product', '')} {cve.get('version_range', '')}\n"
+        f"Service:       {cve.get('service', '')}\n"
+        f"Vuln type:     {cve.get('vulnerability_type', '')}\n\n"
+        "Write a concise remediation path with three short sections:\n"
+        "1. Immediate mitigation (quick workaround to reduce exposure now)\n"
+        "2. Permanent fix (patch, config change, or upgrade path)\n"
+        "3. Verification (how to confirm the fix was applied)\n\n"
+        "Keep each section to 1-3 sentences. Plain text only — no markdown, no bullet symbols."
+    )
+    _t0 = time.monotonic()
+    _sp = _Spinner(f"[ LLM ]  Generating remediation for {cve.get('cve_id', 'CVE')} ...").start()
+    try:
+        resp = requests.post(
+            OLLAMA_URL,
+            json={"model": MODEL, "prompt": prompt, "stream": False},
+            timeout=OLLAMA_TIMEOUT,
+        )
+        payload = resp.json()
+        text = payload.get("response", "").strip()
+        return text if text else "Remediation guidance unavailable."
+    except Exception as e:
+        return f"Remediation guidance unavailable ({e})."
+    finally:
+        _sp.stop(f" done ({_fmt_dur(time.monotonic() - _t0)})")
+
+
+def generate_cve_remediations(cve_test_results: list, cve_matches: list) -> None:
+    """
+    For each CVE test result that is VULNERABLE or CONFIRMED_VULNERABLE, look up the
+    original CVE match record (for full metadata) and call _generate_remediation().
+    Attaches a 'remediation' key to the result dict in-place.
+    """
+    # Build a quick lookup from cve_id → original cve_match record
+    cve_meta = {c["cve_id"]: c for c in cve_matches}
+
+    vulnerable_verdicts = {"CONFIRMED_VULNERABLE", "VULNERABLE"}
+    targets = [r for r in cve_test_results if r.get("overall_verdict") in vulnerable_verdicts]
+    if not targets:
+        return
+
+    print(f"\n[REMEDIATION] Generating LLM remediation suggestions for "
+          f"{len(targets)} vulnerable CVE(s) ...")
+    for result in targets:
+        cve_id  = result["cve_id"]
+        cve_rec = cve_meta.get(cve_id, {"cve_id": cve_id})
+        result["remediation"] = _generate_remediation(cve_rec)
+        print(f"  [+] Remediation written for {cve_id}")
+
+
 async def _run_cve_test_phase(report: dict, target: str, session_dir: str) -> dict:
     """Approval gate + run_cve_tests + KB save + merge into report."""
     cve_matches = report.get("cve_matches", [])
@@ -2728,6 +2827,9 @@ async def _run_cve_test_phase(report: dict, target: str, session_dir: str) -> di
     cve_test_results, updated_kb = await run_cve_tests(cve_matches, target, session_dir, kb)
     _save_cve_kb(updated_kb)
     print(f"[+] CVE knowledge base updated → {CVE_KB_PATH}")
+
+    # Generate LLM remediation suggestions for each confirmed/vulnerable CVE
+    generate_cve_remediations(cve_test_results, cve_matches)
 
     report["cve_test_results"] = cve_test_results
     return report
