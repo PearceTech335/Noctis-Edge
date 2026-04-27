@@ -1,5 +1,9 @@
 # Noctis Edge
 
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/b21bff80-43a9-4952-a25f-f4d3fa4e87b2" alt="Noctis Edge Logo" width="400"/>
+</p>
+
 **Security Through Exposure**
 
 Noctis Edge is a Python-based AI-assisted penetration testing platform. It runs an automated, LLM-guided penetration test against a target, collects and verifies findings, generates HTML/PDF reports, and optionally validates CVEs using Metasploit or LLM-generated probe scripts. It can be run from the **command line** (`noctis.py`) or via the included **Tkinter GUI** (`noctis_gui.py`).
