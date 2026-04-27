@@ -432,6 +432,24 @@ else
 fi
 
 # =============================================================================
+# Logo
+# =============================================================================
+header "Logo (noctis_logo.png)"
+LOGO_URL="https://github.com/user-attachments/assets/b21bff80-43a9-4952-a25f-f4d3fa4e87b2"
+if [[ -f "$SCRIPT_DIR/noctis_logo.png" ]]; then
+    ok "noctis_logo.png already present — skipping download"
+else
+    info "Downloading Noctis Edge logo ..."
+    if curl -fsSL "$LOGO_URL" -o "$SCRIPT_DIR/noctis_logo.png" 2>/dev/null \
+       && [[ $(file -b --mime-type "$SCRIPT_DIR/noctis_logo.png" 2>/dev/null) == "image/png" ]]; then
+        ok "Logo downloaded to noctis_logo.png"
+    else
+        rm -f "$SCRIPT_DIR/noctis_logo.png"
+        skip "Logo download failed — the GUI will attempt to download it on first launch"
+    fi
+fi
+
+# =============================================================================
 # Done
 # =============================================================================
 echo ""
