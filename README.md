@@ -27,7 +27,7 @@ chmod +x setup.sh
 | apt packages | `nmap`, `curl`, `gobuster`, `ffuf`, `hydra`, `ssh-audit`, `dnsenum`, `dnsrecon`, `perl`, `golang-go`, and more |
 | SecLists | Wordlists via `snap install seclists` |
 | Nuclei | Go-based template scanner (`~/go/bin/nuclei`) |
-| Ollama | Local LLM server + pulls `qwen2.5-coder:7b-instruct-q4_k_m` |
+| Ollama | Local LLM server + pulls `hf.co/RCorvalan/Qwen2.5-7B-Instruct-1M-Q4_K_M-GGUF` |
 | Python venv | `.venv/` with `requests`, `jinja2`, `pycryptodome` |
 | CVE database | Clones `CVE/cve-offline/` and builds `cve-summary.csv` |
 | rdpscan | Clones `rdpscan/` helper |
@@ -229,7 +229,7 @@ cve_knowledge_base.json           ← cross-engagement CVE test KB (project root
 
 | Constant | Default | Description |
 |----------|---------|-------------|
-| `MODEL` | `qwen2.5-coder:7b-instruct-q4_k_m` | Ollama model to use |
+| `MODEL` | `hf.co/RCorvalan/Qwen2.5-7B-Instruct-1M-Q4_K_M-GGUF` | Ollama model to use |
 | `OLLAMA_URL` | `http://localhost:11434/api/generate` | Ollama API endpoint |
 | `MAX_ITERATIONS` | `10` | Max LLM scan loop iterations |
 | `MAX_LLM_RETRIES` | `3` | LLM call retries per iteration |
@@ -273,7 +273,7 @@ Manual install:
 curl -fsSL https://ollama.com/install.sh | sh
 
 # Pull the model:
-ollama pull qwen2.5-coder:7b-instruct-q4_k_m
+ollama pull hf.co/RCorvalan/Qwen2.5-7B-Instruct-1M-Q4_K_M-GGUF
 
 # Start server (must be running before launching Noctis Edge):
 ollama serve

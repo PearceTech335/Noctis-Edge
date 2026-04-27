@@ -60,12 +60,12 @@ CVE_CSV      = os.path.join(BASE_DIR, "CVE", "cve-offline", "cve-summary.csv")
 SESSION_FILE = os.path.join(BASE_DIR, "session.json")
 
 OLLAMA_URL     = "http://localhost:11434/api/generate"
-MODEL          = os.getenv("NOCTIS_OLLAMA_MODEL", "qwen2.5-coder:7b-instruct-q4_k_m")
+MODEL          = os.getenv("NOCTIS_OLLAMA_MODEL", "hf.co/RCorvalan/Qwen2.5-7B-Instruct-1M-Q4_K_M-GGUF")
 OLLAMA_TIMEOUT = int(os.getenv("NOCTIS_OLLAMA_TIMEOUT", "300"))   # seconds — CPU-only inference can take 1-3 min per call
-#"qwen2.5-coder:7b-instruct-q6_K"
-#"qwen2.5-coder:3b-instruct-fp16"
-#"qwen2.5-coder:7b-instruct-q4_k_m"
-#"qwen2.5-coder:3b"
+# Alternative models:
+#"hf.co/RCorvalan/Qwen2.5-7B-Instruct-1M-Q4_K_M-GGUF"  (default — 4.68 GB, 1M context)
+#"qwen2.5-coder:3b"                                      (lightweight — 1.9 GB, low-RAM machines)
+#"qwen2.5-coder:7b-instruct-q4_k_m"                     (standard Ollama 7B coder)
 
 MAX_OUTPUT      = 3000
 MAX_ITERATIONS  = 10

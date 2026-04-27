@@ -7,7 +7,7 @@
 
 set -euo pipefail
 
-OLLAMA_MODEL="qwen2.5-coder:7b-instruct-q4_k_m"
+OLLAMA_MODEL="hf.co/RCorvalan/Qwen2.5-7B-Instruct-1M-Q4_K_M-GGUF"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Colour helpers

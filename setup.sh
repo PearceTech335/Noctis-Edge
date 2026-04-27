@@ -29,7 +29,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-OLLAMA_MODEL="qwen2.5-coder:7b-instruct-q4_k_m"
+OLLAMA_MODEL="hf.co/RCorvalan/Qwen2.5-7B-Instruct-1M-Q4_K_M-GGUF"
 
 CVE_REPO="https://github.com/trickest/cve.git"
 CVE_OFFLINE_REPO="https://github.com/trickest/cve-offline.git"
@@ -102,11 +102,19 @@ sudo apt install -y \
     libjson-perl \
     golang-go \
     git \
-    wkhtmltopdf \
     libssl-dev \
     build-essential
 
 ok "apt packages installed"
+
+info "Installing optional PDF package (wkhtmltopdf) if available ..."
+if apt-cache policy wkhtmltopdf 2>/dev/null | grep -q 'Candidate: (none)'; then
+    skip "wkhtmltopdf has no installation candidate on this distro (PDF reports still supported via weasyprint)"
+else
+    sudo apt install -y wkhtmltopdf 2>/dev/null \
+        && ok "wkhtmltopdf installed" \
+        || skip "wkhtmltopdf install failed; continuing with weasyprint-based PDF generation"
+fi
 
 for required_cmd in dnsenum dnsrecon; do
     if command -v "$required_cmd" &>/dev/null; then
@@ -212,10 +220,18 @@ info "Installing Python dependencies into venv ..."
     pycryptodome \
     weasyprint \
     pdfkit \
-    netexec \
     --quiet \
-    && ok "Python packages installed (requests, jinja2, pycryptodome, weasyprint, pdfkit, netexec)" \
+    && ok "Python packages installed (requests, jinja2, pycryptodome, weasyprint, pdfkit)" \
     || fail "Python package installation failed"
+
+if command -v nxc &>/dev/null; then
+    ok "NetExec already available at $(command -v nxc)"
+else
+    info "Installing optional NetExec tool (nxc) ..."
+    sudo apt install -y netexec 2>/dev/null \
+        && ok "NetExec installed via apt" \
+        || skip "NetExec unavailable via apt on this distro (internal_ad profile will run without nxc)"
+fi
 
 chmod +x "$SCRIPT_DIR/noctis.py" "$SCRIPT_DIR/noctis_gui.py" 2>/dev/null || true
 ok "Executable entry points prepared"
@@ -242,13 +258,72 @@ else
     fi
 fi
 
+build_cve_fallback_csv() {
+    local fallback_repo_dir="$SCRIPT_DIR/CVE/cve"
+    local csv_out="$SCRIPT_DIR/CVE/cve-offline/cve-summary.csv"
+
+    info "Attempting fallback CVE dataset from $CVE_REPO ..."
+    mkdir -p "$SCRIPT_DIR/CVE"
+
+    if [[ -d "$fallback_repo_dir/.git" ]]; then
+        (cd "$fallback_repo_dir" && git pull --ff-only >/dev/null 2>&1) \
+            && ok "Updated fallback CVE source repo" \
+            || err "Could not update existing fallback CVE source repo"
+    else
+        git clone --depth=1 "$CVE_REPO" "$fallback_repo_dir" >/dev/null 2>&1 \
+            && ok "Fallback CVE source repo cloned" \
+            || { err "Fallback CVE source clone failed"; return 1; }
+    fi
+
+    mkdir -p "$(dirname "$csv_out")"
+    : > "$csv_out"
+
+    while IFS= read -r md_file; do
+        cve_id="$(basename "$md_file" .md)"
+        summary="$(awk '
+            BEGIN { in_desc=0 }
+            tolower($0) ~ /^### description/ { in_desc=1; next }
+            in_desc {
+                if ($0 ~ /^### /) exit
+                if ($0 !~ /^[[:space:]]*$/) {
+                    gsub(/\r/, "", $0)
+                    print $0
+                    exit
+                }
+            }
+        ' "$md_file")"
+
+        if [[ -z "$summary" ]]; then
+            summary="No description available."
+        fi
+
+        summary="${summary//\"/\"\"}"
+        echo "$cve_id,NONE,\"$summary\"" >> "$csv_out"
+    done < <(find "$fallback_repo_dir" -type f -regextype posix-extended -regex '.*/[0-9]{4}/CVE-[0-9]{4}-[0-9]+\.md' | sort)
+
+    if [[ -s "$csv_out" ]]; then
+        ok "Fallback CVE CSV generated at CVE/cve-offline/cve-summary.csv"
+        return 0
+    fi
+
+    err "Fallback CVE CSV generation produced no records"
+    return 1
+}
+
 if [[ -n "${CVE_DIR:-}" && -x "$CVE_DIR/updatecsv.sh" ]]; then
     info "Building cve-summary.csv (this downloads ~100 MB of CVE data — may take a few minutes) ..."
     (cd "$CVE_DIR" && bash updatecsv.sh) \
         && ok "cve-summary.csv built at CVE/cve-offline/cve-summary.csv" \
-        || err "updatecsv.sh failed — run it manually: cd CVE/cve-offline && ./updatecsv.sh"
+        || {
+            err "updatecsv.sh failed — attempting fallback CVE CSV build"
+            build_cve_fallback_csv || true
+        }
 elif [[ -n "${CVE_DIR:-}" ]]; then
     err "updatecsv.sh not found in $CVE_DIR — cannot build CVE database automatically"
+fi
+
+if [[ ! -f "$SCRIPT_DIR/CVE/cve-offline/cve-summary.csv" ]]; then
+    build_cve_fallback_csv || true
 fi
 
 if [[ -f "$SCRIPT_DIR/CVE/cve-offline/cve-summary.csv" ]]; then
