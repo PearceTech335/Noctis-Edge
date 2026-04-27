@@ -1,7 +1,7 @@
 # Noctis Edge
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/b21bff80-43a9-4952-a25f-f4d3fa4e87b2" alt="Noctis Edge Logo" width="400"/>
+  <img src="noctis_logo.png" alt="Noctis Edge Logo" width="400"/>
 </p>
 
 **Security Through Exposure**

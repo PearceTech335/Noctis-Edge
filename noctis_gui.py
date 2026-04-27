@@ -12,30 +12,18 @@ import sys
 import threading
 import tkinter as tk
 from tkinter import messagebox, filedialog
-import urllib.request
 
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 NOCTIS      = os.path.join(BASE_DIR, "noctis.py")
 PYTHON      = sys.executable
 
 LOGO_PATH   = os.path.join(BASE_DIR, "noctis_logo.png")
-LOGO_URL    = "https://github.com/user-attachments/assets/b21bff80-43a9-4952-a25f-f4d3fa4e87b2"
 LOGO_SIZE   = 72   # display height/width in pixels
 
 
 def _ensure_logo() -> str | None:
-    """Return path to logo PNG, downloading it if necessary. Returns None on failure."""
-    if os.path.isfile(LOGO_PATH):
-        return LOGO_PATH
-    try:
-        req = urllib.request.Request(LOGO_URL, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = resp.read()
-        with open(LOGO_PATH, "wb") as fh:
-            fh.write(data)
-        return LOGO_PATH
-    except Exception:
-        return None
+    """Return path to logo PNG if it exists alongside this script."""
+    return LOGO_PATH if os.path.isfile(LOGO_PATH) else None
 
 # ── Colour palette (VS Code Dark+ inspired) ────────────────────────────────
 BG          = "#1e1e1e"
