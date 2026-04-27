@@ -3284,7 +3284,7 @@ async def main_async():
             "findings": len(findings) if not broken else 0,
         })
 
-        # After base budget is exhausted, grant one extension for uninvestigated findings
+        # After base budget is exhausted, grant one automatic extension for uninvestigated findings
         i += 1
         if i >= effective_max and not _extension_granted:
             # Count findings whose title/host hasn't had a follow-up tool run
@@ -3299,6 +3299,24 @@ async def main_async():
                     _extension_granted = True
                     effective_max += extension
                     print(f"\n[+] {len(uninvestigated)} finding(s) have no follow-up — extending budget by {extension} (new cap: {effective_max}/{MAX_ITERATIONS_CAP})")
+
+        # When the hard cap is reached, ask the user whether to extend by 20 more
+        if i >= effective_max and i >= MAX_ITERATIONS_CAP:
+            print(f"\n{'=' * 52}")
+            print(f"  Scan ceiling reached ({i} iterations).")
+            print(f"  Findings so far : {len(all_findings)}")
+            print(f"  Elapsed         : {_fmt_dur(time.monotonic() - loop_start)}")
+            print(f"{'=' * 52}")
+            try:
+                answer = input("  Extend scan by 20 more iterations? [y/n]: ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                answer = "n"
+            if answer in ("y", "yes"):
+                effective_max += 20
+                print(f"[+] Extended — continuing to iteration {effective_max}.")
+            else:
+                print("[+] Finalising report.")
+                break
 
     print(f"\n{'=' * 52}")
     print(f"[+] Done — {len(context['history'])} action(s) on {target}")
