@@ -74,8 +74,9 @@ AIRGAP_MODE     = True   # default on; --dns opts in to internet-dependent DNS e
 MSF_VALIDATE    = False  # set via --msf-validate; runs safe MSF check probes for each CVE match
 CVE_TEST        = False  # set via --cve-test; LLM generates test scripts per matched CVE
 CVE_KB_PATH     = os.path.join(BASE_DIR, "cve_knowledge_base.json")
-CVE_TEST_ATTEMPTS = 15   # LLM attempts per CVE; KB scripts replayed first, new scripts fill remaining slots
+CVE_FRESH_ATTEMPTS  = 5   # fresh LLM-generated scripts per CVE (on top of known-exploit + KB replays)
 CVE_VERIFY_ATTEMPTS = 2  # independent verifier scripts run when any attempt returns VULNERABLE
+CVE_BATCH_SIZE      = 5  # prompt user to continue after this many CVEs (runaway guard)
 
 # Tools that rely on internet OSINT sources and should be skipped in airgap mode
 INTERNET_ONLY_TOOLS = {"amass", "dnsenum", "dnsrecon"}
@@ -2248,6 +2249,91 @@ def _run_script(script: str, language: str, cwd: str, timeout: int = 30) -> dict
             pass
 
 
+def _generate_known_exploit_script(cve: dict, target: str) -> dict | None:
+    """
+    Phase 0: Ask the LLM to implement the specific known safe test method described
+    in the CVE data (safe_validation_method / proof_of_impact) rather than generating
+    a creative approach. Returns {language, strategy, script} or None on failure.
+    """
+    method  = cve.get("safe_validation_method", "").strip()
+    proof   = cve.get("proof_of_impact", "").strip()
+    if not method and not proof:
+        return None  # no known method — skip Phase 0
+
+    guidance = ""
+    if method:
+        guidance += f"\n  Known safe test method: {method}"
+    if proof:
+        guidance += f"\n  Proof of impact:        {proof}"
+
+    prompt = f"""You are a penetration testing assistant generating a SAFE, READ-ONLY vulnerability test script.
+
+Your task is to implement EXACTLY the known test method described below for this CVE.
+Do NOT invent a creative approach — implement the specific technique documented here.
+
+CVE DETAILS:
+  ID:               {cve.get('cve_id', '')}
+  Summary:          {cve.get('summary', '')[:300]}
+  Vulnerability:    {cve.get('vulnerability_type', '')}
+  Affected product: {cve.get('product', '')} {cve.get('version_range', '')}
+{guidance}
+
+TARGET:
+  Host:    {target}
+  Service: {cve.get('service', '')}
+
+SAFE PROBING RULES — YOU MUST FOLLOW THESE:
+  ALLOWED:  HTTP GET/HEAD requests, TCP banner grabs (socket connect + recv), DNS lookups,
+            version string comparison, reading public endpoints, timing checks
+  FORBIDDEN: Any payload that writes/deletes files on the target, reverse shells, credential
+             brute-force, denial-of-service, buffer overflows, actual exploit code
+
+SCRIPT REQUIREMENTS:
+  - The script MUST print exactly one line containing one of:
+      VERDICT: VULNERABLE
+      VERDICT: NOT_VULNERABLE
+      VERDICT: INCONCLUSIVE
+  - Self-contained (stdlib + requests only), network calls max 10s timeout
+
+Respond with ONLY a single JSON object (no markdown, no prose):
+{{"language": "python", "strategy": "<one sentence>", "script": "<full script>"}}
+or
+{{"language": "bash", "strategy": "<one sentence>", "script": "<full script>"}}"""
+
+    _t0 = time.monotonic()
+    _sp = _Spinner(f"[ LLM ]  Generating known-exploit script for {cve.get('cve_id', 'CVE')} ...").start()
+    try:
+        for attempt in range(MAX_LLM_RETRIES):
+            try:
+                resp = requests.post(
+                    OLLAMA_URL,
+                    json={"model": MODEL, "prompt": prompt, "stream": False},
+                    timeout=180,
+                )
+                payload = resp.json()
+                raw = payload.get("response", "")
+                stripped = raw.strip()
+                if stripped.startswith("```"):
+                    stripped = re.sub(r"^```[a-z]*\n?", "", stripped)
+                    stripped = re.sub(r"\n?```$", "", stripped.strip())
+                obj = json.loads(stripped)
+                if (
+                    isinstance(obj, dict)
+                    and obj.get("language") in ("python", "bash")
+                    and isinstance(obj.get("strategy"), str)
+                    and isinstance(obj.get("script"), str)
+                    and len(obj["script"]) > 20
+                ):
+                    return obj
+            except requests.exceptions.Timeout:
+                break
+            except Exception:
+                pass
+    finally:
+        _sp.stop(f" done ({_fmt_dur(time.monotonic() - _t0)})")
+    return None
+
+
 def _generate_cve_test_script(cve: dict, target: str, previous_attempts: list,
                                kb_entry: dict | None, iteration: int) -> dict | None:
     """
@@ -2492,15 +2578,25 @@ def _print_timing(start: float, done: int, total: int) -> None:
 async def run_cve_tests(cve_matches: list, target: str,
                         session_dir: str, kb: dict) -> tuple[list, dict]:
     """
-    For each CVE:
-      1. Replay any scripts already in the knowledge base (different techniques proven in prior runs).
-      2. Generate up to CVE_TEST_ATTEMPTS new LLM scripts to fill remaining slots.
+    For each CVE (sorted Critical → High → Medium → Low):
+      0. Targeted attempt: implement the known safe_validation_method/proof_of_impact (if present).
+      1. Replay any scripts already in the knowledge base (proven techniques from prior runs).
+      2. Generate CVE_FRESH_ATTEMPTS new LLM scripts with fresh creative approaches.
       3. On the first VULNERABLE result, run CVE_VERIFY_ATTEMPTS independent verifier scripts
          using a different technique to confirm and avoid false positives.
+    Every CVE_BATCH_SIZE CVEs the user is prompted to continue (runaway guard).
     Returns (cve_test_results, updated_kb).
     """
     cve_tests_dir = os.path.join(session_dir, "cve_tests")
     os.makedirs(cve_tests_dir, exist_ok=True)
+
+    # Sort by severity so highest-impact CVEs are tested first
+    _sev_rank = {"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1}
+    cve_matches = sorted(
+        cve_matches,
+        key=lambda c: _sev_rank.get(c.get("severity", "").upper(), 0),
+        reverse=True,
+    )
 
     cve_test_results = []
     total_cves    = len(cve_matches)
@@ -2525,6 +2621,51 @@ async def run_cve_tests(cve_matches: list, target: str,
         vulnerable_found     = False
         verification_results: list = []
         verified             = False  # True if ≥1 verifier independently confirms VULNERABLE
+
+        # ------------------------------------------------------------------
+        # Phase 0: Targeted known-exploit attempt (implements the documented
+        #           safe_validation_method / proof_of_impact specifically)
+        # ------------------------------------------------------------------
+        has_method = bool(cve.get("safe_validation_method") or cve.get("proof_of_impact"))
+        if has_method:
+            print(f"  [P0] Attempting known test method ...")
+            p0_gen = _generate_known_exploit_script(cve, target)
+            if p0_gen:
+                language = p0_gen["language"]
+                strategy = p0_gen["strategy"]
+                script   = p0_gen["script"]
+                ext      = ".py" if language == "python" else ".sh"
+                safe_cve = re.sub(r"[^a-zA-Z0-9_-]", "_", cve_id)
+                script_path = os.path.join(cve_tests_dir, f"{safe_cve}_known_exploit{ext}")
+                with open(script_path, "w", encoding="utf-8") as fh:
+                    fh.write(script)
+                sp = _Spinner("[P0] Running known-exploit script ...").start()
+                run_result = await asyncio.get_event_loop().run_in_executor(
+                    None, lambda s=script, l=language: _run_script(s, l, cve_tests_dir, timeout=30)
+                )
+                output = run_result["output"]
+                if run_result["timed_out"]:
+                    output = f"[TIMED OUT]\n{output}"
+                elif run_result["error"]:
+                    output = f"[ERROR: {run_result['error']}]\n{output}"
+                m       = re.search(r"VERDICT:\s*(VULNERABLE|NOT_VULNERABLE|INCONCLUSIVE)", output)
+                verdict = m.group(1) if m else "INCONCLUSIVE"
+                verdict_counts[verdict] = verdict_counts.get(verdict, 0) + 1
+                if verdict == "VULNERABLE":
+                    vulnerable_found = True
+                sp.stop(f" {verdict}")
+                attempts.append({
+                    "attempt_num": 1,
+                    "source":      "known_exploit",
+                    "strategy":    f"[Known] {strategy}",
+                    "language":    language,
+                    "script":      script,
+                    "script_path": script_path,
+                    "output":      output[:600],
+                    "verdict":     verdict,
+                })
+            else:
+                print("  [P0] Known-exploit script generation failed — skipping.")
 
         # ------------------------------------------------------------------
         # Phase 1: Replay KB scripts (proven techniques from prior runs)
@@ -2572,9 +2713,9 @@ async def run_cve_tests(cve_matches: list, target: str,
             })
 
         # ------------------------------------------------------------------
-        # Phase 2: Generate new LLM scripts to fill remaining slots
+        # Phase 2: Generate CVE_FRESH_ATTEMPTS new LLM scripts
         # ------------------------------------------------------------------
-        new_slots   = max(0, CVE_TEST_ATTEMPTS - len(attempts))
+        new_slots   = CVE_FRESH_ATTEMPTS
         done_new    = 0
         for i in range(1, new_slots + 1):
             attempt_num = len(attempts) + 1
@@ -2761,6 +2902,24 @@ async def run_cve_tests(cve_matches: list, target: str,
             "verification_results": verification_results,
             "attempts":             attempts,
         })
+
+        # ------------------------------------------------------------------
+        # Batch continuation prompt (runaway guard)
+        # ------------------------------------------------------------------
+        if cve_idx < total_cves and cve_idx % CVE_BATCH_SIZE == 0:
+            remaining = total_cves - cve_idx
+            elapsed   = _fmt_dur(time.monotonic() - scan_start)
+            print(f"\n{'=' * 52}")
+            print(f"  CVE batch complete — {cve_idx}/{total_cves} tested  [{elapsed} elapsed]")
+            print(f"  {remaining} CVE(s) remaining.")
+            print(f"{'=' * 52}")
+            try:
+                cont = input("  Continue testing remaining CVEs? [y/n]: ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                cont = "n"
+            if cont not in ("y", "yes"):
+                print(f"[CVE-TEST] Stopped by operator after {cve_idx} CVE(s).")
+                break
 
     return cve_test_results, kb
 
