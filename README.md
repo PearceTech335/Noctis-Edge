@@ -24,11 +24,11 @@ chmod +x setup.sh
 | Step | What gets installed |
 |------|---------------------|
 | Git submodules | `nikto/` — cloned from [sullo/nikto](https://github.com/sullo/nikto) |
-| apt packages | `nmap`, `curl`, `gobuster`, `ffuf`, `hydra`, `ssh-audit`, `dnsenum`, `dnsrecon`, `perl`, `golang-go`, and more |
+| apt packages | `nmap`, `curl`, `gobuster`, `ffuf`, `hydra`, `ssh-audit`, `dnsenum`, `dnsrecon`, `perl`, `golang-go`, `python3-tk`, and more |
 | SecLists | Wordlists via `snap install seclists` |
-| Nuclei | Go-based template scanner (`~/go/bin/nuclei`) (This has many dependencie) |
+| Nuclei | Go-based template scanner (`~/go/bin/nuclei`) |
 | Ollama | Local LLM server + pulls `hf.co/RCorvalan/Qwen2.5-7B-Instruct-1M-Q4_K_M-GGUF` |
-| Python venv | `.venv/` with `requests`, `jinja2`, `pycryptodome` |
+| Python venv | `.venv/` with `requests`, `jinja2`, `pycryptodome`, `weasyprint`, `pdfkit` |
 | CVE database | Clones `CVE/cve-offline/` and builds `cve-summary.csv` |
 | rdpscan | Clones `rdpscan/` helper |
 | Additional tools | `amass`, `metasploit-framework` |
@@ -41,9 +41,9 @@ NO_OPTIONAL=1 ./setup.sh     # skip amass + Metasploit
 
 After setup completes:
 ```bash
-ollama serve &               # start the LLM server
-source .venv/bin/activate    # activate the Python venv
-python3 noctis.py <target>
+python3 noctis.py <target>   # Ollama starts automatically if not already running
+# Optional GUI:
+python3 noctis_gui.py
 ```
 
 Run `./update.sh` monthly to keep all components current.
@@ -133,6 +133,7 @@ Pass one or more profile names after the target. Tools from all selected profile
 ## How It Works
 
 ### 1. Startup Checks
+- Checks if Ollama is serving — starts `ollama serve` automatically if not
 - Validates all tool binaries are present and prints a status table
 - Checks internet connectivity — automatically enables `--airgap` if offline
 - Runs `nmap` against the target to discover open ports and services
@@ -265,8 +266,11 @@ Install notes: see [Readme/requirements.md](Readme/requirements.md).
 
 ## Ollama Setup
 
-Noctis Edge requires a running Ollama instance. `setup.sh` handles this automatically.
-Manual install:
+Noctis Edge requires Ollama. `setup.sh` installs it and pulls the model automatically.
+
+`noctis.py` will **automatically start `ollama serve`** if it is not already running — no manual step needed.
+
+Manual install (if not using `setup.sh`):
 
 ```bash
 # Install Ollama:
@@ -274,12 +278,9 @@ curl -fsSL https://ollama.com/install.sh | sh
 
 # Pull the model:
 ollama pull hf.co/RCorvalan/Qwen2.5-7B-Instruct-1M-Q4_K_M-GGUF
-
-# Start server (must be running before launching Noctis Edge):
-ollama serve
 ```
 
-On CPU-only machines expect 1–3 minutes per LLM call. The program prints a spinner while waiting.
+Ollama will be started automatically by `noctis.py` on first use. On CPU-only machines expect 1–3 minutes per LLM call. The program prints a spinner while waiting.
 
 ---
 

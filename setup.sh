@@ -87,6 +87,7 @@ sudo apt install -y \
     python3 \
     python3-venv \
     python3-pip \
+    python3-tk \
     nmap \
     curl \
     wget \
@@ -430,8 +431,9 @@ fi
 echo ""
 echo "  Next steps:"
 echo ""
-echo "  1. Start Ollama:           ollama serve"
-echo "  2. Run a scan:             ./noctis.py <target>"
+echo "  1. Run a scan:             ./noctis.py <target>"
+echo "     (Ollama will start automatically if not already running)"
+echo "  2. Launch the GUI:         ./noctis_gui.py"
 echo "  3. Optional shell access:  source .venv/bin/activate"
 echo ""
 echo "  Run ./update.sh monthly to keep everything current."

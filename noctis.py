@@ -198,6 +198,63 @@ def make_finding_id(tool, target, title):
     return "F-" + hashlib.sha256(raw.encode()).hexdigest()[:12].upper()
 
 
+# ---------------------------------------------------------------------------
+# OLLAMA LIFECYCLE
+# ---------------------------------------------------------------------------
+
+_ollama_proc: Optional[subprocess.Popen] = None
+
+def ensure_ollama_running() -> bool:
+    """Return True if Ollama is already serving or was successfully started.
+
+    Checks http://localhost:11434/api/tags.  If it is not reachable, spawns
+    `ollama serve` as a background process and waits up to 15 seconds for it
+    to become available.  The process handle is kept in _ollama_proc so it is
+    not garbage-collected and can be cleaned up at exit.
+    """
+    global _ollama_proc
+
+    tags_url = "http://localhost:11434/api/tags"
+
+    def _is_up() -> bool:
+        try:
+            r = requests.get(tags_url, timeout=3)
+            return r.status_code == 200
+        except Exception:
+            return False
+
+    if _is_up():
+        print("[*] Ollama is already serving.")
+        return True
+
+    if shutil.which("ollama") is None:
+        print("[!] 'ollama' binary not found in PATH. Please install Ollama:")
+        print("      https://ollama.com/download")
+        return False
+
+    print("[*] Ollama is not running — starting 'ollama serve' in the background …")
+    try:
+        _ollama_proc = subprocess.Popen(
+            ["ollama", "serve"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError as exc:
+        print(f"[!] Failed to start Ollama: {exc}")
+        return False
+
+    deadline = time.time() + 15
+    while time.time() < deadline:
+        if _is_up():
+            print("[*] Ollama is now serving.")
+            return True
+        time.sleep(0.5)
+
+    print("[!] Ollama did not become ready within 15 seconds.")
+    return False
+
+
 def normalize_severity(sev):
     mapping = {
         "critical":      "critical",
@@ -2869,6 +2926,11 @@ async def main_async():
             AIRGAP_MODE = True
             print("[!] No internet access detected — automatically enabling --airgap mode.")
             print(f"[!] Internet-dependent tools disabled: {', '.join(sorted(INTERNET_ONLY_TOOLS))}")
+
+    # Ensure Ollama is running before we attempt any LLM calls
+    if not ensure_ollama_running():
+        print("[!] Cannot continue without a running Ollama instance. Exiting.")
+        sys.exit(1)
 
     if not profile_names:
         profile_names = ["web"]

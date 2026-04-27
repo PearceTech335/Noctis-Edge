@@ -23,6 +23,7 @@ sudo apt update && sudo apt install -y \
     python3 \
     python3-venv \
     python3-pip \
+    python3-tk \
     nmap \
     curl \
     gobuster \
@@ -41,6 +42,7 @@ sudo apt update && sudo apt install -y \
 | `python3`            | Runtime for Noctis Edge                                  |
 | `python3-venv`       | Creates isolated Python virtual environments             |
 | `python3-pip`        | Python package installer                                 |
+| `python3-tk`         | Tkinter — required for the `noctis_gui.py` GUI           |
 | `nmap`               | Port and service discovery                               |
 | `curl`               | HTTP probing of discovered services                      |
 | `gobuster`           | Directory and path brute-forcing                         |
@@ -152,13 +154,10 @@ curl -fsSL https://ollama.com/install.sh | sh
 
 # Pull the model used by Noctis Edge:
 ollama pull hf.co/RCorvalan/Qwen2.5-7B-Instruct-1M-Q4_K_M-GGUF
-
-# Start the Ollama server (must be running before launching Noctis Edge):
-ollama serve
 ```
 
-Ollama listens on `http://localhost:11434` by default. Noctis Edge will fail to start if
-this service is not running.
+Ollama listens on `http://localhost:11434` by default. `noctis.py` will **automatically
+start `ollama serve`** if it is not already running — no manual step is needed.
 
 ---
 
