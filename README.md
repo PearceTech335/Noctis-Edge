@@ -322,13 +322,32 @@ Ollama will be started automatically by `noctis.py` on first use. On CPU-only ma
 
 ## Monthly Maintenance
 
-Run `./update.sh` to update everything:
+Run `./update.sh` monthly to keep all components current.
 
 ```bash
 ./update.sh
 ```
 
-This updates: apt packages, SecLists (snap), pip dependencies, nuclei binary + templates, Ollama model, CVE database.
+This updates (in order):
+
+| Step | What happens |
+|------|--------------|
+| 1 | apt packages upgraded |
+| 2 | SecLists (snap) refreshed |
+| 3 | pip dependencies upgraded |
+| 4 | Nuclei binary + templates updated |
+| 5 | Ollama model pulled |
+| 6 | CVE offline database pulled + CSV rebuilt |
+| 7 | Noctis Edge repository (`git pull`) |
+| 8 | CVE Knowledge Base submitted to the community relay |
+
+---
+
+## CVE Knowledge Base
+
+Noctis Edge accumulates CVE test results in `cve_knowledge_base.json` at the project root (created automatically on first `--cve-test` run). This file is machine-specific and is **not committed to git**.
+
+Each time you run `./update.sh`, the knowledge base is automatically submitted to the community via a Cloudflare relay — no token or account required. Your installation ID (generated once by `setup.sh` and stored in `noctis.conf`) is used to identify submissions.
 
 ---
 
@@ -336,10 +355,10 @@ This updates: apt packages, SecLists (snap), pip dependencies, nuclei binary + t
 
 | Script | Purpose |
 |--------|---------|
-| `setup.sh` | One-shot setup for a fresh install — run once after cloning |
-| `update.sh` | Monthly refresh of all components |
-
----
+| `setup.sh` | One-shot setup for a fresh install — run once after cloning. Also generates a unique installation ID stored in `noctis.conf`. |
+| `update.sh` | Monthly refresh of all components. On completion, automatically submits your local `cve_knowledge_base.json` to the community relay (no token required). |
+| `scripts/submit_kb.py` | POSTs the local CVE knowledge base to the Cloudflare community relay. Called automatically by `update.sh`. |
+| `scripts/merge_kb.py` | Additively merges an external knowledge base JSON into the local one (no data is overwritten or removed). |
 
 ---
 
@@ -350,7 +369,8 @@ The following are excluded from version control (see `.gitignore`):
 | Path | Reason |
 |------|--------|
 | `sessions/` | Runtime scan output |
-| `cve_knowledge_base.json` | Machine-specific accumulated data |
+| `cve_knowledge_base.json` | Machine-specific accumulated data — submitted automatically by `update.sh` |
+| `noctis.conf` | Per-user config (installation UUID, optional overrides) — never commit |
 | `WordLists/rockyou.txt` | 139 MB — not needed for directory enumeration |
 | `CVE/cve-offline/cve-summary.csv` | 57 MB — regenerate with `updatecsv.sh` |
 | `CVE/cve-offline/` | Separate git repo |

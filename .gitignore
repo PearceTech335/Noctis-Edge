@@ -37,6 +37,7 @@ reconotron.db
 
 # Noctis Edge local config — may contain git tokens; never commit
 .noctis_config
+noctis.conf
 
 # IDE / tool config
 .continue/

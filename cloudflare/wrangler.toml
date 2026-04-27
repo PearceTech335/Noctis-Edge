@@ -1,0 +1,62 @@
+# =============================================================================
+#  Noctis Edge — CVE KB Submission Relay
+#  Cloudflare Worker deployment configuration
+#
+#  FIRST-TIME SETUP (run all commands from the cloudflare/ directory)
+#  ─────────────────────────────────────────────────────────────────
+#
+#  1. Install Wrangler CLI (requires Node.js):
+#       npm install -g wrangler
+#
+#  2. Authenticate with your Cloudflare account:
+#       wrangler login
+#
+#  3. Create the KV namespace for rate limiting:
+#       wrangler kv namespace create RATE_LIMIT_KV
+#     Copy the `id` from the output and paste it into the [[kv_namespaces]]
+#     block below.
+#
+#     Also create a preview namespace (used by `wrangler dev` for local testing):
+#       wrangler kv namespace create RATE_LIMIT_KV --preview
+#     Paste the preview `id` into preview_id below.
+#
+#  4. Store the GitHub PAT as a secret (it is NEVER stored in this file):
+#       wrangler secret put GITHUB_TOKEN
+#     Paste the PAT when prompted.
+#     Required: contents:write on PearceTech334/Noctis-Edge-Submissions.
+#
+#  5. Deploy:
+#       wrangler deploy
+#
+#  6. Cloudflare will print your worker URL, e.g.:
+#       https://noctis-kb-relay.<your-subdomain>.workers.dev
+#     Open scripts/submit_kb.py and update the RELAY_URL constant with
+#     this URL (append /submit).
+#
+#  UPDATING THE GITHUB TOKEN
+#  ─────────────────────────
+#  Run:  wrangler secret put GITHUB_TOKEN
+#  Then paste the new token.  No redeployment needed — secrets update live.
+#
+#  LOCAL TESTING
+#  ─────────────
+#  Run:  wrangler dev
+#  This starts a local dev server.  In another terminal:
+#    curl -X POST http://localhost:8787/submit \
+#      -H "Content-Type: application/json" \
+#      -d '{"user_id":"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee","kb":{}}'
+# =============================================================================
+
+name               = "noctis-kb-relay"
+main               = "worker.js"
+compatibility_date = "2026-01-01"
+
+[[kv_namespaces]]
+binding    = "RATE_LIMIT_KV"
+id         = "8360d53df0e7424ea4ac097c3989c69c"
+preview_id = "004d5c1d72e44fe4ac3d0adbd5f630ce"
+
+# ── Secrets ──────────────────────────────────────────────────────────────────
+# Secrets are set via `wrangler secret put` and NEVER stored in this file.
+# Required secrets:
+#   GITHUB_TOKEN   — GitHub PAT, contents:write on Noctis-Edge-Submissions
