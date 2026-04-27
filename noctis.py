@@ -1794,7 +1794,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Noctis Edge Report — {{ target }}</title>
+<title>Noctis Edge Report</title>
 <style>
   body{font-family:'Segoe UI',Arial,sans-serif;background:#1a1a2e;color:#e0e0e0;margin:0;padding:24px}
   h1{color:#00d4ff;border-bottom:2px solid #00d4ff;padding-bottom:10px}
@@ -1821,19 +1821,33 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   .conclusion{background:#16213e;border-left:4px solid #00d4ff;padding:15px 20px;
               border-radius:0 8px 8px 0;margin:20px 0}
   footer{margin-top:40px;color:#555;font-size:.85em;text-align:center}
-  .header{display:flex;align-items:center;gap:18px;border-bottom:2px solid #00d4ff;padding-bottom:10px;margin-bottom:6px}
-  .header img{height:64px;width:64px;object-fit:contain;flex-shrink:0}
-  .header h1{color:#00d4ff;margin:0;border:none;padding:0}
+  .report-hero{display:flex;align-items:stretch;gap:0;margin-bottom:30px;border-bottom:2px solid #00d4ff;padding-bottom:20px}
+  .report-hero-left{flex:1;display:flex;flex-direction:column;justify-content:flex-start;padding-right:24px}
+  .report-hero-left h1{color:#00d4ff;margin:0 0 6px 0;border:none;padding:0;font-size:2em}
+  .report-hero-left .sub{color:#aaa;font-size:.95em;margin-bottom:18px}
+  .report-hero-left .meta{color:#ccc;font-size:.92em;line-height:1.9}
+  .report-hero-left .meta strong{color:#00d4ff}
+  .report-hero-logo{flex-shrink:0;display:flex;align-items:stretch}
+  .report-hero-logo img{width:auto;max-width:220px;object-fit:contain;display:block;align-self:stretch}
 </style>
 </head>
 <body>
-<div class="header">
-{% if logo_b64 %}<img src="data:image/png;base64,{{ logo_b64 }}" alt="Noctis Edge logo">{% endif %}
-<h1>Noctis Edge Penetration Test Report</h1>
+<div class="report-hero">
+  <div class="report-hero-left">
+    <h1>Noctis Edge Report</h1>
+    <div class="sub">Security Through Exposure</div>
+    <div class="meta">
+      <strong>Target:</strong> {{ target }}{% if target_info and target_info.ip_address and target_info.ip_address != target %} ({{ target_info.ip_address }}){% endif %}<br>
+      <strong>Generated:</strong> {{ generated_at }}<br>
+      <strong>Profile:</strong> {{ profile }}
+    </div>
+  </div>
+{% if logo_b64 %}
+  <div class="report-hero-logo">
+    <img src="data:image/png;base64,{{ logo_b64 }}" alt="Noctis Edge logo">
+  </div>
+{% endif %}
 </div>
-<p><strong>Target:</strong> {{ target }}{% if target_info and target_info.ip_address and target_info.ip_address != target %} ({{ target_info.ip_address }}){% endif %} &nbsp;|&nbsp;
-   <strong>Generated:</strong> {{ generated_at }} &nbsp;|&nbsp;
-   <strong>Profile:</strong> {{ profile }}</p>
 
 {% if target_info %}
 <h2>Target Summary</h2>
