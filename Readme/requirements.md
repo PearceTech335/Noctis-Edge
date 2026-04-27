@@ -151,7 +151,7 @@ Noctis Edge uses a local Ollama instance to drive its AI reasoning loop.
 curl -fsSL https://ollama.com/install.sh | sh
 
 # Pull the model used by Noctis Edge:
-ollama pull qwen2.5-coder:7b-instruct-q4_k_m
+ollama pull hf.co/RCorvalan/Qwen2.5-7B-Instruct-1M-Q4_K_M-GGUF
 
 # Start the Ollama server (must be running before launching Noctis Edge):
 ollama serve
