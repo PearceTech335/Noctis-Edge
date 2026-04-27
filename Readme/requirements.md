@@ -8,8 +8,8 @@ Follow each section in order on a fresh Kali/Parrot/Debian-based system.
 ## 1. Clone the Repository
 
 ```bash
-git clone --recurse-submodules https://github.com/PearceTech335/NoctisEdge.git
-cd NoctisEdge
+git clone --recurse-submodules https://github.com/PearceTech335/Noctis-Edge.git
+cd Noctis-Edge
 ```
 
 ---

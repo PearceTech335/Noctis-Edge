@@ -4,8 +4,8 @@
 #
 #  Run once on a fresh Kali / Parrot / Debian-based system after cloning:
 #
-#    git clone https://github.com/PearceTech335/NoctisEdge.git
-#    cd NoctisEdge
+#    git clone https://github.com/PearceTech335/Noctis-Edge.git
+#    cd Noctis-Edge
 #    chmod +x setup.sh
 #    ./setup.sh
 #
@@ -228,9 +228,18 @@ if command -v nxc &>/dev/null; then
     ok "NetExec already available at $(command -v nxc)"
 else
     info "Installing optional NetExec tool (nxc) ..."
-    sudo apt install -y netexec 2>/dev/null \
-        && ok "NetExec installed via apt" \
-        || skip "NetExec unavailable via apt on this distro (internal_ad profile will run without nxc)"
+    if sudo apt install -y netexec 2>/dev/null; then
+        ok "NetExec installed via apt"
+    else
+        info "apt install failed — trying pipx fallback ..."
+        if command -v pipx &>/dev/null || "$VENV/bin/python3" -m pip install --quiet pipx; then
+            pipx install netexec 2>/dev/null \
+                && ok "NetExec installed via pipx" \
+                || skip "NetExec unavailable on this distro (internal_ad profile will run without nxc)"
+        else
+            skip "NetExec unavailable on this distro (internal_ad profile will run without nxc)"
+        fi
+    fi
 fi
 
 chmod +x "$SCRIPT_DIR/noctis.py" "$SCRIPT_DIR/noctis_gui.py" 2>/dev/null || true
@@ -363,9 +372,18 @@ if [[ "${NO_OPTIONAL:-0}" != "1" ]]; then
     header "10/10  Additional tools"
 
     info "Installing amass ..."
-    sudo apt install -y amass 2>/dev/null \
-        && ok "amass installed" \
-        || skip "amass unavailable via apt on this system"
+    if command -v amass &>/dev/null; then
+        skip "amass already installed at $(command -v amass)"
+    elif sudo apt install -y amass 2>/dev/null; then
+        ok "amass installed via apt"
+    elif command -v snap &>/dev/null && sudo snap install amass 2>/dev/null; then
+        ok "amass installed via snap"
+    else
+        info "apt/snap failed — trying go install fallback ..."
+        go install github.com/owasp-amass/amass/v4/...@latest 2>/dev/null \
+            && ok "amass installed via go install" \
+            || skip "amass could not be installed (external recon profile will run without it)"
+    fi
 
     if [[ "${NO_MSF:-0}" != "1" ]]; then
         info "Checking for Metasploit Framework ..."
@@ -373,12 +391,20 @@ if [[ "${NO_OPTIONAL:-0}" != "1" ]]; then
             skip "msfconsole already installed at $(command -v msfconsole)"
         else
             info "Installing metasploit-framework via apt (Kali / Parrot only) ..."
-            sudo apt install -y metasploit-framework 2>/dev/null \
-                && ok "metasploit-framework installed" \
-                || {
-                    skip "metasploit-framework not available via apt on this distro"
-                    info "Install Metasploit manually: https://docs.metasploit.com/docs/using-metasploit/getting-started/nightly-installers.html"
-                }
+            if sudo apt install -y metasploit-framework 2>/dev/null; then
+                ok "metasploit-framework installed via apt"
+            else
+                info "apt install failed — trying Metasploit nightly installer ..."
+                curl -fsSL https://raw.githubusercontent.com/rapid7/metasploit-omnibus/master/config/templates/metasploit-framework-wrappers/msfupdate.erb \
+                    -o /tmp/msfinstall 2>/dev/null \
+                    && chmod 755 /tmp/msfinstall \
+                    && sudo /tmp/msfinstall \
+                    && ok "metasploit-framework installed via nightly installer" \
+                    || {
+                        skip "metasploit-framework could not be installed automatically"
+                        info "Install manually: https://docs.metasploit.com/docs/using-metasploit/getting-started/nightly-installers.html"
+                    }
+            fi
         fi
     else
         skip "Metasploit install skipped (NO_MSF=1)"

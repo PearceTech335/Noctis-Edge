@@ -13,8 +13,8 @@ Noctis Edge is a Python-based AI-assisted penetration testing platform. It runs 
 On a fresh Kali / Parrot / Debian-based machine, a single script handles everything:
 
 ```bash
-git clone --recurse-submodules https://github.com/PearceTech335/NoctisEdge.git
-cd NoctisEdge
+git clone --recurse-submodules https://github.com/PearceTech335/Noctis-Edge.git
+cd Noctis-Edge
 chmod +x setup.sh
 ./setup.sh
 ```
