@@ -129,6 +129,8 @@ class NoctisEdgeGUI:
         self._wm_img_id:  int | None = None  # canvas item id of the watermark
         self._y_cursor:   int = 10           # current y insertion point on canvas
         self._term_w:     int = 940          # canvas text wrap width (updated on resize)
+        self._spinner_item: int | None = None  # canvas item id of active spinner line
+        self._spinner_y:    int = 10            # y coord where spinner line was placed
 
         root.title("Noctis Edge — Security Through Exposure")
         root.configure(bg=BG)
@@ -393,6 +395,11 @@ class NoctisEdgeGUI:
         """Append coloured text to the canvas terminal."""
         tc = self._term_canvas
         w  = self._term_w
+        # If a spinner line is active, replace it rather than append after it
+        if self._spinner_item is not None:
+            tc.delete(self._spinner_item)
+            self._y_cursor   = self._spinner_y
+            self._spinner_item = None
         for raw_line in text.split("\n"):
             if not raw_line:
                 self._y_cursor += 5
@@ -410,9 +417,33 @@ class NoctisEdgeGUI:
         tc.yview_moveto(1.0)
         self._draw_watermark()  # keep watermark centred in the now-scrolled viewport
 
+    def _append_spinner(self, text: str):
+        """Overwrite the last spinner line in the terminal (\r behaviour)."""
+        tc = self._term_canvas
+        w  = self._term_w
+        if self._spinner_item is not None:
+            tc.delete(self._spinner_item)
+            self._y_cursor = self._spinner_y
+        else:
+            self._spinner_y = self._y_cursor
+        color = self._line_color(text)
+        self._spinner_item = tc.create_text(
+            12, self._y_cursor,
+            text=text, fill=color,
+            anchor=tk.NW, font=("Consolas", 10),
+            width=w, tags="output_text",
+        )
+        bbox = tc.bbox(self._spinner_item)
+        self._y_cursor = (bbox[3] if bbox else self._y_cursor + 16) + 3
+        tc.configure(scrollregion=(0, 0, max(tc.winfo_width(), w + 24), self._y_cursor + 10))
+        tc.yview_moveto(1.0)
+        self._draw_watermark()
+
     def _clear_output(self):
         self._term_canvas.delete("output_text")
-        self._y_cursor = 10
+        self._y_cursor   = 10
+        self._spinner_item = None
+        self._spinner_y    = 10
         self._draw_watermark()
         self._term_canvas.configure(
             scrollregion=(0, 0,
@@ -501,6 +532,7 @@ class NoctisEdgeGUI:
 
     def _reader_thread(self):
         """Read raw bytes from the subprocess, handle \\r overwriting."""
+        _SPINNER = "\x0f"  # sentinel prefix for spinner updates
         buf = b""
         try:
             while True:
@@ -517,6 +549,12 @@ class NoctisEdgeGUI:
                     line = line_bytes.decode("utf-8", errors="replace").rstrip()
                     if line:
                         self.q.put(line + "\n")
+                # Flush partial \r-only spinner frames so they show in real time
+                if b"\r" in buf:
+                    spinner_text = buf.split(b"\r")[-1].decode("utf-8", errors="replace").rstrip()
+                    if spinner_text:
+                        self.q.put(_SPINNER + spinner_text)
+                    buf = b""
         except Exception:
             pass
         # Flush anything left (line without trailing newline)
@@ -527,13 +565,17 @@ class NoctisEdgeGUI:
 
     def _poll_queue(self):
         """Called every 50 ms on the main thread to drain the output queue."""
+        _SPINNER = "\x0f"
         try:
             while True:
                 item = self.q.get_nowait()
                 if item is None:
                     self._finish()
                     break
-                self._append(item)
+                if item.startswith(_SPINNER):
+                    self._append_spinner(item[1:])
+                else:
+                    self._append(item)
         except queue.Empty:
             pass
         self.root.after(50, self._poll_queue)
