@@ -65,9 +65,10 @@ OLLAMA_TIMEOUT = int(os.getenv("NOCTIS_OLLAMA_TIMEOUT", "300"))   # seconds — 
 #"qwen2.5-coder:3b"                                      (lightweight — 1.9 GB, low-RAM machines)
 #"qwen2.5-coder:7b-instruct-q4_k_m"                     (standard Ollama 7B coder)
 
-MAX_OUTPUT      = 3000
-MAX_ITERATIONS  = 10
-MAX_LLM_RETRIES = 3
+MAX_OUTPUT          = 3000
+MAX_ITERATIONS      = 10   # minimum base iteration count (used when few services found)
+MAX_ITERATIONS_CAP  = 40   # hard ceiling — loop can never exceed this regardless of findings
+MAX_LLM_RETRIES     = 3
 SAFE_MODE       = True   # can also be used with --aggressive flag for aggressive scanning an enumeration
 AIRGAP_MODE     = True   # default on; --dns opts in to internet-dependent DNS enumeration tools
 MSF_VALIDATE    = False  # set via --msf-validate; runs safe MSF check probes for each CVE match
@@ -3187,10 +3188,16 @@ async def main_async():
     used_actions: set = set()  # deduplicate tool+args combos
     loop_start = time.monotonic()
 
+    # Dynamic iteration budget: at least MAX_ITERATIONS, one slot per service, capped hard
+    effective_max = min(max(MAX_ITERATIONS, len(services)), MAX_ITERATIONS_CAP)
+    print(f"[+] Iteration budget: {effective_max} (services: {len(services)}, cap: {MAX_ITERATIONS_CAP})")
+    _extension_granted = False  # only grant one finding-based extension
+
     # Main LLM-driven loop
-    for i in range(MAX_ITERATIONS):
+    i = 0
+    while i < effective_max:
         print(f"\n{'=' * 52}")
-        print(f"  Iteration {i + 1} / {MAX_ITERATIONS}  |  Target: {target}  |  Elapsed: {_fmt_dur(time.monotonic() - loop_start)}")
+        print(f"  Iteration {i + 1} / {effective_max}  |  Target: {target}  |  Elapsed: {_fmt_dur(time.monotonic() - loop_start)}")
         print(f"{'=' * 52}")
         if broken_tools:
             print(f"  Disabled : {', '.join(sorted(broken_tools))}")
@@ -3215,6 +3222,7 @@ async def main_async():
                 "action": action,
                 "result": "[skipped: duplicate action]",
             })
+            i += 1
             continue
         used_actions.add(action_key)
 
@@ -3275,6 +3283,22 @@ async def main_async():
             "result":   output[:300],
             "findings": len(findings) if not broken else 0,
         })
+
+        # After base budget is exhausted, grant one extension for uninvestigated findings
+        i += 1
+        if i >= effective_max and not _extension_granted:
+            # Count findings whose title/host hasn't had a follow-up tool run
+            investigated = {str(r.get("args", "")) for r in scan_records if r["tool"] not in {"nmap"}}
+            uninvestigated = [
+                f for f in all_findings
+                if not any(str(f.host) in inv or str(f.port) in inv for inv in investigated)
+            ]
+            if uninvestigated:
+                extension = min(len(uninvestigated), MAX_ITERATIONS_CAP - effective_max)
+                if extension > 0:
+                    _extension_granted = True
+                    effective_max += extension
+                    print(f"\n[+] {len(uninvestigated)} finding(s) have no follow-up — extending budget by {extension} (new cap: {effective_max}/{MAX_ITERATIONS_CAP})")
 
     print(f"\n{'=' * 52}")
     print(f"[+] Done — {len(context['history'])} action(s) on {target}")
