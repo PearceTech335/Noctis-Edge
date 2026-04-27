@@ -35,6 +35,9 @@ reconotron.db
 *.db
 *.sqlite
 
+# Noctis Edge local config — may contain git tokens; never commit
+.noctis_config
+
 # IDE / tool config
 .continue/
 .idea/
