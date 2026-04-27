@@ -289,7 +289,15 @@ build_cve_fallback_csv() {
     mkdir -p "$(dirname "$csv_out")"
     : > "$csv_out"
 
-    while IFS= read -r md_file; do
+    # Count total files upfront so we can show progress
+    local _cve_files
+    mapfile -t _cve_files < <(find "$fallback_repo_dir" -type f -regextype posix-extended -regex '.*/[0-9]{4}/CVE-[0-9]{4}-[0-9]+\.md' | sort)
+    local total="${#_cve_files[@]}"
+    local count=0
+
+    info "Processing $total CVE records — this will take several minutes ..."
+
+    for md_file in "${_cve_files[@]}"; do
         cve_id="$(basename "$md_file" .md)"
         summary="$(awk '
             BEGIN { in_desc=0 }
@@ -310,7 +318,15 @@ build_cve_fallback_csv() {
 
         summary="${summary//\"/\"\"}"
         echo "$cve_id,NONE,\"$summary\"" >> "$csv_out"
-    done < <(find "$fallback_repo_dir" -type f -regextype posix-extended -regex '.*/[0-9]{4}/CVE-[0-9]{4}-[0-9]+\.md' | sort)
+
+        (( count++ ))
+        # Print progress every 5000 records
+        if (( count % 5000 == 0 )); then
+            printf "\r  [ > ]   Progress: %d / %d records written (%.0f%%)   " \
+                "$count" "$total" "$(( count * 100 / total ))"
+        fi
+    done
+    printf "\r  [ > ]   Progress: %d / %d records written (100%%)   \n" "$total" "$total"
 
     if [[ -s "$csv_out" ]]; then
         ok "Fallback CVE CSV generated at CVE/cve-offline/cve-summary.csv"
