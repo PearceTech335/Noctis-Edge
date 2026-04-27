@@ -6,6 +6,31 @@ Noctis Edge is a Python-based AI-assisted penetration testing platform. It runs 
 
 ---
 
+## System Requirements
+
+| Component | Minimum | Recommended |
+|-----------|---------|-------------|
+| **RAM** | 8 GB | 16 GB+ |
+| **Storage** | 15 GB free | 30 GB+ free |
+| **CPU** | 4 cores | 8 cores+ |
+| **OS** | Kali / Parrot / Ubuntu / Debian-based | Kali Linux (latest) |
+| **Python** | 3.10+ | 3.13 |
+
+**Storage breakdown** (approximate):
+
+| Item | Size |
+|------|------|
+| Ollama LLM model (`Qwen2.5-7B-Instruct Q4`) | ~4.7 GB |
+| Nuclei templates | ~1.5 GB |
+| CVE offline database (built by `setup.sh`) | ~3–5 GB |
+| SecLists wordlists (snap) | ~2 GB |
+| Tool binaries + Python venv | ~1 GB |
+| Scan session outputs | Variable |
+
+> **RAM note:** The Qwen2.5-7B Q4 model requires ~5–6 GB of RAM to load. On machines with less than 8 GB total, the system may swap heavily during inference, significantly slowing LLM response times (expect 3–10 min per call on CPU-only with 8 GB). 16 GB+ is strongly recommended for comfortable use.
+
+---
+
 ## Initial Setup (new install)
 
 > Full manual setup instructions: [Readme/requirements.md](Readme/requirements.md)
