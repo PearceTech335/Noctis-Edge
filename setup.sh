@@ -2,7 +2,7 @@
 # =============================================================================
 #  Noctis Edge — One-Shot Setup Script
 #
-#  Run once on a fresh Kali / Parrot / Debian-based system after cloning:
+#  Run once on a fresh Kali / Parrot / Ubuntu / Debian-based system after cloning:
 #
 #    git clone https://github.com/PearceTech335/Noctis-Edge.git
 #    cd Noctis-Edge
@@ -141,10 +141,10 @@ fi
 # 3.  Go PATH — ensure ~/go/bin is in PATH for this session
 # =============================================================================
 header "4/10  Go runtime PATH"
-export PATH="$PATH:$HOME/go/bin"
+export PATH="$PATH:$HOME/go/bin:$HOME/.local/bin"
 if ! grep -qF 'go/bin' ~/.bashrc 2>/dev/null; then
-    echo 'export PATH="$PATH:$HOME/go/bin"' >> ~/.bashrc
-    info "Added ~/go/bin to ~/.bashrc"
+    echo 'export PATH="$PATH:$HOME/go/bin:$HOME/.local/bin"' >> ~/.bashrc
+    info "Added ~/go/bin and ~/.local/bin to ~/.bashrc"
 fi
 ok "Go PATH configured ($(go version 2>/dev/null || echo 'version unknown'))"
 
@@ -227,17 +227,18 @@ info "Installing Python dependencies into venv ..."
 if command -v nxc &>/dev/null; then
     ok "NetExec already available at $(command -v nxc)"
 else
-    info "Installing optional NetExec tool (nxc) ..."
-    if sudo apt install -y netexec 2>/dev/null; then
+    info "Installing NetExec (nxc) ..."
+    if sudo apt install -y netexec 2>/dev/null && command -v nxc &>/dev/null; then
         ok "NetExec installed via apt"
     else
-        info "apt install failed — trying pipx fallback ..."
-        if command -v pipx &>/dev/null || "$VENV/bin/python3" -m pip install --quiet pipx; then
-            pipx install netexec 2>/dev/null \
-                && ok "NetExec installed via pipx" \
-                || skip "NetExec unavailable on this distro (internal_ad profile will run without nxc)"
+        # Ubuntu/Debian: pipx is the recommended install method for netexec
+        info "Using pipx to install NetExec (works on Ubuntu/Debian) ..."
+        sudo apt install -y pipx 2>/dev/null || true
+        if pipx install netexec 2>/dev/null; then
+            pipx ensurepath 2>/dev/null || true
+            ok "NetExec installed via pipx (~/.local/bin/nxc)"
         else
-            skip "NetExec unavailable on this distro (internal_ad profile will run without nxc)"
+            fail "NetExec (nxc) could not be installed — internal_ad profile will not function"
         fi
     fi
 fi
