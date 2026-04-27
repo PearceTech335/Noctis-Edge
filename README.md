@@ -26,7 +26,7 @@ chmod +x setup.sh
 | Git submodules | `nikto/` — cloned from [sullo/nikto](https://github.com/sullo/nikto) |
 | apt packages | `nmap`, `curl`, `gobuster`, `ffuf`, `hydra`, `ssh-audit`, `dnsenum`, `dnsrecon`, `perl`, `golang-go`, and more |
 | SecLists | Wordlists via `snap install seclists` |
-| Nuclei | Go-based template scanner (`~/go/bin/nuclei`) |
+| Nuclei | Go-based template scanner (`~/go/bin/nuclei`) (This has many dependencie) |
 | Ollama | Local LLM server + pulls `hf.co/RCorvalan/Qwen2.5-7B-Instruct-1M-Q4_K_M-GGUF` |
 | Python venv | `.venv/` with `requests`, `jinja2`, `pycryptodome` |
 | CVE database | Clones `CVE/cve-offline/` and builds `cve-summary.csv` |
