@@ -266,21 +266,21 @@ cve_knowledge_base.json           ← cross-engagement CVE test KB (project root
 
 ## Tools Used
 
-| Tool | Purpose | Required |
-|------|---------|----------|
-| `nmap` | Port and service discovery | Yes |
-| `curl` | HTTP probing | Yes |
-| `nikto` | Web server vulnerability scanning (bundled in `nikto/`) | Yes |
-| `nuclei` | Template-based scanning | Recommended |
-| `gobuster` | Directory brute-forcing | Optional |
-| `ffuf` | Web fuzzing | Optional |
-| `hydra` | Credential brute-forcing (aggressive only) | Optional |
-| `ssh-audit` | SSH configuration auditing | Optional |
-| `amass` | Subdomain enumeration (internet required) | Optional |
-| `dnsenum` / `dnsrecon` | DNS enumeration (internet required, installed by `setup.sh`) | Yes |
-| `nxc` (NetExec) | SMB/LDAP enumeration for AD assessments | Optional |
-| `msfconsole` | MSF validation (`--msf-validate`) | Optional |
-| `rdpscan` | RDP enumeration | Optional |
+| Tool | Purpose |
+|------|---------|
+| `nmap` | Port and service discovery |
+| `curl` | HTTP probing |
+| `nikto` | Web server vulnerability scanning (bundled in `nikto/`) |
+| `nuclei` | Template-based scanning |
+| `gobuster` | Directory brute-forcing |
+| `ffuf` | Web fuzzing |
+| `hydra` | Credential brute-forcing (aggressive only) |
+| `ssh-audit` | SSH configuration auditing |
+| `amass` | Subdomain enumeration (internet required) |
+| `dnsenum` / `dnsrecon` | DNS enumeration (internet required, installed by `setup.sh`) |
+| `nxc` (NetExec) | SMB/LDAP enumeration for AD assessments |
+| `msfconsole` | MSF validation (`--msf-validate`) |
+| `rdpscan` | RDP enumeration |
 
 Install notes: see [Readme/requirements.md](Readme/requirements.md).
 
@@ -340,7 +340,6 @@ The following are excluded from version control (see `.gitignore`):
 |------|--------|
 | `sessions/` | Runtime scan output |
 | `cve_knowledge_base.json` | Machine-specific accumulated data |
-| `noctis.db` | Runtime database |
 | `WordLists/rockyou.txt` | 139 MB — not needed for directory enumeration |
 | `CVE/cve-offline/cve-summary.csv` | 57 MB — regenerate with `updatecsv.sh` |
 | `CVE/cve-offline/` | Separate git repo |
