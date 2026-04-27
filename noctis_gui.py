@@ -72,7 +72,7 @@ PROFILE_DESCRIPTIONS = {
 
 FLAGS = [
     ("--aggressive",   "Disable safe-mode: run gobuster / ffuf / hydra without approval"),
-    ("--dns",          "Enable DNS enumeration tools (amass, dnsenum, dnsrecon) — requires internet"),
+    ("--dns-enum",      "Enable DNS enumeration tools (amass, dnsenum, dnsrecon) — requires internet"),
     ("--msf-validate", "Run safe Metasploit 'check' probes for each matched CVE"),
     ("--cve-test",     "Ask the LLM to generate & execute probe scripts per CVE"),
     ("--resume",       "Resume the most recent interrupted scan for this target"),

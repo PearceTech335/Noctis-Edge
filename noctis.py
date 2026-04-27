@@ -3030,7 +3030,7 @@ async def main_async():
     global SAFE_MODE, AIRGAP_MODE, MSF_VALIDATE, CVE_TEST, SESSION_FILE
 
     if len(sys.argv) < 2:
-        print("Usage: python3 noctis.py <target> [profile ...] [--resume] [--aggressive] [--dns] [--msf-validate] [--cve-test]")
+        print("Usage: python3 noctis.py <target> [profile ...] [--resume] [--aggressive] [--dns-enum] [--msf-validate] [--cve-test]")
         print("       python3 noctis.py --report <json_file>")
         print("Profiles (one or more):", ", ".join(PROFILES))
         sys.exit(1)
@@ -3046,7 +3046,7 @@ async def main_async():
             resume = True
         elif arg == "--aggressive":
             SAFE_MODE = False
-        elif arg == "--dns":
+        elif arg == "--dns-enum":
             AIRGAP_MODE = False
         elif arg == "--msf-validate":
             MSF_VALIDATE = True
