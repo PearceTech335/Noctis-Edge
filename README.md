@@ -279,7 +279,8 @@ During a `--cve-test` run, the terminal displays each CVE under test in sequence
 |---|---|
 | ![LLM script source](https://github.com/user-attachments/assets/b8531a5e-4c5f-4992-9e78-56f486951ad1) | ![HTML report executive summary](https://github.com/user-attachments/assets/2f6d2ce6-77c3-4f21-87ce-7c3ac88d7527) |
 
-On completion, the HTML report opens with an executive summary stating the overall security posture, followed by sections covering the service inventory, findings ranked by risk score, CVE matches, validation results, and the LLM-generated conclusion. The same content is written to a PDF for distribution.
+On completion, the HTML report is generated with an executive summary stating the overall security posture, followed by sections covering the service inventory, findings ranked by risk score, CVE matches, validation results, and the LLM-generated conclusion. 
+***Coming Soon*** PDF File generation is under development.
 
 ---
 
