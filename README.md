@@ -6,7 +6,7 @@
 
 **Security Through Exposure**
 
-Noctis Edge is a Python-based AI-assisted penetration testing platform. It runs an automated, LLM-guided penetration test against a target, collects and verifies findings, generates HTML/PDF reports, and optionally validates CVEs using Metasploit or LLM-generated probe scripts. It can be run from the **command line** (`noctis.py`), via the included **Tkinter GUI** (`noctis_gui.py`), or through a **browser-based Web UI** (`noctis_web.py`) served locally on `http://127.0.0.1:5000`.
+Noctis Edge is a Python-based AI-assisted penetration testing platform. It runs an automated, LLM-guided penetration test against a target, collects and verifies findings, generates HTML/PDF reports, and optionally validates CVEs using Metasploit or LLM-generated probe scripts. It can be run from the **command line** (`noctis.py`) or through a **browser-based Web UI** (`noctis_web.py`) served locally on `http://127.0.0.1:5000`.
 
 ---
 
@@ -71,8 +71,6 @@ NO_OPTIONAL=1 ./setup.sh     # skip amass + Metasploit
 After setup completes:
 ```bash
 python3 noctis.py <target>   # Ollama starts automatically if not already running
-# Optional Tkinter GUI:
-python3 noctis_gui.py
 # Optional browser-based Web UI:
 python3 noctis_web.py
 ```
@@ -116,33 +114,9 @@ python3 noctis.py 192.168.0.1 --resume
 
 ![Command Line Usage](https://github.com/user-attachments/assets/5c27d403-60bb-4608-93ce-0332c1a5a2f4)
 
-### GUI
-
-A Tkinter-based graphical front-end is included for users who prefer not to use the terminal:
-
-```bash
-source .venv/bin/activate
-python3 noctis_gui.py
-```
-
-The GUI provides:
-
-- **Target** field
-- **Profiles** checkboxes — select one or more (`web`, `external`, `internal_ad`, `api`, `cloud`); tools from all selected profiles are merged at scan time
-- Checkboxes for all scan flags (`--aggressive`, `--dns-enum`, `--msf-validate`, `--cve-test`, `--resume`)
-- Live colour-coded terminal output (findings highlighted in green/amber/red)
-- **Prompt reply** input bar with quick **Y** / **N** buttons for approval gates
-- Stop button to terminate a running scan at any time
-
-The GUI launches `noctis.py` as a subprocess — all behaviour, output, and session files are identical to the command-line version.
-
-![Noctis Edge GUI](https://github.com/user-attachments/assets/74e527ba-5b2e-43ee-8fd3-d42b27abc91d)
-
----
-
 ### Web UI
 
-A browser-based front-end is available for users who prefer to interact via a web browser. It mirrors the Tkinter GUI exactly — same VS Code dark colour scheme, same profile and flag controls, and live terminal output streamed in real time via WebSocket.
+A browser-based front-end is available for users who prefer to interact via a web browser. It features a VS Code dark colour scheme, profile and flag controls, and live terminal output streamed in real time via WebSocket.
 
 ```bash
 source .venv/bin/activate
@@ -158,20 +132,24 @@ The server binds to `127.0.0.1` only — it is not accessible from other machine
 The Web UI provides:
 
 - **Target** field with Enter-to-start support
-- **Profiles** and **Flags** checkboxes identical to the GUI
+- **Profiles** and **Flags** checkboxes
 - Live colour-coded terminal output streamed via WebSocket (green `[+]`, amber `[!]`, red `[-]`, blue `[*]`)
-- Spinner line updates for real-time progress (same as GUI)
+- Spinner line updates for real-time progress
 - **Prompt reply** bar with quick **Y** / **N** buttons for approval gates
 - **Report** button to regenerate HTML/PDF from any existing JSON session file
 - Logo watermark in the terminal area
 
-| Feature | CLI | GUI | Web UI |
-|---------|-----|-----|--------|
-| Profile selection | ✓ | ✓ | ✓ |
-| Flag checkboxes | ✓ | ✓ | ✓ |
-| Live terminal output | ✓ | ✓ | ✓ (WebSocket) |
-| y/n prompt replies | ✓ | ✓ | ✓ |
-| Regenerate report | ✓ | ✓ | ✓ |
+![Noctis Edge Web UI](https://github.com/user-attachments/assets/0c3072c5-5198-4714-aa11-d6b2ee22096e)
+
+![Noctis Edge Web UI - Running](https://github.com/user-attachments/assets/e8531796-0264-4733-a7c2-6ef7a88daa33)
+
+| Feature | CLI | Web UI |
+|---------|-----|--------|
+| Profile selection | ✓ | ✓ |
+| Flag checkboxes | ✓ | ✓ |
+| Live terminal output | ✓ | ✓ (WebSocket) |
+| y/n prompt replies | ✓ | ✓ |
+| Regenerate report | ✓ | ✓ |
 
 **Dependencies:** `flask` and `flask-sock` — installed automatically by `setup.sh` and kept up to date by `update.sh`.
 
