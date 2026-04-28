@@ -484,7 +484,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  opacity: .10;
+  opacity: .45;
   pointer-events: none;
   max-width: 340px;
   max-height: 340px;
