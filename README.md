@@ -112,6 +112,8 @@ python3 noctis.py 192.168.0.1 --aggressive --msf-validate --cve-test
 python3 noctis.py 192.168.0.1 --resume
 ```
 
+![Command Line Usage](https://github.com/user-attachments/assets/5c27d403-60bb-4608-93ce-0332c1a5a2f4)
+
 ### GUI
 
 A Tkinter-based graphical front-end is included for users who prefer not to use the terminal:
