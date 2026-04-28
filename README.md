@@ -350,9 +350,13 @@ This updates (in order):
 
 ## CVE Knowledge Base
 
-Noctis Edge accumulates CVE test results in `cve_knowledge_base.json` at the project root (created automatically on first `--cve-test` run). This file is machine-specific, anonymysed and eeach entry is **ONLY** identified by the CVE ID, no target specific information is recorded. This file is **not committed to the main git branch**.
+Noctis Edge accumulates CVE test results in `cve_knowledge_base.json` at the project root (created automatically on first `--cve-test` run). This file is machine-specific and anonymised — each entry is identified **only** by CVE ID; no target-specific information is recorded. This file is **not committed to the main git branch**.
 
-Each time you run `./update.sh`, the knowledge base is automatically submitted to separate Knowledge Base branch via a Cloudflare relay — no token or account required. Your installation ID (anonymized and generated once by `setup.sh` and stored in `noctis.conf`) is used to identify submissions. These submissions are manually reviewed to ensure no malicious or dangerous scripts or tests are uploaded, and then pushed to a separate git repo that will be made accessible in the future (there is some infrastructure to be built around this item...)
+Each time you run `./update.sh`, the knowledge base is automatically submitted to the community submissions repository (`PearceTech335/Noctis-Edge-Submissions`) via a Cloudflare relay — no token or account required. Your installation ID (generated once by `setup.sh` and stored in `noctis.conf`) is used only to rate-limit submissions (4 per day) and is never linked to personal data.
+
+### How the relay works
+
+The Cloudflare Worker (`cloudflare/worker.js`) acts as a server-side relay: it holds the GitHub credentials and writes the submitted JSON to the submissions repository on your behalf. The source code is included in this repository for full transparency — you can audit exactly what is done with your data.
 
 ---
 
@@ -367,14 +371,30 @@ Each time you run `./update.sh`, the knowledge base is automatically submitted t
 
 ---
 
+## Cloudflare Relay
+
+The `cloudflare/` directory contains the Cloudflare Worker that relays KB submissions to the community repository.
+
+| File | Purpose |
+|------|---------|
+| `cloudflare/worker.js` | Worker source — validates, rate-limits, and writes submissions to GitHub |
+| `cloudflare/wrangler.toml` | Wrangler deployment config (KV bindings, route) |
+| `cloudflare/.gitignore` | Excludes `.wrangler/` cache (contains sensitive account credentials) |
+
+The worker is already deployed at `https://noctis-kb-relay.pearcetechnologies1.workers.dev`. End users do not need to deploy anything — `update.sh` handles submission automatically.
+
+---
+
 ## What Is NOT Committed to Git
 
 The following are excluded from version control (see `.gitignore`):
 
 | Path | Reason |
 |------|--------|
-| `sessions/` | Runtime scan output - This is your local session info|
+| `sessions/` | Runtime scan output — local to each installation |
 | `noctis.conf` | Per-user config (installation UUID, optional overrides) — never commit |
+| `cve_knowledge_base.json` | Local CVE test results — submitted to community repo via `update.sh` |
+| `cloudflare/.wrangler/` | Wrangler cache containing Cloudflare account credentials |
 | `WordLists/rockyou.txt` | 139 MB — not needed for directory enumeration |
 | `CVE/cve-offline/cve-summary.csv` | 57 MB — regenerate with `updatecsv.sh` |
 | `CVE/cve-offline/` | Separate git repo |
