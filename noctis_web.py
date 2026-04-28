@@ -24,8 +24,11 @@ if __name__ == "__main__":
         os.execve(_VENV_PY, [_VENV_PY, __file__, *sys.argv[1:]], _env)
 
 import json
+import os
+import pty
 import queue
 import re
+import select
 import subprocess
 import threading
 from pathlib import Path
@@ -61,6 +64,7 @@ sock = Sock(app)
 # ── Global scan state ────────────────────────────────────────────────────────
 _lock    = threading.Lock()
 _process: subprocess.Popen | None = None
+_pty_master_fd: int | None = None   # PTY master fd when running update.sh
 _running = False
 _ws_clients: set = set()   # active WebSocket connections
 
@@ -79,6 +83,56 @@ def _broadcast(msg: dict):
     if dead:
         with _lock:
             _ws_clients.difference_update(dead)
+
+
+def _pty_reader_thread(proc: subprocess.Popen, master_fd: int):
+    """Read from a PTY master fd and broadcast lines to WebSocket clients.
+    Used for update.sh so that sudo password prompts (written to /dev/tty)
+    are captured and forwarded to the browser."""
+    global _running, _pty_master_fd
+    buf = b""
+    try:
+        while True:
+            try:
+                rlist, _, _ = select.select([master_fd], [], [], 0.1)
+            except (ValueError, OSError):
+                break
+            if rlist:
+                try:
+                    data = os.read(master_fd, 4096)
+                except OSError:
+                    break
+                if not data:
+                    break
+                buf += data
+                while b"\n" in buf:
+                    line_bytes, buf = buf.split(b"\n", 1)
+                    line = line_bytes.decode("utf-8", errors="replace").rstrip("\r")
+                    if line:
+                        _broadcast({"type": "line", "text": line})
+                # Flush partial lines (spinner frames / sudo prompt lacks newline)
+                if buf:
+                    partial = buf.decode("utf-8", errors="replace").rstrip("\r")
+                    if partial:
+                        _broadcast({"type": "spinner", "text": partial})
+            else:
+                if proc.poll() is not None:
+                    break
+    except Exception:
+        pass
+    if buf.strip(b"\r\n"):
+        line = buf.decode("utf-8", errors="replace").rstrip()
+        if line:
+            _broadcast({"type": "line", "text": line})
+    proc.wait()
+    _broadcast({"type": "exit", "code": proc.returncode})
+    try:
+        os.close(master_fd)
+    except OSError:
+        pass
+    with _lock:
+        _running = False
+        _pty_master_fd = None
 
 
 def _reader_thread(proc: subprocess.Popen):
@@ -188,6 +242,16 @@ def api_input():
         return jsonify({"ok": False, "error": "Empty input"}), 400
     with _lock:
         proc = _process
+        mfd  = _pty_master_fd
+    # PTY-based process (update.sh): write to the PTY master fd
+    if mfd is not None:
+        try:
+            os.write(mfd, (text + "\n").encode())
+            _broadcast({"type": "line", "text": f"> {text}"})
+            return jsonify({"ok": True})
+        except OSError:
+            return jsonify({"ok": False, "error": "Process has exited"}), 409
+    # Regular pipe-based process (noctis.py scans)
     if proc and proc.poll() is None:
         try:
             proc.stdin.write((text + "\n").encode())
@@ -261,20 +325,27 @@ def api_update():
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
 
+    # Run update.sh inside a PTY so sudo can write its password prompt
+    # to /dev/tty (the PTY slave) and we can read it from the master fd.
+    master_fd, slave_fd = pty.openpty()
     proc = subprocess.Popen(
         ["bash", update_script],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        stdin=subprocess.PIPE,
-        bufsize=0,
+        stdin=slave_fd,
+        stdout=slave_fd,
+        stderr=slave_fd,
+        close_fds=True,
         cwd=BASE_DIR,
         env=env,
+        preexec_fn=os.setsid,
     )
+    os.close(slave_fd)   # parent doesn't need the slave end
     with _lock:
+        global _pty_master_fd
         _process = proc
+        _pty_master_fd = master_fd
         _running = True
 
-    threading.Thread(target=_reader_thread, args=(proc,), daemon=True).start()
+    threading.Thread(target=_pty_reader_thread, args=(proc, master_fd), daemon=True).start()
     _broadcast({"type": "started", "cmd": "update.sh"})
     return jsonify({"ok": True})
 
