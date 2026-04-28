@@ -100,7 +100,7 @@ With the venv active, install all required Python packages:
 
 ```bash
 pip install --upgrade pip
-pip install requests jinja2 pycryptodome weasyprint
+pip install requests jinja2 pycryptodome weasyprint flask flask-sock
 ```
 
 | Package        | Purpose                                             |
@@ -109,12 +109,8 @@ pip install requests jinja2 pycryptodome weasyprint
 | `jinja2`       | HTML report templating                              |
 | `pycryptodome` | DES3 decryption used by `rdpscan/RPDscan.py`        |
 | `weasyprint`   | PDF report generation from HTML                     |
-
-| Package        | Purpose                                             |
-|----------------|-----------------------------------------------------|
-| `requests`     | HTTP calls to the Ollama LLM API                    |
-| `jinja2`       | HTML report templating                              |
-| `pycryptodome` | DES3 decryption used by `rdpscan/RPDscan.py`        |
+| `flask`        | Web server for the `noctis_web.py` browser UI       |
+| `flask-sock`   | WebSocket support for live terminal streaming       |
 
 All other imports (`asyncio`, `subprocess`, `json`, `os`, `re`, `shutil`, `sys`, `time`,
 `hashlib`, `threading`, `dataclasses`, `xml.etree.ElementTree`, `datetime`) are Python
@@ -304,7 +300,38 @@ sudo apt install -y metasploit-framework
 
 ---
 
-## 12. Quick-Start Checklist
+## 12. Web UI (`noctis_web.py`)
+
+In addition to the command-line interface and Tkinter GUI, Noctis Edge ships a browser-based
+UI that looks and behaves identically to the Tkinter GUI — same dark VS Code colour scheme,
+same profile/flag controls, and live terminal streaming via WebSocket.
+
+**Dependencies:** `flask` and `flask-sock` (installed in Section 4 above — no extra steps needed).
+
+```bash
+# Start the web UI (default port 5000):
+source .venv/bin/activate
+python3 noctis_web.py
+
+# Use a custom port:
+python3 noctis_web.py --port 8080
+```
+
+Then open **http://127.0.0.1:5000** in any browser. The server is bound to `127.0.0.1` only —
+it is not accessible from other machines on the network.
+
+| Feature              | CLI | GUI | Web UI |
+|----------------------|-----|-----|--------|
+| Profile selection    | ✓   | ✓   | ✓      |
+| Flag checkboxes      | ✓   | ✓   | ✓      |
+| Live terminal output | ✓   | ✓   | ✓ (WebSocket) |
+| y/n prompt replies   | ✓   | ✓   | ✓      |
+| Regenerate report    | ✓   | ✓   | ✓      |
+| Logo watermark       | —   | ✓   | ✓      |
+
+---
+
+## 13. Quick-Start Checklist
 
 Before running `python noctis.py`, confirm:
 
@@ -315,13 +342,16 @@ Before running `python noctis.py`, confirm:
 - [ ] `nuclei` binary is on PATH: `which nuclei`
 
 ```bash
-# Standard scan:
+# Standard scan (CLI):
 source .venv/bin/activate
-python noctis.py 192.168.0.1
+python3 noctis.py 192.168.0.1
 
 # Web assessment with CVE testing enabled:
-python noctis.py 192.168.0.1 web --cve-test
+python3 noctis.py 192.168.0.1 web --cve-test
 
-# Aggressive scan with Metasploit validation and CVE testing:
-python noctis.py 192.168.0.1 --aggressive --msf-validate --cve-test
+# Launch the browser UI:
+python3 noctis_web.py
+
+# Launch the Tkinter GUI:
+python3 noctis_gui.py
 ```
