@@ -267,6 +267,22 @@ After the main scan (and after `--msf-validate` if both are set):
 
 ---
 
+## In Operation
+
+During a `--cve-test` run, the terminal displays each CVE under test in sequence, showing the method attempted (known-exploit replay from the knowledge base, LLM-generated probe, or both), the individual script verdicts, and the final per-CVE result. The LLM generates executable Python or Bash scripts in real time — the strategy and full source are printed to the terminal before execution so the operator can audit exactly what is being run against the target.
+
+| CVE test loop — KB replay and LLM script generation | LLM-generated probe script printed before execution |
+|---|---|
+| ![CVE test loop - KB replay](https://github.com/user-attachments/assets/fa832839-50bd-48fc-a598-5679e4e40792) | ![LLM-generated probe script](https://github.com/user-attachments/assets/3bdf1f6f-33c2-4514-be3a-dbfff592e9e3) |
+
+| LLM script source output | HTML report — executive summary |
+|---|---|
+| ![LLM script source](https://github.com/user-attachments/assets/b8531a5e-4c5f-4992-9e78-56f486951ad1) | ![HTML report executive summary](https://github.com/user-attachments/assets/2f6d2ce6-77c3-4f21-87ce-7c3ac88d7527) |
+
+On completion, the HTML report opens with an executive summary stating the overall security posture, followed by sections covering the service inventory, findings ranked by risk score, CVE matches, validation results, and the LLM-generated conclusion. The same content is written to a PDF for distribution.
+
+---
+
 ## Output Structure
 
 ```
