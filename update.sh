@@ -38,11 +38,11 @@ header() {
 # =============================================================================
 header "1/7  System packages (apt)"
 info "Running apt update + upgrade ..."
-sudo apt update -qq
-sudo apt upgrade -y
+sudo apt update -qq      || err "apt update failed — continuing"
+sudo apt upgrade -y      || err "apt upgrade failed — continuing"
 info "Ensuring required DNS tools are installed ..."
-sudo apt install -y dnsenum dnsrecon
-sudo apt autoremove -y
+sudo apt install -y dnsenum dnsrecon || err "apt install failed — continuing"
+sudo apt autoremove -y   || true
 ok "apt done"
 
 # =============================================================================
@@ -51,7 +51,7 @@ ok "apt done"
 header "2/7  Snap packages (seclists)"
 if command -v snap &>/dev/null; then
     info "Refreshing snap packages ..."
-    sudo snap refresh
+    sudo snap refresh || err "snap refresh failed — continuing"
     ok "snap done"
 else
     err "snap not found — skipping"
@@ -71,9 +71,8 @@ if [[ -f "$VENV/bin/activate" ]]; then
         pycryptodome \
         weasyprint \
         pdfkit \
-        netexec \
         --quiet
-    ok "pip done (requests, jinja2, pycryptodome, weasyprint, pdfkit, netexec)"
+    ok "pip done (requests, jinja2, pycryptodome, weasyprint, pdfkit)"
 else
     info "No venv found — installing to system Python (consider creating a venv)"
     pip3 install --upgrade requests jinja2 pycryptodome weasyprint pdfkit netexec --quiet
@@ -152,7 +151,7 @@ fi
 header "7/7  Noctis Edge repository"
 if [[ -d "$SCRIPT_DIR/.git" ]]; then
     info "Pulling latest Noctis Edge ..."
-    git -C "$SCRIPT_DIR" pull --quiet \
+    git -C "$SCRIPT_DIR" pull --rebase --quiet \
         && ok "Noctis Edge up to date" \
         || err "git pull failed (may have uncommitted changes)"
 else

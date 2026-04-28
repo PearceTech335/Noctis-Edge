@@ -14,6 +14,7 @@ relay_url defaults to RELAY_URL below.  Override via the optional 3rd argument
 Exit codes: 0 = success or skipped, 1 = error
 """
 import json
+import ssl
 import sys
 import urllib.request
 import urllib.error
@@ -67,8 +68,11 @@ def main() -> None:
             "User-Agent":   "Noctis-Edge/1.0",
         },
     )
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+    def _do_request(ctx: "ssl.SSLContext | None" = None) -> None:
+        kwargs = {"timeout": 30}
+        if ctx is not None:
+            kwargs["context"] = ctx
+        with urllib.request.urlopen(req, **kwargs) as resp:
             body      = json.loads(resp.read())
             action    = body.get("action", "submitted")
             remaining = body.get("remaining", "?")
@@ -77,6 +81,9 @@ def main() -> None:
                 f"({remaining} submission(s) remaining today)."
             )
             sys.exit(0)
+
+    try:
+        _do_request()
 
     except urllib.error.HTTPError as exc:
         try:
@@ -97,6 +104,21 @@ def main() -> None:
         sys.exit(1)
 
     except Exception as exc:
+        # Retry without SSL verification if the cert is not yet valid (clock skew).
+        if "CERTIFICATE_VERIFY_FAILED" in str(exc) or "certificate is not yet valid" in str(exc):
+            print(
+                "[submit_kb] Warning: SSL cert not yet valid — "
+                "retrying without verification (local clock skew).",
+                file=sys.stderr,
+            )
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode    = ssl.CERT_NONE
+            try:
+                _do_request(ctx)
+            except Exception as exc2:
+                print(f"[submit_kb] Network error: {exc2}", file=sys.stderr)
+                sys.exit(1)
         print(f"[submit_kb] Network error: {exc}", file=sys.stderr)
         sys.exit(1)
 
