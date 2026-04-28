@@ -247,6 +247,38 @@ def api_report():
     return jsonify({"ok": True})
 
 
+@app.route("/api/update", methods=["POST"])
+def api_update():
+    global _process, _running
+    with _lock:
+        if _running:
+            return jsonify({"ok": False, "error": "A process is already running"}), 409
+
+    update_script = os.path.join(BASE_DIR, "update.sh")
+    if not os.path.isfile(update_script):
+        return jsonify({"ok": False, "error": "update.sh not found"}), 404
+
+    env = os.environ.copy()
+    env["PYTHONUNBUFFERED"] = "1"
+
+    proc = subprocess.Popen(
+        ["bash", update_script],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        stdin=subprocess.PIPE,
+        bufsize=0,
+        cwd=BASE_DIR,
+        env=env,
+    )
+    with _lock:
+        _process = proc
+        _running = True
+
+    threading.Thread(target=_reader_thread, args=(proc,), daemon=True).start()
+    _broadcast({"type": "started", "cmd": "update.sh"})
+    return jsonify({"ok": True})
+
+
 @app.route("/api/sessions")
 def api_sessions():
     """List available JSON reports from the sessions directory."""
@@ -445,6 +477,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 #btn-clear   { background: var(--bg-panel); color: var(--fg-dim); border: 1px solid #444; }
 #btn-report  { background: #7d3c98; color: var(--btn-fg); }
 #cmd-label   { font-size: 9px; color: var(--fg-dim); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#btn-update  { background: #1a6b8a; color: var(--btn-fg); margin-left: auto; }
 
 /* ── Terminal ─────────────────────────────────────────────────────────── */
 #term-wrap {
@@ -619,6 +652,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
     <button id="btn-clear" onclick="clearTerm()">Clear</button>
     <button id="btn-report" onclick="openReportModal()">Report</button>
     <span id="cmd-label"></span>
+    <button id="btn-update" onclick="runUpdate()">&#8635;  Update</button>
   </div>
 
 </div>
@@ -667,6 +701,7 @@ const status  = document.getElementById('status-text');
 const cmdLbl  = document.getElementById('cmd-label');
 const btnRun  = document.getElementById('btn-run');
 const btnStop = document.getElementById('btn-stop');
+const btnUpdate = document.getElementById('btn-update');
 let   running = false;
 let   spinnerEl = null;   // current spinner <div> element
 
@@ -711,9 +746,11 @@ function handleMsg(msg) {
     clearTerm();
     running = true;
     setRunning(true);
-    cmdLbl.textContent = '$ python3 noctis.py ' + msg.cmd;
-    appendLine('[*] Launching: python3 noctis.py ' + msg.cmd + '\n');
-    status.textContent = 'Running…';
+    const isUpdate = msg.cmd === 'update.sh';
+    const label = isUpdate ? '$ bash update.sh' : '$ python3 noctis.py ' + msg.cmd;
+    cmdLbl.textContent = label;
+    appendLine('[*] Launching: ' + label + '\n');
+    status.textContent = isUpdate ? 'Updating…' : 'Running…';
   } else if (msg.type === 'exit') {
     flushSpinner();
     running = false;
@@ -773,8 +810,9 @@ function clearTerm() {
 
 /* ── Button state ────────────────────────────────────────────────────── */
 function setRunning(on) {
-  btnRun.disabled  = on;
-  btnStop.disabled = !on;
+  btnRun.disabled    = on;
+  btnStop.disabled   = !on;
+  btnUpdate.disabled = on;
 }
 
 /* ── Scan control ────────────────────────────────────────────────────── */
@@ -796,6 +834,14 @@ function startScan() {
 
 function stopScan() {
   fetch('/api/stop', { method: 'POST' });
+}
+
+function runUpdate() {
+  if (running) { alert('A process is already running. Stop it first.'); return; }
+  fetch('/api/update', { method: 'POST' })
+    .then(r => r.json()).then(d => {
+      if (!d.ok) { status.textContent = 'Error: ' + d.error; alert(d.error); }
+    });
 }
 
 /* ── Input ───────────────────────────────────────────────────────────── */
