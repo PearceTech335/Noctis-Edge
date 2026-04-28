@@ -78,9 +78,9 @@ NO_OPTIONAL=1 ./setup.sh     # skip amass + Metasploit
 
 After setup completes:
 ```bash
-python3 noctis.py <target>   # Ollama starts automatically if not already running
+./noctis.py <target>   # Ollama starts automatically if not already running
 # Optional browser-based Web UI:
-python3 noctis_web.py
+./noctis_web.py
 ```
 
 Run `./update.sh` monthly to keep all components current.
@@ -93,31 +93,31 @@ Run `./update.sh` monthly to keep all components current.
 
 ```bash
 # Standard web scan:
-python3 noctis.py 192.168.0.1
+./noctis.py 192.168.0.1
 
 # Single profile:
-python3 noctis.py 192.168.0.1 web
+./noctis.py 192.168.0.1 web
 
 # Multiple profiles (tools from both are merged):
-python3 noctis.py 192.168.0.1 web external
+./noctis.py 192.168.0.1 web external
 
 # Three profiles at once:
-python3 noctis.py 192.168.0.1 web external api
+./noctis.py 192.168.0.1 web external api
 
 # With CVE test scripts:
-python3 noctis.py 192.168.0.1 web --cve-test
+./noctis.py 192.168.0.1 web --cve-test
 
 # No internet / DNS enumeration not needed (default — no flag required):
-python3 noctis.py 192.168.0.1
+./noctis.py 192.168.0.1
 
 # Opt in to DNS enumeration (requires internet):
-python3 noctis.py 192.168.0.1 --dns-enum
+./noctis.py 192.168.0.1 --dns-enum
 
 # Full aggressive run:
-python3 noctis.py 192.168.0.1 --aggressive --msf-validate --cve-test
+./noctis.py 192.168.0.1 --aggressive --msf-validate --cve-test
 
 # Resume an interrupted scan:
-python3 noctis.py 192.168.0.1 --resume
+./noctis.py 192.168.0.1 --resume
 ```
 
 ![Command Line Usage](https://github.com/user-attachments/assets/5c27d403-60bb-4608-93ce-0332c1a5a2f4)
@@ -127,12 +127,11 @@ python3 noctis.py 192.168.0.1 --resume
 A browser-based front-end is available for users who prefer to interact via a web browser. It features a VS Code dark colour scheme, profile and flag controls, and live terminal output streamed in real time via WebSocket.
 
 ```bash
-source .venv/bin/activate
-python3 noctis_web.py
+./noctis_web.py
 # Then open: http://127.0.0.1:5000
 
 # Custom port:
-python3 noctis_web.py --port 8080
+./noctis_web.py --port 8080
 ```
 
 The server binds to `127.0.0.1` only — it is not accessible from other machines on the network.
@@ -230,7 +229,7 @@ risk_score = severity_weight × confidence × exposure × tool_confidence
 After the scan loop, reports are saved to `sessions/<target>_<timestamp>/`:
 - `report_<target>.json` — full machine-readable report
 - `report_<target>.html` — styled HTML report with collapsible sections
-- `report_<target>.pdf` — PDF version (requires `weasyprint` or equivalent)
+- `report_<target>.pdf` — PDF version 
 
 Reports include: executive summary, service inventory, findings table (severity-sorted), CVE matches, MSF validation results (if run), CVE test results (if run), and LLM-generated conclusion.
 
@@ -374,7 +373,7 @@ This updates (in order):
 
 Noctis Edge accumulates CVE test results in `cve_knowledge_base.json` at the project root (created automatically on first `--cve-test` run). This file is machine-specific and anonymised — each entry is identified **only** by CVE ID; no target-specific information is recorded. This file is **not committed to the main git branch**.
 
-Each time you run `./update.sh`, the knowledge base is automatically submitted to the community submissions repository (`PearceTech335/Noctis-Edge-Submissions`) via a Cloudflare relay — no token or account required. Your installation ID (generated once by `setup.sh` and stored in `noctis.conf`) is used only to rate-limit submissions (4 per day) and is never linked to personal data.
+Each time you run `./update.sh`, the knowledge base is automatically submitted to the community submissions repository (`PearceTech335/Noctis-Edge-Submissions`) via a Cloudflare relay — no token or account required. Your installation ID (generated once by `./setup.sh` and stored in `noctis.conf`) is used only to rate-limit submissions (4 per day) and is never linked to personal data.
 
 ### How the relay works
 
@@ -415,7 +414,6 @@ The following are excluded from version control (see `.gitignore`):
 |------|--------|
 | `sessions/` | Runtime scan output — local to each installation |
 | `noctis.conf` | Per-user config (installation UUID, optional overrides) — never commit |
-| `cve_knowledge_base.json` | Local CVE test results — submitted to community repo via `update.sh` |
 | `cloudflare/.wrangler/` | Wrangler cache containing Cloudflare account credentials |
 | `WordLists/rockyou.txt` | 139 MB — not needed for directory enumeration |
 | `CVE/cve-offline/cve-summary.csv` | 57 MB — regenerate with `updatecsv.sh` |
