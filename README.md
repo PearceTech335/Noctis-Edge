@@ -6,10 +6,7 @@
 
 **Security Through Exposure**
 
-Noctis Edge is a Python-based AI-assisted penetration testing platform. It runs an automated, LLM-guided penetration test against a target, collects and verifies findings, generates HTML/PDF reports, and optionally validates CVEs using Metasploit or LLM-generated probe scripts. It can be run from the **command line** (`noctis.py`) or via the included **Tkinter GUI** (`noctis_gui.py`).
-
-***Coming Soon...***
-Developing a tiny web server to run and only be accessible through local host, this will allow the program to be Docker-ised and run through Docker Desktop on Windows/Mac and then viewed through a browser of your choice.
+Noctis Edge is a Python-based AI-assisted penetration testing platform. It runs an automated, LLM-guided penetration test against a target, collects and verifies findings, generates HTML/PDF reports, and optionally validates CVEs using Metasploit or LLM-generated probe scripts. It can be run from the **command line** (`noctis.py`), via the included **Tkinter GUI** (`noctis_gui.py`), or through a **browser-based Web UI** (`noctis_web.py`) served locally on `http://127.0.0.1:5000`.
 
 ---
 
@@ -60,7 +57,7 @@ chmod +x setup.sh
 | SecLists | Wordlists via `snap install seclists` |
 | Nuclei | Go-based template scanner (`~/go/bin/nuclei`) |
 | Ollama | Local LLM server + pulls `hf.co/RCorvalan/Qwen2.5-7B-Instruct-1M-Q4_K_M-GGUF` |
-| Python venv | `.venv/` with `requests`, `jinja2`, `pycryptodome`, `weasyprint`, `pdfkit` |
+| Python venv | `.venv/` with `requests`, `jinja2`, `pycryptodome`, `weasyprint`, `pdfkit`, `flask`, `flask-sock` |
 | CVE database | Clones `CVE/cve-offline/` and builds `cve-summary.csv` |
 | rdpscan | Clones `rdpscan/` helper |
 | Additional tools | `amass`, `metasploit-framework` |
@@ -74,8 +71,10 @@ NO_OPTIONAL=1 ./setup.sh     # skip amass + Metasploit
 After setup completes:
 ```bash
 python3 noctis.py <target>   # Ollama starts automatically if not already running
-# Optional GUI:
+# Optional Tkinter GUI:
 python3 noctis_gui.py
+# Optional browser-based Web UI:
+python3 noctis_web.py
 ```
 
 Run `./update.sh` monthly to keep all components current.
@@ -138,6 +137,43 @@ The GUI provides:
 The GUI launches `noctis.py` as a subprocess — all behaviour, output, and session files are identical to the command-line version.
 
 ![Noctis Edge GUI](https://github.com/user-attachments/assets/74e527ba-5b2e-43ee-8fd3-d42b27abc91d)
+
+---
+
+### Web UI
+
+A browser-based front-end is available for users who prefer to interact via a web browser. It mirrors the Tkinter GUI exactly — same VS Code dark colour scheme, same profile and flag controls, and live terminal output streamed in real time via WebSocket.
+
+```bash
+source .venv/bin/activate
+python3 noctis_web.py
+# Then open: http://127.0.0.1:5000
+
+# Custom port:
+python3 noctis_web.py --port 8080
+```
+
+The server binds to `127.0.0.1` only — it is not accessible from other machines on the network.
+
+The Web UI provides:
+
+- **Target** field with Enter-to-start support
+- **Profiles** and **Flags** checkboxes identical to the GUI
+- Live colour-coded terminal output streamed via WebSocket (green `[+]`, amber `[!]`, red `[-]`, blue `[*]`)
+- Spinner line updates for real-time progress (same as GUI)
+- **Prompt reply** bar with quick **Y** / **N** buttons for approval gates
+- **Report** button to regenerate HTML/PDF from any existing JSON session file
+- Logo watermark in the terminal area
+
+| Feature | CLI | GUI | Web UI |
+|---------|-----|-----|--------|
+| Profile selection | ✓ | ✓ | ✓ |
+| Flag checkboxes | ✓ | ✓ | ✓ |
+| Live terminal output | ✓ | ✓ | ✓ (WebSocket) |
+| y/n prompt replies | ✓ | ✓ | ✓ |
+| Regenerate report | ✓ | ✓ | ✓ |
+
+**Dependencies:** `flask` and `flask-sock` — installed automatically by `setup.sh` and kept up to date by `update.sh`.
 
 ---
 

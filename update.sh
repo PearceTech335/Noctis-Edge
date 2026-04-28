@@ -71,8 +71,10 @@ if [[ -f "$VENV/bin/activate" ]]; then
         pycryptodome \
         weasyprint \
         pdfkit \
+        flask \
+        flask-sock \
         --quiet
-    ok "pip done (requests, jinja2, pycryptodome, weasyprint, pdfkit)"
+    ok "pip done (requests, jinja2, pycryptodome, weasyprint, pdfkit, flask, flask-sock)"
 else
     info "No venv found — installing to system Python (consider creating a venv)"
     pip3 install --upgrade requests jinja2 pycryptodome weasyprint pdfkit netexec --quiet

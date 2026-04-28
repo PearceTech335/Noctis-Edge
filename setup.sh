@@ -221,8 +221,10 @@ info "Installing Python dependencies into venv ..."
     pycryptodome \
     weasyprint \
     pdfkit \
+    flask \
+    flask-sock \
     --quiet \
-    && ok "Python packages installed (requests, jinja2, pycryptodome, weasyprint, pdfkit)" \
+    && ok "Python packages installed (requests, jinja2, pycryptodome, weasyprint, pdfkit, flask, flask-sock)" \
     || fail "Python package installation failed"
 
 if command -v nxc &>/dev/null; then
