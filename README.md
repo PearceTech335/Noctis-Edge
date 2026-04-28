@@ -132,6 +132,8 @@ The GUI provides:
 
 The GUI launches `noctis.py` as a subprocess — all behaviour, output, and session files are identical to the command-line version.
 
+![Noctis Edge GUI](https://github.com/user-attachments/assets/74e527ba-5b2e-43ee-8fd3-d42b27abc91d)
+
 ---
 
 ## Command-Line Flags
