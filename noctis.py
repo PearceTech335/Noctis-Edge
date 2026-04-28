@@ -1955,7 +1955,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Noctis Edge — Executive Penetration Testing Report</title>
+<title>Noctis Edge — Vulnerability Assessment</title>
 <style>
   body{font-family:'Segoe UI',Arial,sans-serif;background:#1a1a2e;color:#e0e0e0;margin:0;padding:0}
   .page{max-width:1200px;margin:0 auto;padding:32px 40px}
@@ -2054,7 +2054,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <!-- ===================== REPORT HEADER ===================== -->
 <div class="report-hero">
   <div class="report-hero-left">
-    <h1>Penetration Testing Report</h1>
+    <h1>Vulnerability Assessment</h1>
     <div class="sub">Noctis Edge &mdash; Security Through Exposure</div>
     <div class="meta">
       <strong>Assessment Scope:</strong> {{ target }}{% if target_info and target_info.ip_address and target_info.ip_address != target %} ({{ target_info.ip_address }}){% endif %}<br>
