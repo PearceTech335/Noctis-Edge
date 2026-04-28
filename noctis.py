@@ -2,7 +2,7 @@
 """
 Noctis Edge — Security Through Exposure
 Implements: structured findings, verification,
-approval gates, async execution, HTML/PDF reports,
+approval gates, async execution, HTML reports,
 service-specific enumerations, and risk scoring.
 """
 
@@ -1955,13 +1955,11 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Noctis Edge — Vulnerability Assessment</title>
+<title>Noctis Edge Report</title>
 <style>
-  body{font-family:'Segoe UI',Arial,sans-serif;background:#1a1a2e;color:#e0e0e0;margin:0;padding:0}
-  .page{max-width:1200px;margin:0 auto;padding:32px 40px}
+  body{font-family:'Segoe UI',Arial,sans-serif;background:#1a1a2e;color:#e0e0e0;margin:0;padding:24px}
   h1{color:#00d4ff;border-bottom:2px solid #00d4ff;padding-bottom:10px}
-  h2{color:#00d4ff;margin-top:36px;margin-bottom:12px;font-size:1.35em;border-left:4px solid #00d4ff;padding-left:12px}
-  h3{color:#90caf9;margin-top:20px;margin-bottom:8px;font-size:1.05em}
+  h2{color:#00d4ff;margin-top:30px}
   .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:15px;margin:20px 0}
   .box{background:#16213e;border-radius:8px;padding:15px;text-align:center;border:1px solid #0f3460}
   .num{font-size:2.4em;font-weight:bold}
@@ -1992,75 +1990,17 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   .report-hero-left .meta strong{color:#00d4ff}
   .report-hero-logo{flex-shrink:0;display:flex;align-items:stretch}
   .report-hero-logo img{width:auto;max-width:220px;object-fit:contain;display:block;align-self:stretch}
-  /* Posture banner */
-  .posture-banner{padding:20px 28px;border-radius:10px;margin:20px 0;border:2px solid}
-  .posture-critical{background:rgba(255,71,87,.12);border-color:#ff4757}
-  .posture-high{background:rgba(255,107,53,.12);border-color:#ff6b35}
-  .posture-medium{background:rgba(255,165,2,.12);border-color:#ffa502}
-  .posture-low{background:rgba(46,213,115,.12);border-color:#2ed573}
-  .posture-banner .posture-heading{margin:0 0 8px 0;font-size:1.15em;font-weight:700}
-  .posture-banner p{margin:0;color:#ccc;line-height:1.6;font-size:.95em}
-  /* Attack path */
-  .attack-phase{background:#16213e;border-radius:8px;padding:16px 20px;margin:6px 0;border-left:4px solid #00d4ff}
-  .attack-phase.blast{border-left-color:#ff4757}
-  .phase-label{color:#00d4ff;font-size:.8em;font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px}
-  .blast .phase-label{color:#ff4757}
-  .attack-phase p{margin:0;line-height:1.6;color:#ccc;font-size:.95em}
-  .connector{width:2px;height:14px;background:linear-gradient(to bottom,#00d4ff,#0f3460);margin-left:28px}
-  /* Business risk items */
-  .risk-item{background:#16213e;border-radius:8px;padding:14px 18px;margin:8px 0;display:flex;gap:14px;align-items:flex-start}
-  .risk-num{background:#0f3460;color:#00d4ff;border-radius:50%;width:30px;height:30px;display:flex;align-items:center;justify-content:center;font-weight:700;flex-shrink:0;font-size:.9em}
-  .risk-title{font-weight:600;color:#e0e0e0;margin-bottom:4px;font-size:.95em}
-  .risk-desc{color:#aaa;font-size:.88em;line-height:1.55}
-  /* Remediation roadmap */
-  .roadmap-phase{background:#16213e;border-radius:8px;padding:18px 20px;margin:12px 0;border-top:3px solid}
-  .roadmap-immediate{border-top-color:#ff4757}
-  .roadmap-shortterm{border-top-color:#ffa502}
-  .roadmap-strategic{border-top-color:#2ed573}
-  .roadmap-phase h3{margin-top:0;font-size:1em}
-  .roadmap-meta{display:flex;gap:20px;font-size:.82em;color:#aaa;margin-bottom:10px;flex-wrap:wrap}
-  .roadmap-item{display:flex;align-items:flex-start;gap:10px;margin:6px 0;padding:9px 12px;background:#1a1a2e;border-radius:6px}
-  .owner-badge{background:#0f3460;color:#90caf9;padding:2px 8px;border-radius:4px;font-size:.72em;white-space:nowrap;flex-shrink:0;margin-top:2px}
-  .item-title{font-weight:600;color:#e0e0e0;margin-bottom:2px;font-size:.88em}
-  .item-why{color:#888;font-size:.82em;line-height:1.4}
-  /* Risk matrix */
-  .risk-matrix-wrap{overflow-x:auto;margin:12px 0}
-  .risk-matrix{border-collapse:separate;border-spacing:3px;max-width:580px}
-  .matrix-hdr{background:#0f3460;color:#aaa;font-size:.72em;text-align:center;padding:6px;border-radius:4px;font-weight:600}
-  .matrix-row-lbl{background:#0f3460;color:#aaa;font-size:.72em;font-weight:600;text-align:right;padding:6px 10px;border-radius:4px;white-space:nowrap}
-  .matrix-cell{border-radius:4px;padding:7px;text-align:center;vertical-align:top;min-width:140px;min-height:44px}
-  .cell-critical{background:rgba(255,71,87,.22);border:1px solid #ff4757}
-  .cell-high{background:rgba(255,107,53,.22);border:1px solid #ff6b35}
-  .cell-medium{background:rgba(255,165,2,.22);border:1px solid #ffa502}
-  .cell-low{background:rgba(46,213,115,.18);border:1px solid #2ed573}
-  .cell-empty{background:#16213e;border:1px solid #0f3460}
-  .cell-item{font-size:.68em;margin:2px 0;line-height:1.3;color:#ddd}
-  /* Validation confidence */
-  .conf-badge{display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:10px;font-size:.72em;font-weight:600;white-space:nowrap}
-  .conf-confirmed{background:#1b5e20;color:#a5d6a7;border:1px solid #2e7d32}
-  .conf-manual{background:#bf360c;color:#ffccbc;border:1px solid #d84315}
-  .conf-scanner{background:#1a237e;color:#90caf9;border:1px solid #283593}
-  .conf-fp{background:#333;color:#aaa;border:1px solid #555}
-  /* Owner chip */
-  .owner{padding:2px 7px;border-radius:4px;font-size:.72em;font-weight:600;background:#0f3460;color:#90caf9}
-  /* Section divider */
-  .section-divider{border:none;border-top:1px solid #0f3460;margin:40px 0 0 0}
-  .section-label{display:block;color:#555;font-size:.75em;text-transform:uppercase;letter-spacing:.12em;text-align:center;margin:-11px auto 28px;background:#1a1a2e;width:fit-content;padding:0 18px}
 </style>
 </head>
 <body>
-<div class="page">
-
-<!-- ===================== REPORT HEADER ===================== -->
 <div class="report-hero">
   <div class="report-hero-left">
-    <h1>Vulnerability Assessment</h1>
-    <div class="sub">Noctis Edge &mdash; Security Through Exposure</div>
+    <h1>Noctis Edge Report</h1>
+    <div class="sub">Security Through Exposure</div>
     <div class="meta">
-      <strong>Assessment Scope:</strong> {{ target }}{% if target_info and target_info.ip_address and target_info.ip_address != target %} ({{ target_info.ip_address }}){% endif %}<br>
-      <strong>Testing Window:</strong> {{ generated_at }}<br>
-      <strong>Testing Methodology:</strong> {{ profile | upper }} Assessment<br>
-      <strong>Validation Standard:</strong> OWASP / PTES / NIST SP 800-115
+      <strong>Target:</strong> {{ target }}{% if target_info and target_info.ip_address and target_info.ip_address != target %} ({{ target_info.ip_address }}){% endif %}<br>
+      <strong>Generated:</strong> {{ generated_at }}<br>
+      <strong>Profile:</strong> {{ profile }}
     </div>
   </div>
 {% if logo_b64 %}
@@ -2070,189 +2010,29 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 {% endif %}
 </div>
 
-<!-- ============================================================ -->
-<!--  SECTION 1 — EXECUTIVE SUMMARY                               -->
-<!-- ============================================================ -->
-<hr class="section-divider">
-<span class="section-label">Section 1 &mdash; Executive Summary</span>
+{% if target_info %}
+<h2>Target Summary</h2>
+<table>
+  <tr><th>Field</th><th>Value</th></tr>
+  <tr><td>Input Target</td><td>{{ target_info.input_target }}</td></tr>
+  <tr><td>IP Address</td><td>{{ target_info.ip_address or target }}</td></tr>
+  {% if target_info.rdns_hostname %}<tr><td>Reverse DNS</td><td>{{ target_info.rdns_hostname }}</td></tr>{% endif %}
+  {% if target_info.mac_address %}<tr><td>MAC Address</td><td>{{ target_info.mac_address }}{% if target_info.mac_vendor %} ({{ target_info.mac_vendor }}){% endif %}</td></tr>{% endif %}
+  {% if target_info.os_guess %}<tr><td>OS Guess</td><td>{{ target_info.os_guess }} ({{ target_info.os_accuracy }}% accuracy)</td></tr>{% endif %}
+  {% if target_info.netbios_name %}<tr><td>NetBIOS Name</td><td>{{ target_info.netbios_name }}</td></tr>{% endif %}
+  {% if target_info.asn or target_info.org %}<tr><td>ASN / Org</td><td>{{ target_info.asn }} {{ target_info.org }}</td></tr>{% endif %}
+  <tr><td>Open Ports</td><td>{{ target_info.open_ports }}</td></tr>
+  <tr><td>Scan Time</td><td>{{ target_info.scan_time }}</td></tr>
+</table>
+{% endif %}
 
-<!-- Overall Security Posture -->
-<div class="posture-banner posture-{{ overall_posture.level }}">
-  <div class="posture-heading" style="color:{{ overall_posture.color }}">&#9888;&nbsp; Overall Security Posture: {{ overall_posture.label }}</div>
-  <p>{{ overall_posture.description }}</p>
-</div>
-
-<!-- Severity Summary -->
+<h2>Executive Summary</h2>
 <div class="grid">
   <div class="box"><div class="num critical">{{ counts.critical }}</div><div>Critical</div></div>
   <div class="box"><div class="num high">{{ counts.high }}</div><div>High</div></div>
   <div class="box"><div class="num medium">{{ counts.medium }}</div><div>Medium</div></div>
   <div class="box"><div class="num low">{{ counts.low + counts.info }}</div><div>Low / Info</div></div>
 </div>
-
-<!-- Top Business Risks -->
-<h2>Top Business Risks</h2>
-<p style="color:#aaa;font-size:.92em;margin-bottom:14px">The following risks represent the most significant potential business impacts identified during this assessment. These are not simply technical vulnerabilities — they represent credible paths to operational disruption, data breach, financial loss, and reputational damage.</p>
-{% if top_business_risks %}
-{% for risk in top_business_risks %}
-<div class="risk-item">
-  <div class="risk-num">{{ loop.index }}</div>
-  <div style="flex:1">
-    <div class="risk-title"><span class="badge badge-{{ risk.severity }}">{{ risk.severity | upper }}</span>&nbsp; {{ risk.title }}</div>
-    <div class="risk-desc">{{ risk.business_impact }}</div>
-  </div>
-</div>
-{% endfor %}
-{% else %}
-<p style="color:#aaa">No significant business risks identified.</p>
-{% endif %}
-
-<!-- Attack Path Narrative -->
-<h2>Attack Path Narrative</h2>
-<p style="color:#aaa;font-size:.92em;margin-bottom:14px">The following scenario illustrates how a motivated threat actor could chain the identified vulnerabilities into a complete breach. This is not theoretical &mdash; it reflects the realistic attack paths observed during testing.</p>
-<div>
-  <div class="attack-phase">
-    <div class="phase-label">&#128270;&nbsp; Phase 1 &mdash; Initial Access</div>
-    <p>{{ attack_path.initial_access }}</p>
-  </div>
-  <div class="connector"></div>
-  <div class="attack-phase">
-    <div class="phase-label">&#128736;&nbsp; Phase 2 &mdash; Privilege Escalation</div>
-    <p>{{ attack_path.privilege_escalation }}</p>
-  </div>
-  <div class="connector"></div>
-  <div class="attack-phase">
-    <div class="phase-label">&#127758;&nbsp; Phase 3 &mdash; Lateral Movement</div>
-    <p>{{ attack_path.lateral_movement }}</p>
-  </div>
-  <div class="connector"></div>
-  <div class="attack-phase">
-    <div class="phase-label">&#128081;&nbsp; Phase 4 &mdash; Crown Jewel Access</div>
-    <p>{{ attack_path.crown_jewels }}</p>
-  </div>
-  <div class="connector"></div>
-  <div class="attack-phase blast">
-    <div class="phase-label">&#128293;&nbsp; Business Impact / Blast Radius</div>
-    <p>{{ attack_path.business_impact }}</p>
-  </div>
-</div>
-
-<!-- Risk Matrix -->
-<h2>Risk Matrix</h2>
-<p style="color:#aaa;font-size:.92em;margin-bottom:10px">Likelihood vs. Impact representation of identified exposure. Findings in the upper-right quadrant represent the highest-priority remediation targets.</p>
-<div class="risk-matrix-wrap">
-<table class="risk-matrix">
-  <thead>
-    <tr>
-      <th style="background:transparent;border:none;width:100px"></th>
-      <th class="matrix-hdr">Low Likelihood</th>
-      <th class="matrix-hdr">Medium Likelihood</th>
-      <th class="matrix-hdr">High Likelihood</th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for row in risk_matrix %}
-    <tr>
-      <td class="matrix-row-lbl">{{ row.label }}</td>
-      {% for cell in row.cells %}
-      <td class="matrix-cell {{ cell.css }}">
-        {% if cell.entries %}
-          {% for item in cell.entries %}
-          <div class="cell-item"><span class="badge badge-{{ item.severity }}">{{ item.severity[:4] | upper }}</span> {{ item.title[:32] }}{% if item.title | length > 32 %}&hellip;{% endif %}</div>
-          {% endfor %}
-        {% else %}
-          <span style="color:#333;font-size:.7em">&mdash;</span>
-        {% endif %}
-      </td>
-      {% endfor %}
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
-</div>
-
-<!-- Remediation Roadmap -->
-<h2>Remediation Roadmap</h2>
-<p style="color:#aaa;font-size:.92em;margin-bottom:12px">Prioritized remediation actions organized by urgency and expected risk reduction. Each action identifies the responsible team and the business rationale for acting.</p>
-{% if remediation_roadmap.immediate %}
-<div class="roadmap-phase roadmap-immediate">
-  <h3 style="color:#ff4757">&#128680;&nbsp; Immediate Actions &mdash; 0 to 7 Days</h3>
-  <div class="roadmap-meta">
-    <span>&#9888; Urgency: Critical</span>
-    <span>&#128200; Expected Risk Reduction: High</span>
-  </div>
-  {% for item in remediation_roadmap.immediate %}
-  <div class="roadmap-item">
-    <span class="owner-badge">{{ item.owner }}</span>
-    <div style="flex:1">
-      <div class="item-title">{{ item.title }}</div>
-      <div class="item-why">{{ item.why }}</div>
-    </div>
-    <span class="badge badge-{{ item.severity }}">{{ item.severity | upper }}</span>
-  </div>
-  {% endfor %}
-</div>
-{% endif %}
-{% if remediation_roadmap.short_term %}
-<div class="roadmap-phase roadmap-shortterm">
-  <h3 style="color:#ffa502">&#9200;&nbsp; Short-Term Actions &mdash; 7 to 30 Days</h3>
-  <div class="roadmap-meta">
-    <span>&#9888; Urgency: High</span>
-    <span>&#128200; Expected Risk Reduction: Significant</span>
-  </div>
-  {% for item in remediation_roadmap.short_term %}
-  <div class="roadmap-item">
-    <span class="owner-badge">{{ item.owner }}</span>
-    <div style="flex:1">
-      <div class="item-title">{{ item.title }}</div>
-      <div class="item-why">{{ item.why }}</div>
-    </div>
-    <span class="badge badge-{{ item.severity }}">{{ item.severity | upper }}</span>
-  </div>
-  {% endfor %}
-</div>
-{% endif %}
-{% if remediation_roadmap.strategic %}
-<div class="roadmap-phase roadmap-strategic">
-  <h3 style="color:#2ed573">&#128196;&nbsp; Strategic Improvements &mdash; 30 to 90 Days</h3>
-  <div class="roadmap-meta">
-    <span>&#9888; Urgency: Medium</span>
-    <span>&#128200; Expected Risk Reduction: Moderate</span>
-  </div>
-  {% for item in remediation_roadmap.strategic %}
-  <div class="roadmap-item">
-    <span class="owner-badge">{{ item.owner }}</span>
-    <div style="flex:1">
-      <div class="item-title">{{ item.title }}</div>
-      <div class="item-why">{{ item.why }}</div>
-    </div>
-    <span class="badge badge-{{ item.severity }}">{{ item.severity | upper }}</span>
-  </div>
-  {% endfor %}
-</div>
-{% endif %}
-
-<!-- ============================================================ -->
-<!--  SECTION 2 — TECHNICAL FINDINGS                              -->
-<!-- ============================================================ -->
-<hr class="section-divider">
-<span class="section-label">Section 2 &mdash; Technical Findings</span>
-
-{% if target_info %}
-<h2>Assessment Scope</h2>
-<table>
-  <tr><th>Field</th><th>Value</th></tr>
-  <tr><td><strong>In-Scope Asset</strong></td><td>{{ target_info.input_target }}</td></tr>
-  <tr><td><strong>IP Address</strong></td><td>{{ target_info.ip_address or target }}</td></tr>
-  {% if target_info.rdns_hostname %}<tr><td><strong>Reverse DNS</strong></td><td>{{ target_info.rdns_hostname }}</td></tr>{% endif %}
-  {% if target_info.mac_address %}<tr><td><strong>MAC Address</strong></td><td>{{ target_info.mac_address }}{% if target_info.mac_vendor %} ({{ target_info.mac_vendor }}){% endif %}</td></tr>{% endif %}
-  {% if target_info.os_guess %}<tr><td><strong>Detected OS</strong></td><td>{{ target_info.os_guess }} ({{ target_info.os_accuracy }}% accuracy)</td></tr>{% endif %}
-  {% if target_info.netbios_name %}<tr><td><strong>NetBIOS Name</strong></td><td>{{ target_info.netbios_name }}</td></tr>{% endif %}
-  {% if target_info.asn or target_info.org %}<tr><td><strong>ASN / Organization</strong></td><td>{{ target_info.asn }} {{ target_info.org }}</td></tr>{% endif %}
-  <tr><td><strong>Open Ports Detected</strong></td><td>{{ target_info.open_ports }}</td></tr>
-  <tr><td><strong>Scan Duration</strong></td><td>{{ target_info.scan_time }}</td></tr>
-</table>
-{% endif %}
 
 <h2>Services Discovered</h2>
 <table>
@@ -2261,59 +2041,49 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <tr>
     <td>{{ s.port }}</td><td>{{ s.protocol }}</td><td>{{ s.name }}</td>
     <td>{{ s.product }} {{ s.version }}</td><td>{{ s.priority }}</td>
-    <td>{% for c in s.cves %}<span class="badge badge-{{ c.severity | lower }}">{{ c.id }}</span> {% endfor %}</td>
+    <td>{% for c in s.cves %}<span class="badge badge-{{ c.severity|lower }}">{{ c.id }}</span> {% endfor %}</td>
   </tr>
   {% endfor %}
 </table>
 
-<h2>Findings ({{ findings | length }})</h2>
+<h2>Findings ({{ findings|length }})</h2>
 {% if findings %}
 <table>
-  <tr><th>Severity</th><th>Title</th><th>Business Impact</th><th>Service</th><th>Owner</th><th>Validation</th><th>Tags</th></tr>
+  <tr><th>Severity</th><th>Title</th><th>Tool</th><th>Service</th><th>Confidence</th><th>Risk</th><th>Status</th><th>Tags</th><th>Evidence</th></tr>
   {% for f in findings %}
   <tr>
-    <td><span class="badge badge-{{ f.severity }}">{{ f.severity | upper }}</span></td>
-    <td style="font-weight:600">{{ f.title }}</td>
-    <td style="color:#ccc;font-size:.88em">
-      {% if f.business_impact %}{{ f.business_impact }}
-      {% else %}This exposure creates a credible pathway for unauthorized access, operational disruption, and potential data breach.{% endif %}
-    </td>
-    <td>{{ f.service }}</td>
-    <td><span class="owner">{{ f.owner }}</span></td>
-    <td>
-      {% if f.verified and f.confidence >= 0.85 %}
-        <span class="conf-badge conf-confirmed">&#10003; Exploit Confirmed</span>
-      {% elif f.verified %}
-        <span class="conf-badge conf-manual">&#128270; Manually Validated</span>
-      {% elif f.confidence >= 0.7 %}
-        <span class="conf-badge conf-scanner">&#128202; Scanner ({{ "%.0f%%" | format(f.confidence * 100) }})</span>
-      {% else %}
-        <span class="conf-badge conf-fp">&#9888; Possible FP ({{ "%.0f%%" | format(f.confidence * 100) }})</span>
-      {% endif %}
-    </td>
+    <td><span class="badge badge-{{ f.severity }}">{{ f.severity|upper }}</span></td>
+    <td>{{ f.title }}</td><td>{{ f.tool }}</td><td>{{ f.service }}</td>
+    <td>{{ "%.0f%%"|format(f.confidence * 100) }}</td>
+    <td>{{ "%.2f"|format(f.risk_score) }}</td>
+    <td class="{{ 'ok' if f.verified else 'pend' }}">{{ f.verification_status }}</td>
     <td>{% for t in f.tags %}<span class="tag">{{ t }}</span>{% endfor %}</td>
+    <td><div class="ev">{{ f.evidence[:200] }}</div></td>
   </tr>
   {% endfor %}
 </table>
 {% else %}<p>No findings detected.</p>{% endif %}
 
-<h2>CVE Matches ({{ cve_matches | length }})</h2>
+<h2>CVE Matches ({{ cve_matches|length }})</h2>
 {% if cve_matches %}
 <table>
   <tr>
-    <th>CVE ID</th><th>Severity</th><th>Service</th><th>Vulnerability Type</th>
-    <th>Remote</th><th>Auth Required</th><th>Business Impact</th><th>Validation Method</th>
+    <th>CVE ID</th><th>Severity</th><th>Service</th><th>Type</th>
+    <th>Remote</th><th>Auth Required</th><th>Version Range</th>
+    <th>Safe Validation</th><th>Proof of Impact</th><th>Business Impact</th>
   </tr>
   {% for c in cve_matches %}
   <tr>
-    <td><strong>{{ c.cve_id }}</strong></td>
-    <td><span class="badge badge-{{ c.severity | lower }}">{{ c.severity }}</span></td>
+    <td>{{ c.cve_id }}</td>
+    <td><span class="badge badge-{{ c.severity|lower }}">{{ c.severity }}</span></td>
     <td>{{ c.service }}</td>
     <td>{{ c.vulnerability_type }}</td>
     <td>{{ "Yes" if c.remote else "No" }}</td>
     <td>{{ "Yes" if c.requires_auth else "No" }}</td>
-    <td style="font-size:.88em;color:#ccc">{{ c.business_impact }}</td>
-    <td style="font-size:.82em;color:#aaa">{{ c.safe_validation_method }}</td>
+    <td style="font-family:monospace;font-size:.85em">{{ c.version_range }}</td>
+    <td>{{ c.safe_validation_method }}</td>
+    <td>{{ c.proof_of_impact }}</td>
+    <td>{{ c.business_impact }}</td>
   </tr>
   {% endfor %}
 </table>
@@ -2330,7 +2100,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <table>
   <tr>
     <th>CVE</th><th>Verdict</th><th>Vuln Type</th><th>MSF Module</th>
-    <th>Test Method</th><th>Business Impact</th>
+    <th>Test Method</th><th>Proof of Impact</th><th>Business Impact</th>
   </tr>
   {% for c in msf_run %}
   {% set v = c.msf_validation %}
@@ -2351,6 +2121,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <td>{{ c.vulnerability_type }}</td>
     <td style="font-family:monospace;font-size:.82em;word-break:break-all">{{ v.module or "—" }}</td>
     <td>{{ v.method }}</td>
+    <td>{{ c.proof_of_impact }}</td>
     <td>{{ c.business_impact }}</td>
   </tr>
   {% endfor %}
@@ -2400,7 +2171,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   {% for a in r.attempts %}
   <details style="margin:.4em 0;font-size:.85em">
     <summary style="cursor:pointer;color:#90caf9">
-      [{{ "%02d" | format(a.attempt_num) }}]
+      [{{ "%02d"|format(a.attempt_num) }}]
       {% if a.get('source') == 'kb_replay' %}<span style="color:#ce93d8;font-size:.8em">[KB]</span>{% endif %}
       {% if a.verdict == "VULNERABLE" %}<span style="color:#ef9a9a">&#9679;</span>
       {% elif a.verdict == "NOT_VULNERABLE" %}<span style="color:#a5d6a7">&#9679;</span>
@@ -2428,13 +2199,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <p style="color:#aaa;font-size:.9em">CVE testing was not run. Re-scan with <code>--cve-test</code> to enable.</p>
 {% endif %}
 
-<!-- ============================================================ -->
-<!--  SECTION 3 — CONCLUSION & APPENDIX                           -->
-<!-- ============================================================ -->
-<hr class="section-divider">
-<span class="section-label">Section 3 &mdash; Conclusion &amp; Appendix</span>
-
-<h2>Conclusion &amp; Leadership Decision Points</h2>
+<h2>Conclusion</h2>
 <div class="conclusion">{{ conclusion }}</div>
 
 <h2>Execution Log</h2>
@@ -2456,7 +2221,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <p>{{ tools_run | join(', ') }}</p>
 
 <footer>Generated by Noctis Edge &bull; {{ generated_at }}</footer>
-</div>
 </body>
 </html>"""
 
@@ -2468,171 +2232,25 @@ def generate_html_report(report_data):
     if os.path.isfile(logo_path):
         with open(logo_path, "rb") as fh:
             logo_b64 = base64.b64encode(fh.read()).decode()
-
-    # Provide defaults for new executive fields so old JSON reports still render.
-    counts = report_data.get("counts", {})
-    _default_posture = {
-        "level":       "critical" if counts.get("critical", 0) > 0 else ("high" if counts.get("high", 0) > 0 else "medium"),
-        "label":       "Risk Assessment Required",
-        "color":       "#ffa502",
-        "description": "Please re-generate this report with the latest Noctis Edge version to see the full executive posture assessment.",
-    }
-    _default_attack_path = {
-        "initial_access":       "Assessment data not available — re-run scan to generate attack path narrative.",
-        "privilege_escalation": "Assessment data not available.",
-        "lateral_movement":     "Assessment data not available.",
-        "crown_jewels":         "Assessment data not available.",
-        "business_impact":      "Assessment data not available.",
-    }
-    # Enrich findings with owner field if missing (for old JSON reports)
-    findings = report_data.get("findings", [])
-    for fd in findings:
-        if "owner" not in fd:
-            fd["owner"] = _infer_owner(fd)
-
-    data = {
-        "overall_posture":     _default_posture,
-        "top_business_risks":  [],
-        "attack_path":         _default_attack_path,
-        "remediation_roadmap": {"immediate": [], "short_term": [], "strategic": []},
-        "risk_matrix":         [],
-        **report_data,
-        "findings":            findings,
-        "logo_b64":            logo_b64,
-    }
-    # Regenerate computed fields for old reports that lack them
-    if not data.get("top_business_risks") and findings:
-        data["top_business_risks"] = []
-        seen: set[str] = set()
-        for fd in findings:
-            sev = fd.get("severity", "info").lower()
-            if sev not in ("critical", "high", "medium"):
-                continue
-            title = fd.get("title", "")
-            if title in seen:
-                continue
-            seen.add(title)
-            data["top_business_risks"].append({
-                "title":           title,
-                "severity":        sev,
-                "business_impact": fd.get("business_impact") or (
-                    "This exposure creates a credible pathway for unauthorized access, "
-                    "operational disruption, and potential data breach."
-                ),
-            })
-            if len(data["top_business_risks"]) >= 5:
-                break
-    if not any(data.get("remediation_roadmap", {}).get(k) for k in ("immediate", "short_term", "strategic")):
-        data["remediation_roadmap"] = _build_remediation_roadmap(findings)
-    if not data.get("risk_matrix"):
-        data["risk_matrix"] = _compute_risk_matrix(findings)
-
+    data = dict(report_data, logo_b64=logo_b64)
     return Template(HTML_TEMPLATE).render(**data)
 
 
-
-
-# ---------------------------------------------------------------------------
-# EXECUTIVE REPORT HELPERS
-# ---------------------------------------------------------------------------
-
-def _infer_owner(finding_dict: dict) -> str:
-    """Infer team ownership from a finding's tags, service, and title."""
-    tags    = [t.lower() for t in finding_dict.get("tags", [])]
-    service = finding_dict.get("service", "").lower()
-    title   = finding_dict.get("title",   "").lower()
-    combined = " ".join(tags) + " " + service + " " + title
-
-    if any(kw in combined for kw in ["ldap", "active directory", "kerberos", "iam", "saml", "oauth", "credential", "password", "login"]):
-        return "IAM Team"
-    if any(kw in combined for kw in ["http", "https", "web", "api", "rest", "graphql", "nginx", "apache", "iis", "php", "cms"]):
-        return "Application Team"
-    if any(kw in combined for kw in ["ssh", "rdp", "smb", "ftp", "telnet", "vpn", "firewall", "router", "switch", "netbios"]):
-        return "Network / Infrastructure"
-    if any(kw in combined for kw in ["mysql", "mssql", "postgres", "oracle", "database", "sql", "mongodb", "redis"]):
-        return "Infrastructure / DBA"
-    if any(kw in combined for kw in ["dns", "bind", "zone transfer", "subdomain"]):
-        return "Network Team"
-    if any(kw in combined for kw in ["cloud", "aws", "azure", "gcp", "s3", "bucket", "lambda", "serverless"]):
-        return "Cloud / Infrastructure"
-    return "Security Team"
-
-
-def _build_remediation_roadmap(findings: list) -> dict:
-    """Categorize findings into immediate (0-7d), short_term (7-30d), strategic (30-90d)."""
-    _phase_map = {
-        "critical": "immediate",
-        "high":     "short_term",
-        "medium":   "strategic",
-        "low":      "strategic",
-        "info":     "strategic",
-    }
-    _urgency_text = {
-        "critical": "Failure to remediate creates an imminent risk of breach, data exfiltration, or operational shutdown.",
-        "high":     "Unaddressed, this exposure materially increases the likelihood of a successful attack within the next 30 days.",
-        "medium":   "While not immediately critical, this finding contributes to overall attack surface and should be addressed as part of ongoing risk reduction.",
-        "low":      "Low-risk exposure that should be addressed in routine hardening cycles.",
-        "info":     "Informational finding — no immediate action required but should inform future security strategy.",
-    }
-    roadmap: dict[str, list] = {"immediate": [], "short_term": [], "strategic": []}
-    for f in findings:
-        sev   = f.get("severity", "info").lower()
-        phase = _phase_map.get(sev, "strategic")
-        roadmap[phase].append({
-            "title":    f.get("title", "Unknown finding"),
-            "severity": sev,
-            "owner":    f.get("owner", "Security Team"),
-            "why":      f.get("business_impact") or _urgency_text.get(sev, ""),
-        })
-    return roadmap
-
-
-def _compute_risk_matrix(findings: list) -> list:
-    """Build a 3×3 (impact × likelihood) risk matrix with findings binned into cells."""
-    _impact_map = {
-        "critical": "high",
-        "high":     "high",
-        "medium":   "medium",
-        "low":      "low",
-        "info":     "low",
-    }
-    _cell_css = {
-        ("high",   "high"):   "cell-critical",
-        ("high",   "medium"): "cell-high",
-        ("high",   "low"):    "cell-medium",
-        ("medium", "high"):   "cell-high",
-        ("medium", "medium"): "cell-medium",
-        ("medium", "low"):    "cell-low",
-        ("low",    "high"):   "cell-medium",
-        ("low",    "medium"): "cell-low",
-        ("low",    "low"):    "cell-low",
-    }
-
-    def _likelihood(conf: float) -> str:
-        if conf >= 0.75:
-            return "high"
-        if conf >= 0.45:
-            return "medium"
-        return "low"
-
-    bins: dict[tuple[str, str], list] = {(imp, lh): [] for imp in ("high", "medium", "low") for lh in ("low", "medium", "high")}
-    for f in findings:
-        imp = _impact_map.get(f.get("severity", "info").lower(), "low")
-        lh  = _likelihood(f.get("confidence", 0.5))
-        bins[(imp, lh)].append({"title": f.get("title", ""), "severity": f.get("severity", "info").lower()})
-
-    rows = []
-    for imp_label, imp_key in [("High Impact", "high"), ("Medium Impact", "medium"), ("Low Impact", "low")]:
-        cells = []
-        for lh_key in ("low", "medium", "high"):
-            key   = (imp_key, lh_key)
-            items = bins.get(key, [])
-            cells.append({
-                "css":     _cell_css.get(key, "cell-empty") if items else "cell-empty",
-                "entries": items,
-            })
-        rows.append({"label": imp_label, "cells": cells})
-    return rows
+def generate_pdf_report(html_content, pdf_path):
+    """Try weasyprint then pdfkit."""
+    try:
+        import weasyprint
+        weasyprint.HTML(string=html_content).write_pdf(pdf_path)
+        return True
+    except Exception:
+        pass
+    try:
+        import pdfkit
+        pdfkit.from_string(html_content, pdf_path)
+        return True
+    except Exception as e:
+        print(f"[!] PDF generation failed: {e}")
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -2679,154 +2297,16 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
         "cves":           [f"{c['cve_id']} ({c['severity']}) on {c['service']}" for c in cve_matches[:5]],
     }
 
-    # -- Overall security posture --
-    if counts["critical"] > 0:
-        overall_posture = {
-            "level":       "critical",
-            "label":       "Critical Risk",
-            "color":       "#ff4757",
-            "description": (
-                f"This environment presents {counts['critical']} critical and {counts['high']} high severity "
-                f"finding(s) that create immediate, credible pathways to breach. Urgent remediation is required. "
-                f"The current exposure level is unacceptable and poses material risk to business operations, "
-                f"data integrity, and regulatory compliance."
-            ),
-        }
-    elif counts["high"] > 0:
-        overall_posture = {
-            "level":       "high",
-            "label":       "High Risk",
-            "color":       "#ff6b35",
-            "description": (
-                f"This environment presents {counts['high']} high severity finding(s) that require prompt "
-                f"attention. While no critical vulnerabilities were confirmed, the identified exposures create "
-                f"significant attack surface. Remediation should be prioritized within the next 30 days."
-            ),
-        }
-    elif counts["medium"] > 0:
-        overall_posture = {
-            "level":       "medium",
-            "label":       "Medium Risk",
-            "color":       "#ffa502",
-            "description": (
-                f"This environment presents {counts['medium']} medium severity finding(s) with moderate "
-                f"business impact. No immediately critical issues were identified, however the identified "
-                f"vulnerabilities should be addressed to reduce long-term exposure."
-            ),
-        }
-    else:
-        overall_posture = {
-            "level":       "low",
-            "label":       "Low Risk / Acceptable Posture",
-            "color":       "#2ed573",
-            "description": (
-                "No critical or high severity findings were identified. The environment demonstrates a "
-                "generally acceptable security posture. Continued monitoring and periodic reassessment "
-                "are recommended to maintain this status."
-            ),
-        }
-
-    # -- Enrich findings with ownership --
-    findings_dicts = []
-    for f in all_findings:
-        fd = dataclasses.asdict(f)
-        fd["owner"] = _infer_owner(fd)
-        findings_dicts.append(fd)
-
-    # -- Top business risks (up to 5 unique critical/high/medium findings) --
-    _default_impact = {
-        "critical": "This exposure creates a credible pathway for unauthorized access, ransomware deployment, operational disruption, and significant financial loss.",
-        "high":     "This exposure materially increases the likelihood of a successful breach, potentially enabling data exfiltration or service disruption.",
-        "medium":   "This exposure contributes to overall attack surface and could be leveraged as part of a multi-stage attack chain.",
-    }
-    top_business_risks = []
-    seen_risk_titles: set = set()
-    for fd in findings_dicts:
-        sev = fd.get("severity", "info").lower()
-        if sev not in ("critical", "high", "medium"):
-            continue
-        title = fd.get("title", "")
-        if title in seen_risk_titles:
-            continue
-        seen_risk_titles.add(title)
-        top_business_risks.append({
-            "title":           title,
-            "severity":        sev,
-            "business_impact": fd.get("business_impact") or _default_impact.get(sev, ""),
-        })
-        if len(top_business_risks) >= 5:
-            break
-
-    # -- Remediation roadmap and risk matrix --
-    remediation_roadmap = _build_remediation_roadmap(findings_dicts)
-    risk_matrix         = _compute_risk_matrix(findings_dicts)
-
-    # -- LLM: attack path narrative --
-    _default_attack_path = {
-        "initial_access":        "An attacker would leverage exposed services and identified vulnerabilities to gain an initial foothold into the environment through public-facing interfaces.",
-        "privilege_escalation":  "Using credentials discovered through service enumeration or exploitation of misconfigured services, the attacker would escalate privileges within the compromised host.",
-        "lateral_movement":      "With elevated privileges, the attacker would pivot to adjacent systems by exploiting trust relationships, credential reuse, and weak network segmentation.",
-        "crown_jewels":          "The attacker would gain access to sensitive data stores, administrative interfaces, or critical business systems, enabling data exfiltration or operational sabotage.",
-        "business_impact":       "A successful breach could result in data exfiltration, ransomware deployment, regulatory penalties, operational disruption, and lasting reputational damage.",
-    }
-    attack_path = dict(_default_attack_path)
-
-    has_findings = any(counts[k] > 0 for k in ("critical", "high", "medium"))
-    if has_findings:
-        _ap_prompt = (
-            "You are a senior penetration testing consultant writing an executive attack path narrative "
-            "for a board-level penetration testing report.\n\n"
-            "Write a realistic, scenario-driven attack path based on the following assessment data. "
-            "Each phase should be 2-3 sentences using business-focused language, not technical jargon. "
-            "Emphasize consequence, impact, and likelihood rather than tool names or CVE IDs.\n\n"
-            f"Assessment data: {json.dumps(mini_summary, separators=(',', ':'))}\n\n"
-            "Return ONLY a valid JSON object with exactly these keys and string values:\n"
-            "initial_access, privilege_escalation, lateral_movement, crown_jewels, business_impact\n"
-            "No markdown, no code fences, no extra keys."
-        )
-        _t0 = time.monotonic()
-        _sp = _Spinner("[ LLM ]  Writing attack path narrative ...").start()
-        try:
-            resp    = requests.post(
-                OLLAMA_URL,
-                json={"model": MODEL, "stream": False, "prompt": _ap_prompt},
-                timeout=OLLAMA_TIMEOUT,
-            )
-            payload = resp.json()
-            raw     = payload.get("response", "").strip()
-            json_m  = re.search(r'\{.*\}', raw, re.DOTALL)
-            if json_m:
-                parsed = json.loads(json_m.group())
-                for key in list(_default_attack_path.keys()):
-                    if parsed.get(key):
-                        attack_path[key] = str(parsed[key])
-        except Exception as e:
-            print(f"[!] Attack path LLM error: {e}")
-        finally:
-            _sp.stop(f" done ({_fmt_dur(time.monotonic() - _t0)})")
-
-    # -- LLM: executive conclusion --
     conclusion = "No conclusion generated."
     _t0 = time.monotonic()
-    _sp = _Spinner("[ LLM ]  Writing executive conclusion ...").start()
+    _sp = _Spinner("[ LLM ]  Writing conclusion ...").start()
     try:
         for attempt in range(MAX_LLM_RETRIES):
             try:
-                _conc_prompt = (
-                    "You are a senior penetration testing consultant writing an executive conclusion "
-                    "for a board-level penetration testing report.\n\n"
-                    "Write 3-4 sentences that address:\n"
-                    "1. Overall breach likelihood based on the findings\n"
-                    "2. Operational and business exposure if exploited\n"
-                    "3. Strategic recommendations for leadership\n"
-                    "4. The most important leadership decision point\n\n"
-                    f"Assessment data: {json.dumps(mini_summary, separators=(',', ':'))}\n\n"
-                    "Use authoritative, outcome-focused language. Frame around business risk and "
-                    "consequence, not technical detail. Avoid generic filler phrases."
-                )
                 resp    = requests.post(
                     OLLAMA_URL,
-                    json={"model": MODEL, "stream": False, "prompt": _conc_prompt},
+                    json={"model": MODEL, "stream": False,
+                          "prompt": f"Write a two-sentence penetration testing conclusion. Be concise. Data: {json.dumps(mini_summary, separators=(',', ':'))}"},
                     timeout=OLLAMA_TIMEOUT,
                 )
                 payload = resp.json()
@@ -2855,24 +2335,19 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
     ]
 
     return {
-        "target":               target,
-        "profile":              profile,
-        "generated_at":         generated_at,
-        "counts":               counts,
-        "services":             services,
-        "findings":             findings_dicts,
-        "cve_matches":          cve_matches,
-        "tools_run":            tools_run,
-        "execution_log":        execution_log,
-        "conclusion":           conclusion,
-        "cve_test_results":     [],
-        "msf_validation":       [],
-        "target_info":          target_info.to_dict() if target_info else {},
-        "overall_posture":      overall_posture,
-        "top_business_risks":   top_business_risks,
-        "attack_path":          attack_path,
-        "remediation_roadmap":  remediation_roadmap,
-        "risk_matrix":          risk_matrix,
+        "target":        target,
+        "profile":       profile,
+        "generated_at":  generated_at,
+        "counts":        counts,
+        "services":      services,
+        "findings":      [dataclasses.asdict(f) for f in all_findings],
+        "cve_matches":   cve_matches,
+        "tools_run":     tools_run,
+        "execution_log": execution_log,
+        "conclusion":    conclusion,
+        "cve_test_results": [],
+        "msf_validation": [],
+        "target_info":   target_info.to_dict() if target_info else {},
     }
 
 
@@ -4261,7 +3736,7 @@ async def main_async():
 # ---------------------------------------------------------------------------
 
 def _report_from_json(json_path: str):
-    """Load an existing JSON report and regenerate HTML/PDF outputs."""
+    """Load an existing JSON report and regenerate the HTML output."""
     if not os.path.isfile(json_path):
         print(f"[-] File not found: {json_path}")
         sys.exit(1)
