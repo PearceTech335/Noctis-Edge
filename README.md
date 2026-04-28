@@ -77,7 +77,7 @@ After setup completes:
 ./noctis_web.py
 ```
 
-Run `./update.sh` monthly to keep all components current.
+Run `./update.sh` to keep all components current.
 
 ---
 
@@ -354,9 +354,9 @@ Ollama will be started automatically by `noctis.py` on first use. On CPU-only ma
 
 ---
 
-## Monthly Maintenance
+## Application Maintenance
 
-Run `./update.sh` monthly to keep all components current.
+Run `./update.sh` to keep all components current.
 
 ```bash
 ./update.sh
@@ -394,7 +394,7 @@ The Cloudflare Worker (`cloudflare/worker.js`) acts as a server-side relay: it h
 | Script | Purpose |
 |--------|---------|
 | `setup.sh` | One-shot setup for a fresh install — run once after cloning. Also generates a unique installation ID stored in `noctis.conf`. |
-| `update.sh` | Monthly refresh of all components. On completion, automatically submits your local `cve_knowledge_base.json` to the community relay (no token required). |
+| `update.sh` | Refresh of all components. On completion, automatically submits your local `cve_knowledge_base.json` to the community relay (no token required). |
 | `scripts/submit_kb.py` | POSTs the local CVE knowledge base to the Cloudflare community relay. Called automatically by `update.sh`. |
 | `scripts/merge_kb.py` | Additively merges an external knowledge base JSON into the local one (no data is overwritten or removed). |
 

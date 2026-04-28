@@ -73,6 +73,7 @@ SAFE_MODE       = True   # can also be used with --aggressive flag for aggressiv
 AIRGAP_MODE     = True   # default on; --dns opts in to internet-dependent DNS enumeration tools
 MSF_VALIDATE    = False  # set via --msf-validate; runs safe MSF check probes for each CVE match
 CVE_TEST        = False  # set via --cve-test; LLM generates test scripts per matched CVE
+UNATTENDED      = False  # set via --unattended; auto-approves all prompts (no user input required)
 CVE_KB_PATH     = os.path.join(BASE_DIR, "cve_knowledge_base.json")
 CVE_FRESH_ATTEMPTS  = 5   # fresh LLM-generated scripts per CVE (on top of known-exploit + KB replays)
 CVE_VERIFY_ATTEMPTS = 2  # independent verifier scripts run when any attempt returns VULNERABLE
@@ -503,6 +504,9 @@ def print_tool_status(available, unavailable):
 
 def request_approval(tool, args, risk_desc=""):
     if not SAFE_MODE:
+        return True
+    if UNATTENDED:
+        print(f"[*] UNATTENDED: auto-approving {tool}")
         return True
     print(f"\n[!] APPROVAL REQUIRED")
     print(f"    Tool : {tool}")
@@ -1308,10 +1312,14 @@ async def run_msf_validation(report: dict, target: str, session_dir: str,
         print(f"\n[!] MSF VALIDATION — APPROVAL REQUIRED")
         print(f"    {len(cve_matches)} CVE(s) will be probed using 'check' (non-destructive).")
         print(f"    No exploit payloads will be executed. Target: {target}")
-        try:
-            answer = input("    Proceed with MSF validation? [y/n]: ").strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            answer = "n"
+        if UNATTENDED:
+            print("[*] UNATTENDED: auto-approving MSF validation.")
+            answer = "y"
+        else:
+            try:
+                answer = input("    Proceed with MSF validation? [y/n]: ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                answer = "n"
         if answer not in ("y", "yes"):
             print("[!] MSF validation denied by operator.")
             return report
@@ -3072,10 +3080,14 @@ async def run_cve_tests(cve_matches: list, target: str,
             print(f"  CVE batch complete — {cve_idx}/{total_cves} tested  [{elapsed} elapsed]")
             print(f"  {remaining} CVE(s) remaining.")
             print(f"{'=' * 52}")
-            try:
-                cont = input("  Continue testing remaining CVEs? [y/n]: ").strip().lower()
-            except (EOFError, KeyboardInterrupt):
-                cont = "n"
+            if UNATTENDED:
+                print("[*] UNATTENDED: continuing automatically.")
+                cont = "y"
+            else:
+                try:
+                    cont = input("  Continue testing remaining CVEs? [y/n]: ").strip().lower()
+                except (EOFError, KeyboardInterrupt):
+                    cont = "n"
             if cont not in ("y", "yes"):
                 print(f"[CVE-TEST] Stopped by operator after {cve_idx} CVE(s).")
                 break
@@ -3159,10 +3171,14 @@ async def _run_cve_test_phase(report: dict, target: str, session_dir: str) -> di
         print(f"  Scripts are read-only probes — no destructive payloads.")
         print(f"  Target: {target}")
         print(f"{'!' * 52}")
-        try:
-            answer = input("  Proceed with CVE testing? [y/n]: ").strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            answer = "n"
+        if UNATTENDED:
+            print("[*] UNATTENDED: auto-approving CVE testing.")
+            answer = "y"
+        else:
+            try:
+                answer = input("  Proceed with CVE testing? [y/n]: ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                answer = "n"
         if answer not in ("y", "yes"):
             print("[CVE-TEST] Denied by operator.")
             return report
@@ -3360,10 +3376,10 @@ async def gather_target_info(target: str, available_tools: dict, airgap: bool = 
 # ---------------------------------------------------------------------------
 
 async def main_async():
-    global SAFE_MODE, AIRGAP_MODE, MSF_VALIDATE, CVE_TEST, SESSION_FILE
+    global SAFE_MODE, AIRGAP_MODE, MSF_VALIDATE, CVE_TEST, UNATTENDED, SESSION_FILE
 
     if len(sys.argv) < 2:
-        print("Usage: python3 noctis.py <target> [profile ...] [--resume] [--aggressive] [--dns-enum] [--msf-validate] [--cve-test]")
+        print("Usage: python3 noctis.py <target> [profile ...] [--resume] [--aggressive] [--dns-enum] [--msf-validate] [--cve-test] [--unattended]")
         print("       python3 noctis.py --report <json_file>")
         print("Profiles (one or more):", ", ".join(PROFILES))
         sys.exit(1)
@@ -3385,6 +3401,8 @@ async def main_async():
             MSF_VALIDATE = True
         elif arg == "--cve-test":
             CVE_TEST = True
+        elif arg == "--unattended":
+            UNATTENDED = True
 
     # Ensure Ollama is running before we attempt any LLM calls
     if not ensure_ollama_running():

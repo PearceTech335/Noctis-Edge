@@ -55,6 +55,7 @@ FLAGS = [
     ("--dns-enum",     "Enable DNS enumeration tools — requires internet"),
     ("--msf-validate", "Run safe Metasploit 'check' probes for each matched CVE"),
     ("--cve-test",     "Ask the LLM to generate & execute probe scripts per CVE"),
+    ("--unattended",   "Auto-approve all prompts — run to completion without user input"),
     ("--resume",       "Resume the most recent interrupted scan for this target"),
 ]
 
