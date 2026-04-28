@@ -2503,7 +2503,7 @@ def generate_html_report(report_data):
     # Regenerate computed fields for old reports that lack them
     if not data.get("top_business_risks") and findings:
         data["top_business_risks"] = []
-        seen: set = set()
+        seen: set[str] = set()
         for fd in findings:
             sev = fd.get("severity", "info").lower()
             if sev not in ("critical", "high", "medium"):
@@ -2522,9 +2522,7 @@ def generate_html_report(report_data):
             })
             if len(data["top_business_risks"]) >= 5:
                 break
-    if not data.get("remediation_roadmap", {}).get("immediate") and not \
-       data.get("remediation_roadmap", {}).get("short_term") and not \
-       data.get("remediation_roadmap", {}).get("strategic"):
+    if not any(data.get("remediation_roadmap", {}).get(k) for k in ("immediate", "short_term", "strategic")):
         data["remediation_roadmap"] = _build_remediation_roadmap(findings)
     if not data.get("risk_matrix"):
         data["risk_matrix"] = _compute_risk_matrix(findings)
@@ -2591,7 +2589,7 @@ def _build_remediation_roadmap(findings: list) -> dict:
         "low":      "Low-risk exposure that should be addressed in routine hardening cycles.",
         "info":     "Informational finding — no immediate action required but should inform future security strategy.",
     }
-    roadmap: dict = {"immediate": [], "short_term": [], "strategic": []}
+    roadmap: dict[str, list] = {"immediate": [], "short_term": [], "strategic": []}
     for f in findings:
         sev   = f.get("severity", "info").lower()
         phase = _phase_map.get(sev, "strategic")
@@ -2632,7 +2630,7 @@ def _compute_risk_matrix(findings: list) -> list:
             return "medium"
         return "low"
 
-    bins: dict = {(imp, lh): [] for imp in ("high", "medium", "low") for lh in ("low", "medium", "high")}
+    bins: dict[tuple[str, str], list] = {(imp, lh): [] for imp in ("high", "medium", "low") for lh in ("low", "medium", "high")}
     for f in findings:
         imp = _impact_map.get(f.get("severity", "info").lower(), "low")
         lh  = _likelihood(f.get("confidence", 0.5))
@@ -2827,7 +2825,7 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
     _t0 = time.monotonic()
     _sp = _Spinner("[ LLM ]  Writing executive conclusion ...").start()
     try:
-        for _attempt in range(MAX_LLM_RETRIES):
+        for attempt in range(MAX_LLM_RETRIES):
             try:
                 _conc_prompt = (
                     "You are a senior penetration testing consultant writing an executive conclusion "
