@@ -178,7 +178,7 @@ Pass one or more profile names after the target. Tools from all selected profile
 - Runs `nmap` against the target to discover open ports and services
 - Searches the offline CVE database (`CVE/cve-offline/cve-summary.csv`) for matches on each service
 
-### 2. LLM-Driven Scan Loop (up to 10 iterations)
+### 2. LLM-Driven Scan Loop 
 The core loop asks the local Ollama LLM what to do next based on:
 - Target, profile, and discovered services
 - All findings collected so far
