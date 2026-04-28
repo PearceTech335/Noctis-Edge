@@ -6,7 +6,15 @@
 
 **Security Through Exposure**
 
-Noctis Edge is a Python-based AI-assisted penetration testing platform. It runs an automated, LLM-guided penetration test against a target, collects and verifies findings, generates HTML/PDF reports, and optionally validates CVEs using Metasploit or LLM-generated probe scripts. It can be run from the **command line** (`noctis.py`) or through a **browser-based Web UI** (`noctis_web.py`) served locally on `http://127.0.0.1:5000`.
+Noctis Edge is a Python-based, AI-assisted penetration testing platform built with a strong focus on **local execution, data sovereignty, and operational security**.
+
+Unlike cloud-dependent security platforms, **Noctis Edge runs entirely on the local machine**. All scanning, analysis, LLM-assisted testing, CVE validation, reporting, and evidence generation are performed on-device, ensuring that **no target data, credentials, vulnerability findings, or client-sensitive information ever leaves the host system**.
+
+The platform conducts automated, LLM-guided penetration testing against a target environment, collects and verifies findings, generates professional HTML/PDF reports, and can optionally validate CVEs using Metasploit modules or locally generated probe scripts.
+
+It supports both command-line execution via `noctis.py` and a browser-based Web UI via `noctis_web.py`, served locally on `http://127.0.0.1:5000`, without requiring external SaaS platforms, third-party APIs, or cloud processing.
+
+This architecture makes Noctis Edge particularly suited for regulated environments, internal security teams, air-gapped networks, operational technology (OT) environments, and organizations where confidentiality and control are non-negotiable.
 
 ---
 
