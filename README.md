@@ -10,7 +10,7 @@ Noctis Edge is a Python-based, AI-assisted penetration testing platform built wi
 
 Unlike cloud-dependent security platforms, **Noctis Edge runs entirely on the local machine**. All scanning, analysis, LLM-assisted testing, CVE validation, reporting, and evidence generation are performed on-device, ensuring that **no target data, credentials, vulnerability findings, or client-sensitive information ever leaves the host system**.
 
-The platform conducts automated, LLM-guided penetration testing against a target environment, collects and verifies findings, generates professional HTML/PDF reports, and can optionally validate CVEs using Metasploit modules or locally generated probe scripts.
+The platform conducts automated, LLM-guided penetration testing against a target environment, collects and verifies findings, generates professional HTML reports, and can optionally validate CVEs using Metasploit modules or locally generated probe scripts.
 
 It supports both command-line execution via `noctis.py` and a browser-based Web UI via `noctis_web.py`, served locally on `http://127.0.0.1:5000`, without requiring external SaaS platforms, third-party APIs, or cloud processing.
 
@@ -65,16 +65,10 @@ chmod +x setup.sh
 | SecLists | Wordlists via `snap install seclists` |
 | Nuclei | Go-based template scanner (`~/go/bin/nuclei`) |
 | Ollama | Local LLM server + pulls `hf.co/RCorvalan/Qwen2.5-7B-Instruct-1M-Q4_K_M-GGUF` |
-| Python venv | `.venv/` with `requests`, `jinja2`, `pycryptodome`, `weasyprint`, `pdfkit`, `flask`, `flask-sock` |
+| Python venv | `.venv/` with `requests`, `jinja2`, `pycryptodome`, `flask`, `flask-sock` |
 | CVE database | Clones `CVE/cve-offline/` and builds `cve-summary.csv` |
 | rdpscan | Clones `rdpscan/` helper |
 | Additional tools | `amass`, `metasploit-framework` |
-
-You can skip extra/heavy steps with env flags:
-```bash
-NO_MSF=1 ./setup.sh          # skip Metasploit
-NO_OPTIONAL=1 ./setup.sh     # skip amass + Metasploit
-```
 
 After setup completes:
 ```bash
@@ -143,7 +137,7 @@ The Web UI provides:
 - Live colour-coded terminal output streamed via WebSocket (green `[+]`, amber `[!]`, red `[-]`, blue `[*]`)
 - Spinner line updates for real-time progress
 - **Prompt reply** bar with quick **Y** / **N** buttons for approval gates
-- **Report** button to regenerate HTML/PDF from any existing JSON session file
+- **Report** button to regenerate HTML from any existing JSON session file
 - Logo watermark in the terminal area
 
 ![Noctis Edge Web UI](https://github.com/user-attachments/assets/0c3072c5-5198-4714-aa11-d6b2ee22096e)
@@ -229,7 +223,6 @@ risk_score = severity_weight × confidence × exposure × tool_confidence
 After the scan loop, reports are saved to `sessions/<target>_<timestamp>/`:
 - `report_<target>.json` — full machine-readable report
 - `report_<target>.html` — styled HTML report with collapsible sections
-- `report_<target>.pdf` — PDF version 
 
 Reports include: executive summary, service inventory, findings table (severity-sorted), CVE matches, MSF validation results (if run), CVE test results (if run), and LLM-generated conclusion.
 
@@ -280,7 +273,6 @@ During a `--cve-test` run, the terminal displays each CVE under test in sequence
 | ![LLM script source](https://github.com/user-attachments/assets/b8531a5e-4c5f-4992-9e78-56f486951ad1) | ![HTML report executive summary](https://github.com/user-attachments/assets/2f6d2ce6-77c3-4f21-87ce-7c3ac88d7527) |
 
 On completion, the HTML report is generated with an executive summary stating the overall security posture, followed by sections covering the service inventory, findings ranked by risk score, CVE matches, validation results, and the LLM-generated conclusion. 
-***Coming Soon*** PDF File generation is under development.
 
 ---
 
@@ -292,7 +284,6 @@ sessions/
     ├── session.json              ← live state (for --resume)
     ├── report_localhost.json     ← full JSON report
     ├── report_localhost.html     ← styled HTML report
-    ├── report_localhost.pdf      ← PDF report
     └── cve_tests/
         ├── CVE-2002-1367_attempt_01.py
         ├── CVE-2002-1367_attempt_02.sh
@@ -436,3 +427,32 @@ The following are excluded from version control (see `.gitignore`):
 | `CVE/cve-offline/cve-summary.csv` | 57 MB — regenerate with `updatecsv.sh` |
 | `CVE/cve-offline/` | Separate git repo |
 | `rdpscan/` | Separate git repo |
+
+---
+
+## Credits
+
+Noctis Edge builds on and bundles a number of excellent open-source projects:
+
+| Tool / Library | Author / Org | Purpose |
+|----------------|-------------|---------|
+| [Nikto](https://github.com/sullo/nikto) | Chris Sullo | Web server vulnerability scanner (bundled as submodule) |
+| [Nuclei](https://github.com/projectdiscovery/nuclei) | ProjectDiscovery | Template-based vulnerability scanning |
+| [nmap](https://nmap.org) | Gordon Lyon (Fyodor) | Network discovery and port scanning |
+| [Gobuster](https://github.com/OJ/gobuster) | OJ Reeves | Directory and DNS enumeration |
+| [ffuf](https://github.com/ffuf/ffuf) | Joona Hoikkala | Fast web fuzzer |
+| [Hydra](https://github.com/vanhauser-thc/thc-hydra) | van Hauser / THC | Login brute-force testing |
+| [ssh-audit](https://github.com/jtesta/ssh-audit) | Joe Testa | SSH configuration auditing |
+| [Amass](https://github.com/owasp-amass/amass) | OWASP | Network attack surface mapping |
+| [Metasploit Framework](https://github.com/rapid7/metasploit-framework) | Rapid7 | Exploitation framework for MSF validation |
+| [rdpscan](https://github.com/robertdavidgraham/rdpscan) | Robert David Graham | RDP vulnerability scanning |
+| [Ollama](https://ollama.com) | Ollama, Inc. | Local LLM server for AI-guided analysis |
+| [trickest/cve](https://github.com/trickest/cve) | Trickest | CVE PoC reference database (bundled as submodule) |
+| [trickest/cve-offline](https://github.com/trickest/cve-offline) | Trickest | Offline CVE CSV dataset |
+| [SecLists](https://github.com/danielmiessler/SecLists) | Daniel Miessler | Security wordlists |
+| [NetExec (nxc)](https://github.com/Pennyw0rth/NetExec) | Pennyw0rth | Network service execution and enumeration |
+| [Flask](https://flask.palletsprojects.com) | Pallets | Web framework for the browser UI |
+| [flask-sock](https://github.com/miguelgrinberg/flask-sock) | Miguel Grinberg | WebSocket support for Flask |
+| [Requests](https://requests.readthedocs.io) | Kenneth Reitz | HTTP library |
+| [Jinja2](https://jinja.palletsprojects.com) | Pallets | HTML report templating |
+| [PyCryptodome](https://pycryptodome.readthedocs.io) | Legrandin | Cryptographic primitives |

@@ -17,8 +17,7 @@ if [[ -f "$SCRIPT_DIR/noctis.conf" ]]; then
 fi
 KB_USER_ID="${KB_USER_ID:-}"
 KB_RELAY_URL="${KB_RELAY_URL:-}"
-KB_COMMUNITY_TOKEN="${KB_COMMUNITY_TOKEN:-}"
-PAID_TIER="${PAID_TIER:-false}"
+KB_LICENSE_KEY="${KB_LICENSE_KEY:-}"
 
 # Colour helpers
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
@@ -69,15 +68,13 @@ if [[ -f "$VENV/bin/activate" ]]; then
         requests \
         jinja2 \
         pycryptodome \
-        weasyprint \
-        pdfkit \
         flask \
         flask-sock \
         --quiet
-    ok "pip done (requests, jinja2, pycryptodome, weasyprint, pdfkit, flask, flask-sock)"
+    ok "pip done (requests, jinja2, pycryptodome, flask, flask-sock)"
 else
     info "No venv found — installing to system Python (consider creating a venv)"
-    pip3 install --upgrade requests jinja2 pycryptodome weasyprint pdfkit netexec --quiet
+    pip3 install --upgrade requests jinja2 pycryptodome netexec --quiet
     ok "pip done"
 fi
 
@@ -183,13 +180,10 @@ else
         || err "KB submission failed — will retry on next update"
 fi
 
-# ── Pull community KB (paid tier only) ────────────────────────────────────────
-if [[ "$PAID_TIER" != "true" ]]; then
-    info "Community KB pull skipped (PAID_TIER not enabled in noctis.conf)"
-elif [[ -z "$KB_COMMUNITY_TOKEN" ]]; then
-    err  "PAID_TIER=true but KB_COMMUNITY_TOKEN is not set in noctis.conf"
-    info "Generate a PAT at: https://github.com/settings/personal-access-tokens/new"
-    info "Scope: contents=read on PearceTech335/Noctis-Edge-KB"
+# ── Pull community KB (subscribers only) ────────────────────────────────────────
+if [[ -z "$KB_LICENSE_KEY" ]]; then
+    info "Community KB pull skipped (KB_LICENSE_KEY not set in noctis.conf)"
+    info "Subscribe at: https://polar.sh/PearceTech335"
 else
     info "Pulling community CVE knowledge base ..."
     TMP_KB_DIR="$(mktemp -d)"
@@ -197,7 +191,7 @@ else
     _cleanup_tmp() { rm -rf "$TMP_KB_DIR"; }
     trap _cleanup_tmp EXIT
 
-    CLONE_URL="https://${KB_COMMUNITY_TOKEN}@github.com/PearceTech335/Noctis-Edge-KB.git"
+    CLONE_URL="https://${KB_LICENSE_KEY}@github.com/PearceTech335/Noctis-Edge-KB.git"
 
     if git clone --depth=1 --quiet "$CLONE_URL" "$TMP_KB_DIR" 2>/dev/null; then
         if [[ -f "$TMP_KB_DIR/community_kb.json" ]]; then
@@ -214,7 +208,7 @@ else
             err "community_kb.json not found in Noctis-Edge-KB — check the repository is correctly populated"
         fi
     else
-        err "Could not clone community KB — verify KB_COMMUNITY_TOKEN is valid and you have repository access"
+        err "Could not clone community KB — verify KB_LICENSE_KEY is valid and you have repository access"
         info "Access is granted via Polar.sh after subscribing at https://polar.sh/PearceTech335"
     fi
 

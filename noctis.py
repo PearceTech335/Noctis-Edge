@@ -2530,21 +2530,6 @@ def generate_html_report(report_data):
     return Template(HTML_TEMPLATE).render(**data)
 
 
-def generate_pdf_report(html_content, pdf_path):
-    """Try weasyprint then pdfkit."""
-    try:
-        import weasyprint
-        weasyprint.HTML(string=html_content).write_pdf(pdf_path)
-        return True
-    except Exception:
-        pass
-    try:
-        import pdfkit
-        pdfkit.from_string(html_content, pdf_path)
-        return True
-    except Exception as e:
-        print(f"[!] PDF generation failed: {e}")
-        return False
 
 
 # ---------------------------------------------------------------------------
@@ -4197,7 +4182,6 @@ async def main_async():
 
     json_path = os.path.join(session_dir, f"report_{safe_tgt}.json")
     html_path = os.path.join(session_dir, f"report_{safe_tgt}.html")
-    pdf_path  = os.path.join(session_dir, f"report_{safe_tgt}.pdf")
 
     # Save base report immediately so it survives an interrupted CVE test phase
     with open(json_path, "w") as fh:
@@ -4218,10 +4202,6 @@ async def main_async():
         with open(html_path, "w") as fh:
             fh.write(html_content)
         print(f"[+] Reports updated with CVE test results")
-
-    pdf_ok = generate_pdf_report(html_content, pdf_path)
-    if pdf_ok:
-        print(f"[+] PDF  report → {pdf_path}")
 
     # Console summary
     print(f"\n{'=' * 52}")
@@ -4273,8 +4253,6 @@ async def main_async():
     print(f"\n  Reports:")
     print(f"    JSON : {json_path}")
     print(f"    HTML : {html_path}")
-    if pdf_ok:
-        print(f"    PDF  : {pdf_path}")
     print(f"{'=' * 52}")
 
 
@@ -4294,16 +4272,11 @@ def _report_from_json(json_path: str):
 
     base      = os.path.splitext(os.path.abspath(json_path))[0]
     html_path = base + ".html"
-    pdf_path  = base + ".pdf"
 
     html_content = generate_html_report(report)
     with open(html_path, "w", encoding="utf-8") as fh:
         fh.write(html_content)
     print(f"[+] HTML report → {html_path}")
-
-    pdf_ok = generate_pdf_report(html_content, pdf_path)
-    if pdf_ok:
-        print(f"[+] PDF  report → {pdf_path}")
 
     target = report.get("target", "unknown")
     counts = report.get("counts", {})
@@ -4331,8 +4304,6 @@ def _report_from_json(json_path: str):
     print(f"\n  Reports:")
     print(f"    JSON : {json_path}")
     print(f"    HTML : {html_path}")
-    if pdf_ok:
-        print(f"    PDF  : {pdf_path}")
     print(f"{'=' * 52}")
 
 

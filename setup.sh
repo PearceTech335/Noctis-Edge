@@ -108,14 +108,6 @@ sudo apt install -y \
 
 ok "apt packages installed"
 
-info "Installing optional PDF package (wkhtmltopdf) if available ..."
-if apt-cache policy wkhtmltopdf 2>/dev/null | grep -q 'Candidate: (none)'; then
-    skip "wkhtmltopdf has no installation candidate on this distro (PDF reports still supported via weasyprint)"
-else
-    sudo apt install -y wkhtmltopdf 2>/dev/null \
-        && ok "wkhtmltopdf installed" \
-        || skip "wkhtmltopdf install failed; continuing with weasyprint-based PDF generation"
-fi
 
 for required_cmd in dnsenum dnsrecon; do
     if command -v "$required_cmd" &>/dev/null; then
@@ -219,12 +211,10 @@ info "Installing Python dependencies into venv ..."
     requests \
     jinja2 \
     pycryptodome \
-    weasyprint \
-    pdfkit \
     flask \
     flask-sock \
     --quiet \
-    && ok "Python packages installed (requests, jinja2, pycryptodome, weasyprint, pdfkit, flask, flask-sock)" \
+    && ok "Python packages installed (requests, jinja2, pycryptodome, flask, flask-sock)" \
     || fail "Python package installation failed"
 
 if command -v nxc &>/dev/null; then
@@ -246,7 +236,7 @@ else
     fi
 fi
 
-chmod +x "$SCRIPT_DIR/noctis.py" "$SCRIPT_DIR/noctis_gui.py" 2>/dev/null || true
+chmod +x "$SCRIPT_DIR/noctis.py" "$SCRIPT_DIR/noctis_web.py" 2>/dev/null || true
 ok "Executable entry points prepared"
 
 # =============================================================================
@@ -478,17 +468,9 @@ KB_RELAY_URL=""
 # PAID TIER
 # =============================================================================
 
-# Set to true once you have subscribed and received community KB access.
-# Access is granted via Polar.sh — see https://polar.sh/PearceTech335
-PAID_TIER=false
-
-# Your personal GitHub fine-grained PAT for reading the community knowledge base.
-# How to generate one:
-#   1. Go to https://github.com/settings/personal-access-tokens/new
-#   2. Repository access: PearceTech335/Noctis-Edge-KB (read-only)
-#   3. Permissions: Contents = Read-only
-#   4. Paste the generated token below.
-KB_COMMUNITY_TOKEN=""
+KB_LICENSE_KEY=""
+# ↑ Paste your Polar.sh license key here to enable the community CVE KB download.
+#   Subscribe at: https://polar.sh/PearceTech335
 CONF_EOF
     ok "noctis.conf created"
 else
@@ -509,7 +491,6 @@ else
 fi
 
 info "KB submission runs automatically on ./update.sh — no token required"
-info "For paid community KB access set PAID_TIER=true and KB_COMMUNITY_TOKEN in noctis.conf"
 
 # =============================================================================
 # Done
@@ -529,7 +510,7 @@ echo "  Next steps:"
 echo ""
 echo "  1. Run a scan:             ./noctis.py <target>"
 echo "     (Ollama will start automatically if not already running)"
-echo "  2. Launch the GUI:         ./noctis_gui.py"
+echo "  2. Launch the Web UI:      ./noctis_web.py  (then open http://127.0.0.1:5000)"
 echo "  3. Optional shell access:  source .venv/bin/activate"
 echo ""
 echo "  Run ./update.sh monthly to keep everything current."
