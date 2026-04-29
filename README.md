@@ -407,7 +407,7 @@ The Cloudflare Worker (`cloudflare/worker.js`) acts as a server-side relay: it h
 
 ### Unlocking the Community Knowledge Base
 
-Subscribers receive access to the aggregated community CVE knowledge base — a curated collection of validated test scripts contributed by all Noctis Edge users. Once you have subscribed on [Polar.sh](https://polar.sh/PearceTech335) and received your license key:
+Subscribers receive access to the aggregated community CVE knowledge base — a curated collection of validated test scripts contributed by all Noctis Edge users. Once you have subscribed at [polar.sh/checkout](https://buy.polar.sh/polar_cl_rEP2IebC07PDSnIal0HF4kZSBJVecdZSmkREx3Emnin) and received your license key:
 
 1. Open `noctis.conf` in your Noctis Edge install directory.
 2. Set `PAID_TIER` to `true`:

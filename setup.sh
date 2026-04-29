@@ -470,7 +470,7 @@ KB_RELAY_URL=""
 
 KB_LICENSE_KEY=""
 # ↑ Paste your Polar.sh license key here to enable the community CVE KB download.
-#   Subscribe at: https://polar.sh/PearceTech335
+#   Subscribe at: https://buy.polar.sh/polar_cl_rEP2IebC07PDSnIal0HF4kZSBJVecdZSmkREx3Emnin
 CONF_EOF
     ok "noctis.conf created"
 else

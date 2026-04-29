@@ -205,7 +205,7 @@ fi
 # ── Pull community KB (subscribers only) ────────────────────────────────────────
 if [[ -z "$KB_LICENSE_KEY" ]]; then
     promo "Community KB pull skipped — KB_LICENSE_KEY not set in noctis.conf"
-    promo "Unlock community CVE intelligence: https://polar.sh/PearceTech335"
+    promo "Unlock community CVE intelligence: https://buy.polar.sh/polar_cl_rEP2IebC07PDSnIal0HF4kZSBJVecdZSmkREx3Emnin"
 else
     info "Pulling community CVE knowledge base (license key found) ..."
     _RELAY="https://noctis-kb-relay.pearcetechnologies1.workers.dev"
@@ -230,7 +230,7 @@ else
         fi
         rm -f "$_TMP_KB"
     elif [[ "$HTTP_CODE" == "403" ]]; then
-        err "License key rejected — check your subscription at https://polar.sh/PearceTech335"
+        err "License key rejected — check your subscription at https://buy.polar.sh/polar_cl_rEP2IebC07PDSnIal0HF4kZSBJVecdZSmkREx3Emnin"
         rm -f "$_TMP_KB"
     else
         err "Community KB download failed (HTTP $HTTP_CODE) — will retry on next update"

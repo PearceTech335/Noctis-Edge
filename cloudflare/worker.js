@@ -219,7 +219,7 @@ async function handleCommunityKB(request, env) {
     // 404 = key not found, 403 = revoked/expired — either way, deny
     return jsonResp({
       error:   "invalid_key",
-      message: "License key not recognised or inactive. Subscribe at https://polar.sh/PearceTech335",
+      message: "License key not recognised or inactive. Subscribe at https://buy.polar.sh/polar_cl_rEP2IebC07PDSnIal0HF4kZSBJVecdZSmkREx3Emnin",
     }, 403);
   }
 
@@ -227,7 +227,7 @@ async function handleCommunityKB(request, env) {
   if (polarData?.status !== "granted") {
     return jsonResp({
       error:   "key_not_granted",
-      message: "License key is not active for this product. Subscribe at https://polar.sh/PearceTech335",
+      message: "License key is not active for this product. Subscribe at https://buy.polar.sh/polar_cl_rEP2IebC07PDSnIal0HF4kZSBJVecdZSmkREx3Emnin",
     }, 403);
   }
 
