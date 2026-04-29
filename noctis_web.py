@@ -427,6 +427,7 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
   --c-input:  #c586c0;
   --c-dim:    #6a6a6a;
   --c-normal: #d4d4d4;
+  --c-promo:  #29d7f5;
   --radius: 3px;
 }
 html, body { height: 100%; }
@@ -589,6 +590,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .t-input  { color: var(--c-input); }
 .t-dim    { color: var(--c-dim); }
 .t-normal { color: var(--c-normal); }
+.t-promo  { color: var(--c-promo); font-weight: bold; }
 #spinner-line { color: var(--c-info); }
 
 /* Watermark logo */
@@ -847,6 +849,7 @@ function lineClass(text) {
   if (s.startsWith('[+]'))  return 't-good';
   if (s.startsWith('[!]'))  return 't-warn';
   if (s.startsWith('[-]'))  return 't-bad';
+  if (s.startsWith('[**]')) return 't-promo';
   if (s.startsWith('[*]'))  return 't-info';
   if (s.startsWith('> '))   return 't-input';
   if (s.startsWith('===') || s.startsWith('---')) return 't-head';

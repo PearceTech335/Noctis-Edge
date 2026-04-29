@@ -24,10 +24,11 @@ KB_RELAY_URL="${KB_RELAY_URL:-}"
 KB_LICENSE_KEY="${KB_LICENSE_KEY:-}"
 
 # Colour helpers
-GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
-ok()   { echo -e "${GREEN}[OK]${NC}  $*"; }
-info() { echo -e "${YELLOW}[--]${NC}  $*"; }
-err()  { echo -e "${RED}[!!]${NC}  $*"; }
+GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; CYAN='\033[1;36m'; NC='\033[0m'
+ok()    { echo -e "${GREEN}[OK]${NC}  $*"; }
+info()  { echo -e "${YELLOW}[--]${NC}  $*"; }
+err()   { echo -e "${RED}[!!]${NC}  $*"; }
+promo() { echo -e "${CYAN}[**]${NC}  $*"; }
 
 header() {
     echo ""
@@ -198,13 +199,13 @@ else
     [[ -n "$KB_RELAY_URL" ]] && RELAY_ARGS+=("$KB_RELAY_URL")
     "$PYTHON" "$SCRIPT_DIR/scripts/submit_kb.py" "${RELAY_ARGS[@]}" \
         && ok "KB submission complete" \
-        || err "KB submission failed — will retry on next update"
+        || promo "KB submission failed — will retry on next update"
 fi
 
 # ── Pull community KB (subscribers only) ────────────────────────────────────────
 if [[ -z "$KB_LICENSE_KEY" ]]; then
-    info "Community KB pull skipped (KB_LICENSE_KEY not set in noctis.conf)"
-    info "Subscribe at: https://polar.sh/PearceTech335"
+    promo "Community KB pull skipped — KB_LICENSE_KEY not set in noctis.conf"
+    promo "Unlock community CVE intelligence: https://polar.sh/PearceTech335"
 else
     info "Pulling community CVE knowledge base ..."
     TMP_KB_DIR="$(mktemp -d)"
