@@ -207,35 +207,35 @@ if [[ -z "$KB_LICENSE_KEY" ]]; then
     promo "Community KB pull skipped — KB_LICENSE_KEY not set in noctis.conf"
     promo "Unlock community CVE intelligence: https://polar.sh/PearceTech335"
 else
-    info "Pulling community CVE knowledge base ..."
-    TMP_KB_DIR="$(mktemp -d)"
-
-    _cleanup_tmp() { rm -rf "$TMP_KB_DIR"; }
-    trap _cleanup_tmp EXIT
-
-    CLONE_URL="https://${KB_LICENSE_KEY}@github.com/PearceTech335/Noctis-Edge-KB.git"
-
-    if git clone --depth=1 --quiet "$CLONE_URL" "$TMP_KB_DIR" 2>/dev/null; then
-        if [[ -f "$TMP_KB_DIR/community_kb.json" ]]; then
-            MERGE_OUTPUT=$("$PYTHON" "$SCRIPT_DIR/scripts/merge_kb.py" \
-                "$TMP_KB_DIR/community_kb.json" \
-                "$KB_LOCAL" 2>&1)
-            MERGE_EXIT=$?
-            if [[ "$MERGE_EXIT" == "0" ]]; then
-                ok "$MERGE_OUTPUT"
-            else
-                err "KB merge failed: $MERGE_OUTPUT"
-            fi
+    info "Pulling community CVE knowledge base (license key found) ..."
+    _RELAY="https://noctis-kb-relay.pearcetechnologies1.workers.dev"
+    _TMP_KB="/tmp/_noctis_community_kb_$$.json"
+    HTTP_CODE=$(curl -sS -w "%{http_code}" -o "$_TMP_KB" \
+        --max-time 30 \
+        -X POST "$_RELAY/community-kb" \
+        -H "Content-Type: application/json" \
+        -d "{\"license_key\":\"$KB_LICENSE_KEY\"}" 2>/dev/null)
+    CURL_EXIT=$?
+    if [[ "$CURL_EXIT" != "0" ]]; then
+        err "Community KB download failed (curl error $CURL_EXIT) — will retry on next update"
+        rm -f "$_TMP_KB"
+    elif [[ "$HTTP_CODE" == "200" ]]; then
+        MERGE_OUTPUT=$("$PYTHON" "$SCRIPT_DIR/scripts/merge_kb.py" \
+            "$_TMP_KB" "$KB_LOCAL" 2>&1)
+        MERGE_EXIT=$?
+        if [[ "$MERGE_EXIT" == "0" ]]; then
+            ok "Community KB merged: $MERGE_OUTPUT"
         else
-            err "community_kb.json not found in Noctis-Edge-KB — check the repository is correctly populated"
+            err "KB merge failed: $MERGE_OUTPUT"
         fi
+        rm -f "$_TMP_KB"
+    elif [[ "$HTTP_CODE" == "403" ]]; then
+        err "License key rejected — check your subscription at https://polar.sh/PearceTech335"
+        rm -f "$_TMP_KB"
     else
-        err "Could not clone community KB — verify KB_LICENSE_KEY is valid and you have repository access"
-        info "Access is granted via Polar.sh after subscribing at https://polar.sh/PearceTech335"
+        err "Community KB download failed (HTTP $HTTP_CODE) — will retry on next update"
+        rm -f "$_TMP_KB"
     fi
-
-    _cleanup_tmp
-    trap - EXIT
 fi
 
 ok "KB sync done"

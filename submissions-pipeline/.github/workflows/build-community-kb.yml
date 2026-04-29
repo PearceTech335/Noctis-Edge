@@ -1,0 +1,72 @@
+name: Build Community KB
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "*.json"
+      - "quarantine/**"
+  schedule:
+    # Weekly full-repo scan + rebuild every Sunday at 03:00 UTC
+    - cron: "0 3 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed for quarantine commits on weekly scan
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Noctis-Edge-Submissions
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      # -----------------------------------------------------------------
+      # Weekly cron: full-repo validation scan before building
+      # -----------------------------------------------------------------
+      - name: Full-repo validation scan (weekly cron only)
+        if: github.event_name == 'schedule'
+        id: full-scan
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/validate_submissions.py --all
+        continue-on-error: true
+
+      - name: Commit any quarantines from weekly scan
+        if: github.event_name == 'schedule' && steps.full-scan.outcome == 'failure'
+        run: |
+          git config user.email "actions@github.com"
+          git config user.name  "GitHub Actions"
+          git add quarantine/ 2>/dev/null || true
+          git diff --cached --quiet || git commit -m "quarantine: weekly scan $(date -u +%Y-%m-%d)"
+          git push
+
+      # -----------------------------------------------------------------
+      # Build community_kb.json
+      # -----------------------------------------------------------------
+      - name: Build community_kb.json
+        run: python3 scripts/build_community_kb.py community_kb.json
+
+      # -----------------------------------------------------------------
+      # Push to Noctis-Edge-KB (private repo)
+      # -----------------------------------------------------------------
+      - name: Clone Noctis-Edge-KB
+        run: |
+          git clone \
+            --depth=1 \
+            https://x-access-token:${{ secrets.KB_PUSH_TOKEN }}@github.com/PearceTech335/Noctis-Edge-KB.git \
+            /tmp/noctis-edge-kb
+
+      - name: Copy and push community_kb.json
+        run: |
+          cp community_kb.json /tmp/noctis-edge-kb/community_kb.json
+          cd /tmp/noctis-edge-kb
+          git config user.email "actions@github.com"
+          git config user.name  "GitHub Actions"
+          git add community_kb.json
+          git diff --cached --quiet && echo "No changes to community KB" && exit 0
+          git commit -m "rebuild: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git push

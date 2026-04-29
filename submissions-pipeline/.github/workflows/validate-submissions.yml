@@ -1,0 +1,60 @@
+name: Validate Submissions
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "*.json"
+
+permissions:
+  contents: write   # needed to commit quarantine/ moves
+  issues: write     # needed to open quarantine alert issues
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout (full history for diff)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Get changed submission files
+        id: changed
+        run: |
+          FILES=$(git diff --name-only HEAD^ HEAD | grep -E '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$' || true)
+          echo "files=$FILES" >> "$GITHUB_OUTPUT"
+          echo "Changed submission files: $FILES"
+
+      - name: Run validator
+        if: steps.changed.outputs.files != ''
+        id: validate
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 scripts/validate_submissions.py ${{ steps.changed.outputs.files }}
+        continue-on-error: true
+
+      - name: Stage quarantined files
+        if: steps.validate.outcome == 'failure'
+        run: |
+          git config user.email "actions@github.com"
+          git config user.name  "GitHub Actions"
+          git add quarantine/ 2>/dev/null || true
+          git diff --cached --quiet || git commit -m "quarantine: ${{ steps.changed.outputs.files }}"
+          git push
+
+      - name: Open GitHub issue for quarantined submission
+        if: steps.validate.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue create \
+            --title "Submission quarantined: ${{ steps.changed.outputs.files }}" \
+            --body "One or more submissions from the latest push were flagged by the validator and moved to \`quarantine/\`. See the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details." \
+            --label "security,quarantine" || true
+
+      - name: Fail if quarantines occurred
+        if: steps.validate.outcome == 'failure'
+        run: exit 1

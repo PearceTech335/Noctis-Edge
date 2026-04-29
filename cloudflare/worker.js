@@ -7,12 +7,16 @@
  * Cloudflare Secrets — it never touches a user's machine.
  *
  * Environment bindings required (set before deploying):
- *   GITHUB_TOKEN   (Secret)  PAT with contents:write on Noctis-Edge-Submissions
- *   RATE_LIMIT_KV  (KV)      Namespace for per-UUID rate-limit tracking
+ *   GITHUB_TOKEN           (Secret)  PAT with contents:write on Noctis-Edge-Submissions
+ *   GITHUB_KB_TOKEN        (Secret)  PAT with contents:read on Noctis-Edge-KB (private)
+ *   POLAR_ORG_ACCESS_TOKEN (Secret)  Polar.sh API token (license_keys:write scope)
+ *   POLAR_ORGANIZATION_ID  (Secret)  Polar.sh organisation UUID
+ *   RATE_LIMIT_KV          (KV)      Namespace for per-UUID rate-limit tracking
  *
  * Routes:
- *   POST /submit   Accept a KB submission
- *   GET  /health   Liveness probe
+ *   POST /submit        Accept a KB submission
+ *   POST /community-kb  Validate Polar license key and serve community_kb.json
+ *   GET  /health        Liveness probe
  */
 
 const GITHUB_OWNER    = "PearceTech335";
@@ -178,6 +182,78 @@ async function handleSubmit(request, env) {
   return jsonResp({ error: `Upstream write failed (HTTP ${status}) — try again later` }, 502);
 }
 
+async function handleCommunityKB(request, env) {
+  // ── Parse body ────────────────────────────────────────────────────────────
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return jsonResp({ error: "Request body must be valid JSON" }, 400);
+  }
+
+  const licenseKey = body?.license_key;
+  if (!licenseKey || typeof licenseKey !== "string" || licenseKey.trim() === "") {
+    return jsonResp({ error: "license_key is required" }, 400);
+  }
+
+  // ── Validate license key with Polar.sh ────────────────────────────────────
+  let polarResp;
+  try {
+    polarResp = await fetch("https://api.polar.sh/v1/license-keys/validate", {
+      method: "POST",
+      headers: {
+        Authorization:  `Bearer ${env.POLAR_ORG_ACCESS_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        key:             licenseKey.trim(),
+        organization_id: env.POLAR_ORGANIZATION_ID,
+      }),
+    });
+  } catch (err) {
+    console.error("[community-kb] Polar validate network error:", err);
+    return jsonResp({ error: "License validation temporarily unavailable — try again later" }, 503);
+  }
+
+  if (!polarResp.ok) {
+    // 404 = key not found, 403 = revoked/expired — either way, deny
+    return jsonResp({
+      error:   "invalid_key",
+      message: "License key not recognised or inactive. Subscribe at https://polar.sh/PearceTech335",
+    }, 403);
+  }
+
+  const polarData = await polarResp.json();
+  if (polarData?.granted !== true) {
+    return jsonResp({
+      error:   "key_not_granted",
+      message: "License key is not active for this product. Subscribe at https://polar.sh/PearceTech335",
+    }, 403);
+  }
+
+  // ── Fetch community_kb.json from private GitHub repo ─────────────────────
+  const kbResp = await fetch(
+    "https://api.github.com/repos/PearceTech335/Noctis-Edge-KB/contents/community_kb.json",
+    {
+      headers: {
+        ...githubHeaders(env.GITHUB_KB_TOKEN),
+        Accept: "application/vnd.github.v3.raw",
+      },
+    }
+  );
+
+  if (!kbResp.ok) {
+    console.error(`[community-kb] GitHub fetch failed HTTP ${kbResp.status}`);
+    return jsonResp({ error: "Community KB temporarily unavailable — try again later" }, 502);
+  }
+
+  const kbText = await kbResp.text();
+  return new Response(kbText, {
+    status:  200,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
@@ -192,6 +268,10 @@ export default {
 
     if (pathname === "/submit" && request.method === "POST") {
       return handleSubmit(request, env);
+    }
+
+    if (pathname === "/community-kb" && request.method === "POST") {
+      return handleCommunityKB(request, env);
     }
 
     return jsonResp({ error: "Not found" }, 404);
