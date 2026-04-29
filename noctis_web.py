@@ -50,15 +50,8 @@ PROFILE_DESCRIPTIONS = {
     "cloud":       "Cloud Exposure Review — curl, nuclei, dns_enum",
 }
 
-# Regex to strip ANSI/VT100 escape sequences from PTY output before sending to browser.
-# OSC sequences (e.g. OSC 8 hyperlinks \x1b]8;;URL\x1b\\ ) are stripped first so the
-# browser receives plain URL text, which appendLine() then linkifies via DOM methods.
-_ANSI_RE = re.compile(
-    r'\x1b\][^\x1b]*(?:\x1b\\|\x07)'       # OSC sequences (OSC 8 hyperlinks, title sets, etc.)
-    r'|\x1b(?:\[[0-9;]*[mGKHFABCDJr]'      # CSI sequences (colour, cursor movement, erase)
-    r'|\([AB]'                               # character-set sequences
-    r'|[^[\(])'                              # any other single-char escape
-)
+# Regex to strip ANSI/VT100 escape sequences from PTY output before sending to browser
+_ANSI_RE = re.compile(r'\x1b(?:\[[0-9;]*[mGKHFABCDJr]|\([AB]|[^[\(])')
 
 FLAGS = [
     ("--aggressive",   "Disable safe-mode: run gobuster / ffuf / hydra without approval"),
