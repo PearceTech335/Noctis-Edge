@@ -7,6 +7,10 @@
 
 set -euo pipefail
 
+# Never prompt for git credentials — if auth is required and unavailable,
+# fail immediately rather than hanging the terminal waiting for a password.
+export GIT_TERMINAL_PROMPT=0
+
 OLLAMA_MODEL="hf.co/RCorvalan/Qwen2.5-7B-Instruct-1M-Q4_K_M-GGUF"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -128,6 +132,7 @@ header "6/7  CVE offline database"
 CVE_DIR="$SCRIPT_DIR/CVE/cve-offline"
 if [[ -d "$CVE_DIR/.git" ]]; then
     info "Pulling latest CVE repo ..."
+    # Always pull via HTTPS — no credentials needed for a public repo.
     git -C "$CVE_DIR" pull --quiet \
         && ok "CVE repo up to date" \
         || err "CVE git pull failed"
@@ -150,7 +155,9 @@ fi
 header "7/7  Noctis Edge repository"
 if [[ -d "$SCRIPT_DIR/.git" ]]; then
     info "Pulling latest Noctis Edge ..."
+    # Always pull via HTTPS so no SSH key or GitHub credentials are required.
     git -C "$SCRIPT_DIR" pull --rebase --quiet \
+        https://github.com/PearceTech335/Noctis-Edge.git master \
         && ok "Noctis Edge up to date" \
         || err "git pull failed (may have uncommitted changes)"
 else
