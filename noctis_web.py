@@ -50,8 +50,15 @@ PROFILE_DESCRIPTIONS = {
     "cloud":       "Cloud Exposure Review — curl, nuclei, dns_enum",
 }
 
-# Regex to strip ANSI/VT100 escape sequences from PTY output before sending to browser
-_ANSI_RE = re.compile(r'\x1b(?:\[[0-9;]*[mGKHFABCDJr]|\([AB]|[^[\(])')
+# Regex to strip ANSI/VT100 escape sequences from PTY output before sending to browser.
+# OSC sequences (e.g. OSC 8 hyperlinks \x1b]8;;URL\x1b\\ ) are stripped first so the
+# browser receives plain URL text, which appendLine() then linkifies via DOM methods.
+_ANSI_RE = re.compile(
+    r'\x1b\][^\x1b]*(?:\x1b\\|\x07)'       # OSC sequences (OSC 8 hyperlinks, title sets, etc.)
+    r'|\x1b(?:\[[0-9;]*[mGKHFABCDJr]'      # CSI sequences (colour, cursor movement, erase)
+    r'|\([AB]'                               # character-set sequences
+    r'|[^[\(])'                              # any other single-char escape
+)
 
 FLAGS = [
     ("--aggressive",   "Disable safe-mode: run gobuster / ffuf / hydra without approval"),
@@ -591,6 +598,8 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .t-dim    { color: var(--c-dim); }
 .t-normal { color: var(--c-normal); }
 .t-promo  { color: var(--c-promo); font-weight: bold; }
+.t-promo a { color: var(--c-promo); text-decoration: underline; }
+.t-line a  { color: inherit; text-decoration: underline; cursor: pointer; }
 #spinner-line { color: var(--c-info); }
 
 /* Watermark logo */
@@ -860,7 +869,20 @@ function lineClass(text) {
 function appendLine(text) {
   const div = document.createElement('div');
   div.className = 't-line ' + lineClass(text);
-  div.textContent = text;
+  // Linkify URLs safely using DOM nodes (no innerHTML)
+  const urlRe = /(https?:\/\/[^\s]+)/g;
+  let last = 0, m;
+  while ((m = urlRe.exec(text)) !== null) {
+    if (m.index > last) div.appendChild(document.createTextNode(text.slice(last, m.index)));
+    const a = document.createElement('a');
+    a.href = m[1];
+    a.textContent = m[1];
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    div.appendChild(a);
+    last = m.index + m[1].length;
+  }
+  if (last < text.length) div.appendChild(document.createTextNode(text.slice(last)));
   term.appendChild(div);
   term.scrollTop = term.scrollHeight;
 }

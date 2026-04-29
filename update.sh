@@ -28,7 +28,15 @@ GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; CYAN='\033[1;36m'; NC
 ok()    { echo -e "${GREEN}[OK]${NC}  $*"; }
 info()  { echo -e "${YELLOW}[--]${NC}  $*"; }
 err()   { echo -e "${RED}[!!]${NC}  $*"; }
-promo() { echo -e "${CYAN}[**]${NC}  $*"; }
+# promo: bold cyan; embeds an OSC 8 hyperlink for any https:// URL in the message
+# so it's clickable in terminals that support it (GNOME Terminal, iTerm2, etc.)
+promo() {
+    local msg="$*"
+    # Replace bare https://... URLs with OSC 8 hyperlink sequences
+    local linked
+    linked="$(echo "$msg" | sed 's|\(https://[^ ]*\)|\x1b]8;;\1\x1b\\\1\x1b]8;;\x1b\\|g')"
+    echo -e "${CYAN}[**]${NC}  ${linked}"
+}
 
 header() {
     echo ""
