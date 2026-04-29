@@ -418,17 +418,9 @@ Subscribers receive access to the aggregated community CVE knowledge base — a 
    ```ini
    KB_LICENSE_KEY=XXXX-XXXX-XXXX-XXXX
    ```
-4. Generate a GitHub fine-grained PAT with **read-only** access to `PearceTech335/Noctis-Edge-KB`:
-   - Go to [github.com/settings/personal-access-tokens/new](https://github.com/settings/personal-access-tokens/new)
-   - Under **Repository access** select `PearceTech335/Noctis-Edge-KB`
-   - Set **Contents** permission to `Read-only`
-   - Copy the generated token and paste it:
-   ```ini
-   KB_COMMUNITY_TOKEN=github_pat_XXXX...
-   ```
-5. Run `./update.sh` — the community KB will be downloaded and merged into your local knowledge base automatically.
+4. Run `./update.sh` — the community KB will be downloaded and merged into your local knowledge base automatically.
 
-The community KB is pulled on every subsequent `./update.sh` run as long as `PAID_TIER=true` and a valid key and token are present.
+The community KB is pulled on every subsequent `./update.sh` run as long as `PAID_TIER=true` and a valid license key are present. No GitHub account or PAT is required — the Cloudflare relay handles authentication server-side.
 
 ---
 
