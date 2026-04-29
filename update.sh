@@ -37,6 +37,20 @@ header() {
 }
 
 # =============================================================================
+# 0. Sudo — cache credentials up-front
+# =============================================================================
+# Prompt for the sudo password NOW, before any long-running network operation
+# (apt update can take 30-60 s reaching mirrors, which would otherwise delay
+# the password prompt and make the web UI appear frozen).
+info "This script requires sudo for apt and snap steps."
+info "Please enter your sudo password when prompted below."
+if ! sudo -v; then
+    err "sudo authentication failed — aborting"
+    exit 1
+fi
+ok "sudo credentials cached"
+
+# =============================================================================
 # 1. apt — system packages
 # =============================================================================
 header "1/7  System packages (apt)"
