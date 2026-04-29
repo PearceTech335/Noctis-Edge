@@ -39,6 +39,12 @@ reconotron.db
 .noctis_config
 noctis.conf
 
+# Internal planning and setup files — not for public distribution
+ForYouToDo.md
+.codex
+.noctis_config.example
+cloudflare/PAID_TIER_PLAN.md
+
 # IDE / tool config
 .continue/
 .idea/

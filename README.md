@@ -32,14 +32,14 @@ This architecture makes Noctis Edge particularly suited for regulated environmen
 
 | Item | Size |
 |------|------|
-| Ollama LLM model (`Qwen2.5-7B-Instruct Q4`) | ~4.7 GB |
+| Ollama LLM model (`Qwen2.5-Coder-3B-Instruct`) | ~1.9 GB |
 | Nuclei templates | ~1.5 GB |
 | CVE offline database (built by `setup.sh`) | ~3–5 GB |
 | SecLists wordlists (snap) | ~2 GB |
 | Tool binaries + Python venv | ~1 GB |
 | Scan session outputs | Variable |
 
-> **RAM note:** The Qwen2.5-7B Q4 model requires ~5–6 GB of RAM to load. On machines with less than 8 GB total, the system may swap heavily during inference, significantly slowing LLM response times (expect 3–10 min per call on CPU-only with 8 GB). 16 GB+ is strongly recommended for comfortable use.
+> **RAM note:** The Qwen2.5-Coder-3B model requires ~2 GB of RAM to load and is optimized for code analysis and security testing. Inference is typically 2–5 seconds on modern hardware. 8 GB RAM is sufficient; 16 GB+ recommended for parallel processing.
 
 ---
 
@@ -64,7 +64,7 @@ chmod +x setup.sh
 | apt packages | `nmap`, `curl`, `gobuster`, `ffuf`, `hydra`, `ssh-audit`, `dnsenum`, `dnsrecon`, `perl`, `golang-go`, `python3-tk`, and more |
 | SecLists | Wordlists via `snap install seclists` |
 | Nuclei | Go-based template scanner (`~/go/bin/nuclei`) |
-| Ollama | Local LLM server + pulls `hf.co/RCorvalan/Qwen2.5-7B-Instruct-1M-Q4_K_M-GGUF` |
+| Ollama | Local LLM server + pulls `qwen2.5-coder:3b-instruct` |
 | Python venv | `.venv/` with `requests`, `jinja2`, `pycryptodome`, `flask`, `flask-sock` |
 | CVE database | Clones `CVE/cve-offline/` and builds `cve-summary.csv` |
 | rdpscan | Clones `rdpscan/` helper |
@@ -166,6 +166,7 @@ The Web UI provides:
 | `--dns-enum` | Enable DNS enumeration tools (amass, dnsenum, dnsrecon) — disabled by default, requires internet access |
 | `--msf-validate` | After scan, use Metasploit `check` commands to non-destructively validate each CVE match |
 | `--cve-test` | After scan, use the LLM to generate and execute safe probe scripts for each matched CVE |
+| `--unattended` | Auto-approve all interactive prompts — no user input required (useful for scripted/automated runs) |
 | `--resume` | Resume the most recent interrupted scan session for this target |
 
 ---
@@ -300,12 +301,13 @@ cve_knowledge_base.json           ← cross-engagement CVE test KB (project root
 
 | Constant | Default | Description |
 |----------|---------|-------------|
-| `MODEL` | `hf.co/RCorvalan/Qwen2.5-7B-Instruct-1M-Q4_K_M-GGUF` | Ollama model to use |
+| `MODEL` | `qwen2.5-coder:3b-instruct` | Ollama model to use (set `NOCTIS_OLLAMA_MODEL` environment variable to override) |
 | `OLLAMA_URL` | `http://localhost:11434/api/generate` | Ollama API endpoint |
 | `MAX_ITERATIONS` | `10` | Max LLM scan loop iterations |
 | `MAX_LLM_RETRIES` | `3` | LLM call retries per iteration |
 | `CVE_TEST_ATTEMPTS` | `5` | LLM script attempts per CVE in `--cve-test` |
 | `SAFE_MODE` | `True` | Require approval for aggressive tools (override with `--aggressive`) |
+| `UNATTENDED` | `False` | Auto-approve all prompts (override with `--unattended`) |
 
 ---
 
@@ -347,10 +349,10 @@ Manual install (if not using `setup.sh`):
 curl -fsSL https://ollama.com/install.sh | sh
 
 # Pull the model:
-ollama pull hf.co/RCorvalan/Qwen2.5-7B-Instruct-1M-Q4_K_M-GGUF
+ollama pull qwen2.5-coder:3b-instruct
 ```
 
-Ollama will be started automatically by `noctis.py` on first use. On CPU-only machines expect 1–3 minutes per LLM call. The program prints a spinner while waiting.
+Ollama will be started automatically by `noctis.py` on first use. The lightweight 3B model provides fast inference — typically 2–5 seconds per LLM call on modern hardware. The program prints a spinner while waiting.
 
 ---
 

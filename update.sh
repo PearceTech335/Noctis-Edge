@@ -11,7 +11,7 @@ set -euo pipefail
 # fail immediately rather than hanging the terminal waiting for a password.
 export GIT_TERMINAL_PROMPT=0
 
-OLLAMA_MODEL="hf.co/RCorvalan/Qwen2.5-7B-Instruct-1M-Q4_K_M-GGUF"
+OLLAMA_MODEL="qwen2.5-coder:3b-instruct"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Load per-user configuration (tokens, UUID, paid-tier flag)

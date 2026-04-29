@@ -58,12 +58,12 @@ CVE_CSV      = os.path.join(BASE_DIR, "CVE", "cve-offline", "cve-summary.csv")
 SESSION_FILE = os.path.join(BASE_DIR, "session.json")
 
 OLLAMA_URL     = "http://localhost:11434/api/generate"
-MODEL          = os.getenv("NOCTIS_OLLAMA_MODEL", "hf.co/RCorvalan/Qwen2.5-7B-Instruct-1M-Q4_K_M-GGUF")
-OLLAMA_TIMEOUT = int(os.getenv("NOCTIS_OLLAMA_TIMEOUT", "300"))   # seconds — CPU-only inference can take 1-3 min per call
+MODEL          = os.getenv("NOCTIS_OLLAMA_MODEL", "qwen2.5-coder:3b-instruct")
+OLLAMA_TIMEOUT = int(os.getenv("NOCTIS_OLLAMA_TIMEOUT", "120"))   # seconds — 3B model is much faster
 # Alternative models:
-#"hf.co/RCorvalan/Qwen2.5-7B-Instruct-1M-Q4_K_M-GGUF"  (default — 4.68 GB, 1M context)
-#"qwen2.5-coder:3b"                                      (lightweight — 1.9 GB, low-RAM machines)
-#"qwen2.5-coder:7b-instruct-q4_k_m"                     (standard Ollama 7B coder)
+#"qwen2.5-coder:3b-instruct"                             (default — 1.9 GB, fast performance)
+#"qwen2.5-coder:7b-instruct"                             (7B coder — better quality, ~4.7 GB)
+#"qwen2.5-instruct"                                      (general 7B model — 4.68 GB, 1M context)
 
 MAX_OUTPUT          = 3000
 MAX_ITERATIONS      = 10   # minimum base iteration count (used when few services found)
@@ -277,6 +277,8 @@ class Finding:
     description:         str  = ""
     matched_url:         str  = ""
     template_id:         str  = ""
+    cmd:                 str  = ""  # Full command string for transparency
+    http_response:       str  = ""  # Raw HTTP response/headers for evidence
 
     def to_dict(self):
         return dataclasses.asdict(self)
@@ -1153,6 +1155,128 @@ def _infer_version_range(summary: str) -> str:
     return "See NVD advisory"
 
 
+# ---------------------------------------------------------------------------
+# CWE MAPPING — Vulnerability Type to Common Weakness Enumeration
+# ---------------------------------------------------------------------------
+
+_CWE_MAPPING = {
+    "Buffer Overflow":           "CWE-120 (Buffer Copy without Checking Size)",
+    "Path Traversal":            "CWE-22 (Improper Limitation of a Pathname to a Restricted Directory)",
+    "SQL Injection":             "CWE-89 (SQL Injection)",
+    "XSS":                       "CWE-79 (Improper Neutralization of Input During Web Page Generation)",
+    "RCE":                       "CWE-94 (Improper Control of Generation of Code)",
+    "Command Injection":         "CWE-78 (OS Command Injection)",
+    "DoS":                       "CWE-400 (Uncontrolled Resource Consumption)",
+    "Privilege Escalation":      "CWE-269 (Improper Access Control)",
+    "Authentication Bypass":     "CWE-287 (Improper Authentication)",
+    "Information Disclosure":    "CWE-200 (Information Exposure)",
+    "XXE":                       "CWE-611 (Improper Restriction of XML External Entity)",
+    "Insecure Deserialization": "CWE-502 (Deserialization of Untrusted Data)",
+    "Format String":             "CWE-134 (Use of Externally-Controlled Format String)",
+    "Use-After-Free":            "CWE-416 (Use After Free)",
+    "Integer Overflow":          "CWE-190 (Integer Overflow or Wraparound)",
+    "Open Redirect":             "CWE-601 (URL Redirection to Untrusted Site)",
+    "SSRF":                      "CWE-918 (Server-Side Request Forgery)",
+    "Unknown":                   "See NVD for CWE information",
+}
+
+
+# ---------------------------------------------------------------------------
+# CVSS v3.1 VECTOR STRINGS
+# ---------------------------------------------------------------------------
+
+def _get_cvss_vector(severity: str, vuln_type: str) -> str:
+    """Return a representative CVSS v3.1 vector string based on severity and type."""
+    vectors = {
+        ("critical", "RCE"):                    "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+        ("critical", "Buffer Overflow"):        "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+        ("critical", "Authentication Bypass"):  "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+        ("critical", "Insecure Deserialization"): "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+        ("high", "Path Traversal"):             "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+        ("high", "SQL Injection"):              "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N",
+        ("high", "Command Injection"):          "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+        ("high", "RCE"):                        "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+        ("high", "Buffer Overflow"):            "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+        ("medium", "Information Disclosure"):  "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+        ("medium", "XSS"):                      "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:H/I:H/A:N",
+        ("medium", "SSRF"):                     "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:L/A:N",
+        ("medium", "Open Redirect"):            "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:L/I:L/A:N",
+        ("low", "DoS"):                         "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+        ("low", "Information Disclosure"):     "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N",
+    }
+    # Return default for unmatched pairs
+    return vectors.get((severity.lower(), vuln_type), "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N")
+
+
+# ---------------------------------------------------------------------------
+# EXPLOIT MATURITY ASSESSMENT
+# ---------------------------------------------------------------------------
+
+def _get_exploit_maturity(cve_id: str, vuln_type: str) -> str:
+    """Estimate exploit maturity based on vulnerability type.
+    
+    In production, this would query Exploit-DB and Metasploit APIs for actual PoC data.
+    """
+    highly_exploited = {
+        "RCE", "SQL Injection", "Authentication Bypass", 
+        "Path Traversal", "XSS", "Command Injection", "Buffer Overflow"
+    }
+    moderately_exploited = {
+        "Privilege Escalation", "Information Disclosure", "SSRF", "XXE"
+    }
+    
+    if vuln_type in highly_exploited:
+        return "Proof of Concept (PoC) Available"
+    elif vuln_type in moderately_exploited:
+        return "PoC Availability Unknown"
+    return "Check Exploit-DB and Metasploit for latest PoCs"
+
+
+# ---------------------------------------------------------------------------
+# COMPLIANCE & REFERENCE MAPPING
+# ---------------------------------------------------------------------------
+
+_COMPLIANCE_MAPPING = {
+    "Information Disclosure":  ["PCI-DSS 6.5.10", "SOC2 CC7.2", "ISO27001 A.18.1"],
+    "Authentication Bypass":   ["PCI-DSS 6.5.10", "SOC2 CC6.2", "ISO27001 A.9.2"],
+    "SQL Injection":           ["PCI-DSS 6.5.1", "SOC2 CC7.2", "ISO27001 A.14.2"],
+    "XSS":                     ["PCI-DSS 6.5.1", "SOC2 CC7.2", "ISO27001 A.14.2"],
+    "RCE":                     ["PCI-DSS 6.5.2", "SOC2 CC7.2", "ISO27001 A.14.2"],
+    "Command Injection":       ["PCI-DSS 6.5.2", "SOC2 CC7.2", "ISO27001 A.14.2"],
+    "Buffer Overflow":         ["PCI-DSS 6.5.2", "SOC2 CC7.2", "ISO27001 A.14.2"],
+    "Path Traversal":          ["PCI-DSS 6.5.8", "SOC2 CC7.2", "ISO27001 A.14.2"],
+    "Open Redirect":           ["PCI-DSS 6.5.10", "SOC2 CC7.2", "ISO27001 A.14.2"],
+    "SSRF":                    ["PCI-DSS 6.5.10", "SOC2 CC7.2", "ISO27001 A.14.2"],
+    "DoS":                     ["PCI-DSS 6.5.10", "SOC2 CC7.1", "ISO27001 A.12.6"],
+    "Privilege Escalation":    ["PCI-DSS 6.5.10", "SOC2 CC6.1", "ISO27001 A.9.4"],
+    "XXE":                     ["PCI-DSS 6.5.1", "SOC2 CC7.2", "ISO27001 A.14.2"],
+    "Insecure Deserialization": ["PCI-DSS 6.5.2", "SOC2 CC7.2", "ISO27001 A.14.2"],
+    "Format String":           ["PCI-DSS 6.5.2", "SOC2 CC7.2", "ISO27001 A.14.2"],
+    "Use-After-Free":          ["PCI-DSS 6.5.2", "SOC2 CC7.2", "ISO27001 A.14.2"],
+    "Integer Overflow":        ["PCI-DSS 6.5.2", "SOC2 CC7.2", "ISO27001 A.14.2"],
+}
+
+_REMEDIATION_REFERENCES = {
+    "Information Disclosure":  ["https://owasp.org/www-community/Information_Exposure", "https://cheatsheetseries.owasp.org/cheatsheets/Insecure_Direct_Object_References_Cheat_Sheet.html"],
+    "Authentication Bypass":   ["https://owasp.org/www-community/attacks/Authentication_Bypass", "https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html"],
+    "SQL Injection":           ["https://owasp.org/www-community/attacks/SQL_Injection", "https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html"],
+    "XSS":                     ["https://owasp.org/www-community/attacks/xss/", "https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html"],
+    "RCE":                     ["https://owasp.org/www-community/attacks/Code_Injection", "https://cheatsheetseries.owasp.org/cheatsheets/Injection_Prevention_Cheat_Sheet.html"],
+    "Command Injection":       ["https://owasp.org/www-community/attacks/Command_Injection", "https://cheatsheetseries.owasp.org/cheatsheets/Injection_Prevention_Cheat_Sheet.html"],
+    "Buffer Overflow":         ["https://owasp.org/www-community/attacks/Buffer_Overflow", "https://cwe.mitre.org/data/definitions/120.html"],
+    "Path Traversal":          ["https://owasp.org/www-community/attacks/Path_Traversal", "https://cheatsheetseries.owasp.org/cheatsheets/Path_Traversal_Cheat_Sheet.html"],
+    "Open Redirect":           ["https://owasp.org/www-community/attacks/Open_Redirect", "https://cheatsheetseries.owasp.org/cheatsheets/Unvalidated_Redirects_and_Forwards_Cheat_Sheet.html"],
+    "SSRF":                    ["https://owasp.org/www-community/attacks/Server_Side_Request_Forgery", "https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html"],
+    "DoS":                     ["https://owasp.org/www-community/attacks/Denial_of_Service", "https://cheatsheetseries.owasp.org/cheatsheets/Denial_of_Service_Prevention_Cheat_Sheet.html"],
+    "Privilege Escalation":    ["https://owasp.org/www-community/attacks/Privilege_Escalation", "https://cheatsheetseries.owasp.org/cheatsheets/Access_Control_Cheat_Sheet.html"],
+    "XXE":                     ["https://owasp.org/www-community/attacks/XML_External_Entity", "https://cheatsheetseries.owasp.org/cheatsheets/XML_External_Entity_Prevention_Cheat_Sheet.html"],
+    "Insecure Deserialization": ["https://owasp.org/www-community/vulnerabilities/Deserialization_of_untrusted_data", "https://cheatsheetseries.owasp.org/cheatsheets/Deserialization_Cheat_Sheet.html"],
+    "Format String":           ["https://owasp.org/www-community/attacks/Format_string_attack", "https://cwe.mitre.org/data/definitions/134.html"],
+    "Use-After-Free":          ["https://owasp.org/www-community/attacks/Use_After_Free", "https://cwe.mitre.org/data/definitions/416.html"],
+    "Integer Overflow":        ["https://owasp.org/www-community/attacks/Integer_Overflow", "https://cwe.mitre.org/data/definitions/190.html"],
+}
+
+
 def enrich_cve(cve: dict, service: dict) -> dict:
     """Return a copy of the CVE dict with additional metadata fields."""
     summary      = cve.get("summary", "")
@@ -1179,12 +1303,17 @@ def enrich_cve(cve: dict, service: dict) -> dict:
         "cve_id":                cve["id"],
         "severity":              cve["severity"],
         "cvss_score":            cve.get("cvss_score", 0.0),
+        "cvss_vector":           _get_cvss_vector(severity, vuln_type),
+        "cwe_id":                _CWE_MAPPING.get(vuln_type, "See NVD for CWE information"),
+        "exploit_maturity":      _get_exploit_maturity(cve["id"], vuln_type),
         "product":               product,
         "version_affected":      version if version else "unknown",
         "version_range":         _infer_version_range(summary),
         "vulnerability_type":    vuln_type,
         "requires_auth":         requires_auth,
         "remote":                remote,
+        "compliance_controls":   _COMPLIANCE_MAPPING.get(vuln_type, ["See compliance frameworks"]),
+        "references":            _REMEDIATION_REFERENCES.get(vuln_type, ["https://nvd.nist.gov/", "https://owasp.org/"]),
         "safe_validation_method": _SAFE_VALIDATION.get(vuln_type, _SAFE_VALIDATION["Unknown"]),
         "proof_of_impact":       _PROOF_OF_IMPACT.get(vuln_type, _PROOF_OF_IMPACT["Unknown"]),
         "business_impact":       business_impact,
@@ -2074,27 +2203,76 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
 <h2>CVE Matches ({{ cve_matches|length }})</h2>
 {% if cve_matches %}
-<table>
-  <tr>
-    <th>CVE ID</th><th>Severity</th><th>Service</th><th>Type</th>
-    <th>Remote</th><th>Auth Required</th><th>Version Range</th>
-    <th>Safe Validation</th><th>Proof of Impact</th><th>Business Impact</th>
-  </tr>
+<div style="margin-bottom:2em">
   {% for c in cve_matches %}
-  <tr>
-    <td>{{ c.cve_id }}</td>
-    <td><span class="badge badge-{{ c.severity|lower }}">{{ c.severity }}</span></td>
-    <td>{{ c.service }}</td>
-    <td>{{ c.vulnerability_type }}</td>
-    <td>{{ "Yes" if c.remote else "No" }}</td>
-    <td>{{ "Yes" if c.requires_auth else "No" }}</td>
-    <td style="font-family:monospace;font-size:.85em">{{ c.version_range }}</td>
-    <td>{{ c.safe_validation_method }}</td>
-    <td>{{ c.proof_of_impact }}</td>
-    <td>{{ c.business_impact }}</td>
-  </tr>
+  <details style="margin-bottom:1.5em;border:1px solid #333;border-radius:6px;padding:1em;background:#16213e">
+    <summary style="cursor:pointer;font-weight:600;color:#00d4ff;font-size:1.05em">
+      {{ c.cve_id }} — {{ c.vulnerability_type }} on {{ c.service }}
+      <span class="badge badge-{{ c.severity|lower }}" style="margin-left:.5em">{{ c.severity|upper }}</span>
+    </summary>
+    
+    <div style="margin-top:1em;padding-top:1em;border-top:1px solid #333">
+      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:1.5em;margin-bottom:1.5em;font-size:.9em">
+        <div>
+          <strong style="color:#00d4ff">CVSS Score</strong><br>
+          <span style="font-size:1.3em;font-weight:700">{{ c.cvss_score }}</span>
+        </div>
+        <div>
+          <strong style="color:#00d4ff">CVSS Vector</strong><br>
+          <code style="background:#0d1117;padding:.3em .6em;border-radius:3px;font-size:.8em;word-break:break-all">{{ c.cvss_vector }}</code>
+        </div>
+        <div>
+          <strong style="color:#00d4ff">CWE</strong><br>
+          <span style="font-family:monospace">{{ c.cwe_id }}</span>
+        </div>
+        <div>
+          <strong style="color:#00d4ff">Exploit Maturity</strong><br>
+          {{ c.exploit_maturity }}
+        </div>
+      </div>
+
+      <div style="background:#0f3460;border-radius:4px;padding:1em;margin-bottom:1em">
+        <strong style="color:#00d4ff;display:block;margin-bottom:.5em">Exploitation Details</strong>
+        <div style="font-size:.9em;line-height:1.8;color:#ccc">
+          <div><span style="color:#00d4ff">Type:</span> {{ c.vulnerability_type }}</div>
+          <div><span style="color:#00d4ff">Remote:</span> {{ "Yes" if c.remote else "No" }}</div>
+          <div><span style="color:#00d4ff">Authentication Required:</span> {{ "Yes" if c.requires_auth else "No" }}</div>
+          <div><span style="color:#00d4ff">Affected Versions:</span> <code>{{ c.version_range }}</code></div>
+          <div style="margin-top:.5em"><span style="color:#00d4ff">Safe Validation Method:</span> <br><em>{{ c.safe_validation_method }}</em></div>
+          <div style="margin-top:.5em"><span style="color:#00d4ff">Proof of Impact:</span> <br><em>{{ c.proof_of_impact }}</em></div>
+        </div>
+      </div>
+
+      <div style="background:#0a2a0a;border-left:3px solid #4caf50;border-radius:0 4px 4px 0;padding:1em;margin-bottom:1em">
+        <strong style="color:#4caf50">Business Impact</strong>
+        <div style="margin-top:.5em;font-size:.95em">{{ c.business_impact }}</div>
+      </div>
+
+      {% if c.compliance_controls %}
+      <div style="background:#1a2a3a;border-left:3px solid #29b6f6;border-radius:0 4px 4px 0;padding:1em;margin-bottom:1em">
+        <strong style="color:#29b6f6">Compliance & Regulations</strong>
+        <div style="display:flex;flex-wrap:wrap;gap:.5em;margin-top:.5em;font-size:.9em">
+          {% for control in c.compliance_controls %}
+          <span style="background:#0f3460;padding:.4em .8em;border-radius:4px;border:1px solid #29b6f6">{{ control }}</span>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+
+      {% if c.references %}
+      <div>
+        <strong style="color:#00d4ff;display:block;margin-bottom:.5em">📚 References & Remediation</strong>
+        <ul style="margin:.5em 0;padding-left:1.5em;font-size:.9em">
+          {% for ref in c.references %}
+          <li style="margin:.3em 0"><a href="{{ ref }}" target="_blank" style="color:#29b6f6;text-decoration:none">{{ ref | truncate(80) }}</a></li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% endif %}
+    </div>
+  </details>
   {% endfor %}
-</table>
+</div>
 {% else %}<p>No CVE matches found.</p>{% endif %}
 
 <h2>Exploitation Validation</h2>
