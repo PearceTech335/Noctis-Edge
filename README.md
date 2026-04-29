@@ -249,7 +249,7 @@ After the main scan (and after `--msf-validate` if both are set):
 4. Scripts must print one of: `VERDICT: VULNERABLE`, `VERDICT: NOT_VULNERABLE`, `VERDICT: INCONCLUSIVE`
 5. Results are tallied into an overall per-CVE verdict and written into the reports
 
-**Knowledge Base**: Results are persisted in `cve_knowledge_base.json` in the project root. On future runs, previously successful scripts for the same CVE are passed back to the LLM as context, improving quality over time. Running `./update.sh` automatically submits this file to the community submissions repository (`PearceTech335/Noctis-Edge-Submissions`) via the Cloudflare relay — no token or account required.
+**Knowledge Base**: Results are persisted in `cve_knowledge_base.json` in the project root. On future runs, previously successful scripts for the same CVE are passed back to the LLM as context, improving quality over time. Running `./update.sh` automatically submits this file to the community repository via the Cloudflare relay — no token or account required.
 
 **Verdicts**:
 - `VULNERABLE` — at least 1 script returned VULNERABLE
@@ -381,11 +381,24 @@ This updates (in order):
 
 Noctis Edge accumulates CVE test results in `cve_knowledge_base.json` at the project root (created automatically on first `--cve-test` run). This file is machine-specific and anonymised — each entry is identified **only** by CVE ID; no target-specific information is recorded. This file is **not committed to the main git branch**.
 
-Each time you run `./update.sh`, the knowledge base is automatically submitted to the community submissions repository (`PearceTech335/Noctis-Edge-Submissions`) via a Cloudflare relay — no token or account required. Your installation ID (generated once by `./setup.sh` and stored in `noctis.conf`) is used only to rate-limit submissions (4 per day) and is never linked to personal data.
+Each time you run `./update.sh`, the knowledge base is automatically submitted to the community repository via a Cloudflare relay — no token or account required. Your installation ID (generated once by `./setup.sh` and stored in `noctis.conf`) is used only to rate-limit submissions (4 per day) and is never linked to personal data.
 
 ### How the relay works
 
-The Cloudflare Worker (`cloudflare/worker.js`) acts as a server-side relay: it holds the GitHub credentials and writes the submitted JSON to the submissions repository on your behalf. The source code is included in this repository for full transparency — you can audit exactly what is done with your data.
+The Cloudflare Worker (`cloudflare/worker.js`) acts as a server-side relay: it holds the GitHub credentials and writes the submitted JSON to the community repository on your behalf. The source code is included in this repository for full transparency — you can audit exactly what is done with your data.
+
+### Unlocking the Community Knowledge Base
+
+Subscribers receive access to the aggregated community CVE knowledge base — a curated collection of validated test scripts contributed by all Noctis Edge users. Once you have subscribed on [Polar.sh](https://polar.sh/PearceTech335) and received your license key:
+
+1. Open `noctis.conf` in your Noctis Edge install directory.
+2. Add or update the following line:
+   ```ini
+   KB_LICENSE_KEY=XXXX-XXXX-XXXX-XXXX
+   ```
+3. Run `./update.sh` — the community KB will be downloaded and merged into your local knowledge base automatically.
+
+The community KB is pulled on every subsequent `./update.sh` run as long as a valid key is present. No other configuration is required.
 
 ---
 
