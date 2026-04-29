@@ -166,7 +166,7 @@ Work through this after completing all steps above:
 - [x] `wrangler deploy` completed without errors
 - [x] Worker health check passes: `curl https://noctis-kb-relay.pearcetechnologies1.workers.dev/health`
 - [x] Invalid key rejected: `curl -X POST .../community-kb -d '{"license_key":"bad"}' -H 'Content-Type: application/json'` returns 403
-- [ ] Valid key accepted: same request with a real Polar key returns the community KB JSON
+- [x] Valid key accepted: same request with a real Polar key returns the community KB JSON
 - [x] `submissions-pipeline/` workflows appear in `Noctis-Edge-Submissions` Actions tab
 - [x] Pushing a test `.json` submission triggers the validate workflow
-- [ ] `update.sh` curl path works end-to-end with a valid `KB_LICENSE_KEY` in `noctis.conf`
+- [x] `update.sh` curl path works end-to-end with a valid `KB_LICENSE_KEY` in `noctis.conf`

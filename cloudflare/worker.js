@@ -224,7 +224,7 @@ async function handleCommunityKB(request, env) {
   }
 
   const polarData = await polarResp.json();
-  if (polarData?.granted !== true) {
+  if (polarData?.status !== "granted") {
     return jsonResp({
       error:   "key_not_granted",
       message: "License key is not active for this product. Subscribe at https://polar.sh/PearceTech335",

@@ -57,6 +57,8 @@ def main() -> None:
     new_scripts = 0
 
     for cve_id, community_entry in community_kb.items():
+        if not cve_id.startswith("CVE-"):
+            continue
         if cve_id not in local_kb:
             # Brand-new CVE — add the full entry
             local_kb[cve_id] = community_entry
