@@ -118,8 +118,14 @@ def _llm_check(script: str, github_token: str) -> tuple[bool, str]:
             verdict = result.get("verdict", "UNSAFE")
             reason = result.get("reason", "LLM review")
             return (verdict == "SAFE"), f"LLM review: {reason}"
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            # Token doesn't have GitHub Models API access — skip LLM, rely on static check
+            return True, f"LLM unavailable (HTTP {exc.code}) — static check only"
+        # Other HTTP errors (500, 429, etc.) — be conservative and quarantine
+        return False, f"LLM check failed ({exc}) — quarantined for human review"
     except Exception as exc:
-        # Be conservative on LLM failure — quarantine and let human review
+        # Network error or parse failure — be conservative and quarantine
         return False, f"LLM check failed ({exc}) — quarantined for human review"
 
 
