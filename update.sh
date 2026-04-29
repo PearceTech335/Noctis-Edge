@@ -199,7 +199,7 @@ else
     [[ -n "$KB_RELAY_URL" ]] && RELAY_ARGS+=("$KB_RELAY_URL")
     "$PYTHON" "$SCRIPT_DIR/scripts/submit_kb.py" "${RELAY_ARGS[@]}" \
         && ok "KB submission complete" \
-        || promo "KB submission failed — will retry on next update"
+        || err "KB submission failed — will retry on next update"
 fi
 
 # ── Pull community KB (subscribers only) ────────────────────────────────────────
