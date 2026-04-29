@@ -194,10 +194,17 @@ Pass one or more profile names after the target. Tools from all selected profile
 - Runs `nmap` against the target to discover open ports and services
 - Searches the offline CVE database (`CVE/cve-offline/cve-summary.csv`) for matches on each service
 
-### 2. LLM-Driven Scan Loop 
-The core loop asks the local Ollama LLM what to do next based on:
+### 2. LLM-Driven Scan — Phase 1 (Parallel)
+Immediately after Nmap, Noctis Edge performs a **parallel initial scan wave**:
+
+1. The LLM analyses all discovered services at once and returns a JSON array — one initial tool per service (e.g. `nikto` for HTTP, `ssh_enum` for SSH, `mysql_enum` for MySQL).
+2. All actions in the wave run concurrently via `asyncio.gather()`, bounded by `MAX_PARALLEL_ACTIONS` (default 4) to avoid overwhelming the target.
+3. Findings are enriched, verified, and auto-tagged before being passed into context for Phase 2.
+
+### 3. LLM-Driven Scan — Phase 2 (Sequential loop)
+The sequential loop continues deeper investigation, asking the LLM what to do next based on:
 - Target, profile, and discovered services
-- All findings collected so far
+- All findings collected in Phase 1 and so far in Phase 2
 - History of tools already run
 - List of disabled/broken tools
 
@@ -207,10 +214,12 @@ Noctis Edge executes the tool, parses structured findings from the output, and f
 Tools that time out with no findings or return error signals are auto-disabled for the session.
 In `SAFE` mode (default), aggressive tools (gobuster, ffuf, hydra) require operator approval before running.
 
-### 3. Finding Verification
-After each tool run, findings go through a verification pass that attempts to confirm they are real (e.g. re-requesting a discovered path to confirm it exists) rather than false positives.
+### 4. Finding Verification & Enrichment
+After each tool run (Phase 1 and Phase 2), findings go through:
+- **Verification** — re-requesting a discovered path to confirm it is real rather than a false positive.
+- **Metadata enrichment** — inferring `vuln_type` (e.g. RCE, SQLi, XSS), `cwe_id` (e.g. CWE-89), and applicable `compliance_controls` (PCI-DSS, SOC2, ISO 27001) using the existing internal mapping tables.
 
-### 4. Risk Scoring
+### 5. Risk Scoring
 Each finding is scored using:
 ```
 risk_score = severity_weight × confidence × exposure × tool_confidence
@@ -220,14 +229,20 @@ risk_score = severity_weight × confidence × exposure × tool_confidence
 - **exposure**: 1.2 if internet-facing, 1.0 internal
 - **tool_confidence**: per-tool weighting from the config
 
-### 5. Report Generation
+### 6. Report Generation
 After the scan loop, reports are saved to `sessions/<target>_<timestamp>/`:
 - `report_<target>.json` — full machine-readable report
 - `report_<target>.html` — styled HTML report with collapsible sections
 
-Reports include: executive summary, service inventory, findings table (severity-sorted), CVE matches, MSF validation results (if run), CVE test results (if run), and LLM-generated conclusion.
+Reports include:
+- **Executive Summary** — severity counts at a glance
+- **Compliance Impact** — badge chips for all implicated PCI-DSS / SOC2 / ISO 27001 controls, aggregated across findings and CVE matches
+- **Service Inventory** — discovered services with CVE badge links
+- **Findings** — expandable card per finding showing: severity, title, tool, risk score, verification status, vuln type, CWE, evidence, raw HTTP response (collapsible), command run, compliance controls, and clickable reference links
+- **CVE Matches** — detailed CVE cards with CVSS vector, exploit maturity, compliance controls, and remediation references
+- **MSF / CVE test results** (if run) and **LLM-generated conclusion**
 
-### 6. Session Persistence
+### 7. Session Persistence
 After each tool run the current state is saved to `sessions/<id>/session.json`. Use `--resume` to pick up where you left off after an interruption.
 
 ---
@@ -303,7 +318,8 @@ cve_knowledge_base.json           ← cross-engagement CVE test KB (project root
 |----------|---------|-------------|
 | `MODEL` | `qwen2.5-coder:3b-instruct` | Ollama model to use (set `NOCTIS_OLLAMA_MODEL` environment variable to override) |
 | `OLLAMA_URL` | `http://localhost:11434/api/generate` | Ollama API endpoint |
-| `MAX_ITERATIONS` | `10` | Max LLM scan loop iterations |
+| `MAX_ITERATIONS` | `10` | Max Phase 2 sequential loop iterations |
+| `MAX_PARALLEL_ACTIONS` | `4` | Max concurrent tools in the Phase 1 parallel wave |
 | `MAX_LLM_RETRIES` | `3` | LLM call retries per iteration |
 | `CVE_TEST_ATTEMPTS` | `5` | LLM script attempts per CVE in `--cve-test` |
 | `SAFE_MODE` | `True` | Require approval for aggressive tools (override with `--aggressive`) |

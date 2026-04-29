@@ -68,6 +68,7 @@ OLLAMA_TIMEOUT = int(os.getenv("NOCTIS_OLLAMA_TIMEOUT", "120"))   # seconds — 
 MAX_OUTPUT          = 3000
 MAX_ITERATIONS      = 10   # minimum base iteration count (used when few services found)
 MAX_ITERATIONS_CAP  = 40   # hard ceiling — loop can never exceed this regardless of findings
+MAX_PARALLEL_ACTIONS = int(os.getenv("NOCTIS_MAX_PARALLEL_ACTIONS", "4"))
 MAX_LLM_RETRIES     = 3
 SAFE_MODE       = True   # can also be used with --aggressive flag for aggressive scanning an enumeration
 AIRGAP_MODE     = True   # default on; --dns opts in to internet-dependent DNS enumeration tools
@@ -279,6 +280,9 @@ class Finding:
     template_id:         str  = ""
     cmd:                 str  = ""  # Full command string for transparency
     http_response:       str  = ""  # Raw HTTP response/headers for evidence
+    vuln_type:           str  = ""  # Inferred vulnerability type (e.g. RCE, XSS)
+    cwe_id:              str  = ""  # CWE identifier (e.g. CWE-89)
+    compliance_controls: list = field(default_factory=list)  # PCI-DSS, SOC2, ISO 27001
 
     def to_dict(self):
         return dataclasses.asdict(self)
@@ -423,6 +427,20 @@ def auto_tag(finding):
         if any(kw in combined for kw in keywords):
             tags.append(tag)
     return list(set(tags))
+
+
+def _enrich_finding_metadata(title: str, evidence: str, service: str):
+    """Return (vuln_type, cwe_id, compliance_controls) inferred from finding text.
+
+    All three dicts (_infer_vuln_type, _CWE_MAPPING, _COMPLIANCE_MAPPING) are
+    defined later in this module; Python resolves them at call time, not at
+    definition time, so forward references are safe.
+    """
+    text                = f"{title} {evidence} {service}"
+    vuln_type           = _infer_vuln_type(text)
+    cwe_id              = _CWE_MAPPING.get(vuln_type, "")
+    compliance_controls = list(_COMPLIANCE_MAPPING.get(vuln_type, []))
+    return vuln_type, cwe_id, compliance_controls
 
 
 def deduplicate_findings(findings):
@@ -1809,6 +1827,124 @@ Or if done:
     return {"tool": "none"}
 
 
+def query_llm_parallel(context, broken_tools=None, available_tools=None, used_actions=None):
+    """Phase-1 LLM call: plan ONE initial action per discovered service simultaneously.
+
+    Returns a validated, deduplicated list of action dicts.
+    Falls back to an empty list on LLM failure so the caller can continue
+    with the sequential loop.
+    """
+    if broken_tools    is None: broken_tools    = set()
+    if available_tools is None: available_tools = {}
+    if used_actions    is None: used_actions    = set()
+
+    # Reuse the same tool description format as query_llm
+    all_tool_descs = {
+        "curl":       'curl: {"url": "http://target:port/path", "method": "GET", "headers": {}}',
+        "nikto":      'nikto: {"url": "http://target:port", "ssl": false}',
+        "nuclei":     'nuclei: {"url": "http://target:port", "tags": "cve,lfi,sqli", "severity": "medium,high,critical"}',
+        "gobuster":   f'gobuster: {{"url": "http://target:port", "wordlist": "{WORDLIST}", "extensions": "php,html,txt", "follow_redirects": false}}',
+        "ffuf":       f'ffuf: {{"url": "http://target:port", "wordlist": "{WORDLIST}", "extensions": "php,html", "method": "GET", "match_codes": "200,301,302,401,403"}}',
+        "ssh_enum":   'ssh_enum: {"host": "...", "port": "22"}',
+        "rdp_enum":   'rdp_enum: {"host": "...", "port": "3389"}',
+        "dns_enum":   'dns_enum: {"domain": "..."}',
+        "mysql_enum": 'mysql_enum: {"host": "...", "port": "3306"}',
+        "mssql_enum": 'mssql_enum: {"host": "...", "port": "1433"}',
+    }
+
+    available_descs = []
+    for name, desc in all_tool_descs.items():
+        if name in broken_tools:
+            continue
+        if name == "ssh_enum"  and "ssh-audit" not in available_tools:
+            continue
+        if name == "rdp_enum"  and "rdpscan"   not in available_tools:
+            continue
+        available_descs.append(f"- {desc}")
+    tools_block = "\n".join(available_descs)
+
+    target   = context["target"]
+    services = context.get("services", [])
+    services_with_tools = [s for s in services if s.get("recommended_tools")]
+    if not services_with_tools:
+        return []
+
+    services_block = "\n".join(
+        f"  Port {s['port']}/{s.get('name', '')} (priority {s['priority']}): "
+        f"recommended={','.join(s['recommended_tools'])}"
+        + (f", CVEs={','.join(c['id'] for c in s.get('cves', []))}" if s.get('cves') else "")
+        for s in services_with_tools
+    )
+
+    prompt = f"""You are a penetration testing assistant.
+
+STRICT RULES:
+- Only respond in valid JSON — no prose, no markdown
+- Return EXACTLY ONE action per service listed
+- Use the first recommended tool for each service
+- Do NOT use any tool from ALREADY_RUN or DISABLED_TOOLS
+
+TARGET: {target}
+ALREADY_RUN: {sorted(used_actions)}
+DISABLED_TOOLS: {sorted(broken_tools)}
+
+AVAILABLE TOOLS:
+{tools_block}
+
+SERVICES (assign one tool per service):
+{services_block}
+
+Return a JSON object:
+{{"actions": [{{"tool": "<name>", "args": <value>}}, ...]}}
+
+If no actions are possible:
+{{"actions": []}}"""
+
+    _t0 = time.monotonic()
+    _sp  = _Spinner("[ LLM ]  Planning parallel initial scan ...").start()
+    try:
+        for attempt in range(MAX_LLM_RETRIES):
+            try:
+                response = requests.post(
+                    OLLAMA_URL,
+                    json={"model": MODEL, "prompt": prompt, "stream": False},
+                    timeout=OLLAMA_TIMEOUT,
+                )
+                payload = response.json()
+                if "error" in payload or "response" not in payload:
+                    continue
+                raw = payload["response"].strip()
+                if raw.startswith("```"):
+                    raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0]
+                data    = json.loads(raw.strip())
+                actions = data.get("actions", [])
+                if not isinstance(actions, list):
+                    continue
+                valid = []
+                seen  = set()
+                for action in actions:
+                    if not isinstance(action, dict):
+                        continue
+                    if not validate_action(action):
+                        continue
+                    key = f"{action['tool']}:{str(action.get('args', ''))}"
+                    if key in used_actions or key in seen:
+                        continue
+                    seen.add(key)
+                    valid.append(action)
+                if valid:
+                    return valid
+            except json.JSONDecodeError:
+                pass
+            except Exception as e:
+                print(f"[!] Parallel LLM error (attempt {attempt + 1}): {e}")
+    finally:
+        _sp.stop(f" done ({_fmt_dur(time.monotonic() - _t0)})")
+
+    print("[!] Parallel LLM planning returned no valid actions.")
+    return []
+
+
 # ---------------------------------------------------------------------------
 # ACTION VALIDATION
 # ---------------------------------------------------------------------------
@@ -2039,6 +2175,67 @@ async def execute_async(action, available_tools, session_dir=None):
     return "[!] Unknown tool", []
 
 
+async def run_parallel_wave(actions, available_tools, session_dir):
+    """Execute multiple tool actions concurrently, bounded by MAX_PARALLEL_ACTIONS.
+
+    Returns:
+        wave_results  : list of (action, output, findings, broken)
+        scan_records  : list of scan-record dicts (one per action)
+    """
+    if not actions:
+        return [], []
+
+    wave_results = []
+    scan_records = []
+
+    for i in range(0, len(actions), MAX_PARALLEL_ACTIONS):
+        batch = actions[i : i + MAX_PARALLEL_ACTIONS]
+        print(f"\n[+] Parallel wave: running {len(batch)} tool(s) concurrently ...")
+        for a in batch:
+            print(f"    {a['tool']:12} → {str(a.get('args', ''))[:70]}")
+
+        t0          = time.time()
+        raw_results = await asyncio.gather(
+            *[execute_async(a, available_tools, session_dir) for a in batch],
+            return_exceptions=True,
+        )
+        print(f"[+] Parallel wave complete in {time.time() - t0:.1f}s")
+
+        for action, result in zip(batch, raw_results):
+            tool = action["tool"]
+            args = action.get("args", "")
+
+            if isinstance(result, Exception):
+                output, findings = f"[!] Exception: {result}", []
+            else:
+                output, findings = result
+            output = output or ""
+            broken = is_tool_broken(output)
+
+            if findings and not broken:
+                for f in findings:
+                    if not f.vuln_type:
+                        f.vuln_type, f.cwe_id, f.compliance_controls = (
+                            _enrich_finding_metadata(f.title, f.evidence, f.service)
+                        )
+                findings = await verify_findings_batch(findings)
+                for f in findings:
+                    f.tags = list(set(f.tags + auto_tag(f)))
+
+            wave_results.append((action, output, findings, broken))
+            scan_records.append({
+                "tool":           tool,
+                "args":           args,
+                "cmd":            _describe_cmd(tool, args, available_tools),
+                "status":         "broken" if broken else "ok",
+                "output":         output[:400],
+                "findings_count": len(findings) if not broken else 0,
+                "phase":          "parallel-wave",
+            })
+
+    return wave_results, scan_records
+
+
 # ---------------------------------------------------------------------------
 # SESSION MANAGEMENT
 # ---------------------------------------------------------------------------
@@ -2171,6 +2368,16 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <div class="box"><div class="num low">{{ counts.low + counts.info }}</div><div>Low / Info</div></div>
 </div>
 
+{% if compliance_summary %}
+<h2>Compliance Impact</h2>
+<p style="color:#aaa;font-size:.9em;margin-bottom:1em">The following compliance controls are implicated by findings and CVEs identified in this assessment.</p>
+<div style="display:flex;flex-wrap:wrap;gap:.5em;margin-bottom:1.5em">
+  {% for ctrl in compliance_summary %}
+  <span style="background:#1a2a3a;border:1px solid #29b6f6;color:#29b6f6;padding:.45em 1em;border-radius:6px;font-size:.88em;font-weight:600">{{ ctrl }}</span>
+  {% endfor %}
+</div>
+{% endif %}
+
 <h2>Services Discovered</h2>
 <table>
   <tr><th>Port</th><th>Protocol</th><th>Service</th><th>Product / Version</th><th>Priority</th><th>CVEs</th></tr>
@@ -2185,20 +2392,60 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
 <h2>Findings ({{ findings|length }})</h2>
 {% if findings %}
-<table>
-  <tr><th>Severity</th><th>Title</th><th>Tool</th><th>Service</th><th>Confidence</th><th>Risk</th><th>Status</th><th>Tags</th><th>Evidence</th></tr>
+<div>
   {% for f in findings %}
-  <tr>
-    <td><span class="badge badge-{{ f.severity }}">{{ f.severity|upper }}</span></td>
-    <td>{{ f.title }}</td><td>{{ f.tool }}</td><td>{{ f.service }}</td>
-    <td>{{ "%.0f%%"|format(f.confidence * 100) }}</td>
-    <td>{{ "%.2f"|format(f.risk_score) }}</td>
-    <td class="{{ 'ok' if f.verified else 'pend' }}">{{ f.verification_status }}</td>
-    <td>{% for t in f.tags %}<span class="tag">{{ t }}</span>{% endfor %}</td>
-    <td><div class="ev">{{ f.evidence[:200] }}</div></td>
-  </tr>
+  <details style="margin-bottom:.8em;border:1px solid {% if f.severity == 'critical' %}#ff4757{% elif f.severity == 'high' %}#ff6b35{% elif f.severity == 'medium' %}#ffa502{% elif f.severity == 'low' %}#2ed573{% else %}#70a1ff{% endif %};border-radius:6px;background:#16213e">
+    <summary style="padding:10px 14px;cursor:pointer;display:flex;flex-wrap:wrap;align-items:center;gap:8px;list-style:none">
+      <span class="badge badge-{{ f.severity }}">{{ f.severity|upper }}</span>
+      <span style="font-weight:600;flex:1;min-width:180px">{{ f.title }}</span>
+      <span style="color:#aaa;font-size:.82em">{{ f.tool }}</span>
+      <span style="color:#888;font-size:.82em">{{ f.service }}</span>
+      <span style="color:#aaa;font-size:.82em">Risk:&nbsp;<strong>{{ "%.2f"|format(f.risk_score) }}</strong></span>
+      <span class="{{ 'ok' if f.verified else 'pend' }}" style="font-size:.82em">{{ f.verification_status }}</span>
+    </summary>
+    <div style="padding:12px 16px;border-top:1px solid #0f3460">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:.8em;margin-bottom:1em;font-size:.88em">
+        <div><strong style="color:#00d4ff">Confidence</strong><br>{{ "%.0f%%"|format(f.confidence * 100) }}</div>
+        {% if f.vuln_type %}<div><strong style="color:#00d4ff">Vuln Type</strong><br>{{ f.vuln_type }}</div>{% endif %}
+        {% if f.cwe_id %}<div><strong style="color:#00d4ff">CWE</strong><br><span style="font-family:monospace;font-size:.92em">{{ f.cwe_id }}</span></div>{% endif %}
+        {% if f.tags %}<div><strong style="color:#00d4ff">Tags</strong><br>{% for t in f.tags %}<span class="tag">{{ t }}</span>{% endfor %}</div>{% endif %}
+      </div>
+      <div style="margin-bottom:.8em">
+        <strong style="color:#00d4ff;display:block;margin-bottom:.3em">Evidence</strong>
+        <div class="ev">{{ f.evidence[:400] }}</div>
+      </div>
+      {% if f.http_response %}
+      <details style="margin-bottom:.8em">
+        <summary style="cursor:pointer;color:#90caf9;font-size:.88em">&#9654; Raw HTTP Response</summary>
+        <div class="ev" style="margin-top:.4em">{{ f.http_response[:600] }}</div>
+      </details>
+      {% endif %}
+      {% if f.cmd %}
+      <div style="margin-bottom:.8em">
+        <strong style="color:#00d4ff;display:block;margin-bottom:.3em">Command</strong>
+        <code style="background:#0d1117;padding:.4em .7em;border-radius:4px;font-size:.78em;word-break:break-all;display:block;white-space:pre-wrap">{{ f.cmd }}</code>
+      </div>
+      {% endif %}
+      {% if f.compliance_controls %}
+      <div style="margin-bottom:.8em">
+        <strong style="color:#29b6f6;display:block;margin-bottom:.3em">Compliance Controls</strong>
+        <div style="display:flex;flex-wrap:wrap;gap:.4em">
+          {% for ctrl in f.compliance_controls %}<span style="background:#0f3460;color:#29b6f6;padding:.3em .6em;border-radius:4px;font-size:.78em;border:1px solid #29b6f6">{{ ctrl }}</span>{% endfor %}
+        </div>
+      </div>
+      {% endif %}
+      {% if f.references %}
+      <div>
+        <strong style="color:#00d4ff;display:block;margin-bottom:.3em">References</strong>
+        <ul style="margin:.3em 0;padding-left:1.2em;font-size:.85em">
+          {% for ref in f.references %}<li style="margin:.2em 0"><a href="{{ ref }}" target="_blank" style="color:#29b6f6;text-decoration:none">{{ ref | truncate(80) }}</a></li>{% endfor %}
+        </ul>
+      </div>
+      {% endif %}
+    </div>
+  </details>
   {% endfor %}
-</table>
+</div>
 {% else %}<p>No findings detected.</p>{% endif %}
 
 <h2>CVE Matches ({{ cve_matches|length }})</h2>
@@ -2520,6 +2767,17 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
         if r.get("tool") and r["tool"] != "none"
     ]
 
+    # Aggregate unique compliance controls from findings and CVE matches
+    compliance_summary = list(dict.fromkeys(
+        ctrl
+        for f in all_findings
+        for ctrl in (f.compliance_controls if hasattr(f, "compliance_controls") else [])
+    ))
+    for c in cve_matches:
+        for ctrl in c.get("compliance_controls", []):
+            if ctrl not in compliance_summary:
+                compliance_summary.append(ctrl)
+
     return {
         "target":        target,
         "profile":       profile,
@@ -2534,6 +2792,7 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
         "cve_test_results": [],
         "msf_validation": [],
         "target_info":   target_info.to_dict() if target_info else {},
+        "compliance_summary": compliance_summary,
     }
 
 
@@ -3700,6 +3959,47 @@ async def main_async():
     scan_records = [{"tool": "nmap", "args": target, "cmd": f"nmap -Pn -T5 --open -oX - {target}", "status": "ok", "findings_count": 0}]
     all_findings = []
     used_actions: set = set()  # deduplicate tool+args combos
+
+    # ---------------------------------------------------------------------------
+    # Phase 1 — Parallel initial scan (one tool per service, all concurrent)
+    # ---------------------------------------------------------------------------
+    if not (resume and resume_state):
+        print(f"\n{'=' * 52}")
+        print("  Phase 1 — Parallel Initial Scan")
+        print(f"{'=' * 52}")
+        initial_actions = query_llm_parallel(context, broken_tools, available_tools, used_actions)
+        if initial_actions:
+            print(f"[+] LLM planned {len(initial_actions)} parallel action(s):")
+            for a in initial_actions:
+                print(f"    {a['tool']:12} → {str(a.get('args', ''))[:70]}")
+            wave_results, wave_records = await run_parallel_wave(
+                initial_actions, available_tools, session_dir
+            )
+            for action, output, findings, broken in wave_results:
+                tool = action["tool"]
+                args = action.get("args", "")
+                used_actions.add(f"{tool}:{str(args)}")
+                if broken:
+                    broken_tools.add(tool)
+                    print(f"[!] '{tool}' appears broken — disabling for this session.")
+                else:
+                    preview = output[:300].replace("\n", " | ")
+                    print(f"\n[>] {tool}: {preview}")
+                    if findings:
+                        print(f"[+] {len(findings)} finding(s) from {tool}")
+                        all_findings.extend(findings)
+                        context["findings"] = [dataclasses.asdict(f) for f in all_findings[-5:]]
+                context["history"].append({
+                    "action":   action,
+                    "result":   output[:300],
+                    "findings": len(findings) if not broken else 0,
+                })
+            scan_records.extend(wave_records)
+            phase1_count = sum(r.get("findings_count", 0) for r in wave_records)
+            print(f"\n[+] Phase 1 complete — {len(wave_records)} tool(s) run, {phase1_count} finding(s)")
+        else:
+            print("[!] Phase 1 returned no actions — proceeding to sequential loop.")
+
     loop_start = time.monotonic()
 
     # Dynamic iteration budget: at least MAX_ITERATIONS, one slot per service, capped hard
@@ -3776,6 +4076,11 @@ async def main_async():
 
         # Verification stage
         if findings and not broken:
+            for f in findings:
+                if not f.vuln_type:
+                    f.vuln_type, f.cwe_id, f.compliance_controls = _enrich_finding_metadata(
+                        f.title, f.evidence, f.service
+                    )
             findings = await verify_findings_batch(findings)
             all_findings.extend(findings)
             for f in findings:
