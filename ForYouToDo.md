@@ -12,7 +12,8 @@ or one-time token generation. Complete them in order before testing the paid tie
 1. Go to https://github.com/PearceTech335/Noctis-Edge-KB
 2. Settings → General → Danger Zone → **Change repository visibility** → **Private**
 3. Confirm the change.
-
+RESULT:
+-Confirmed - this is private
 ---
 
 ### Step 2 · Create a fine-grained PAT for the GitHub Actions pipeline (`KB_PUSH_TOKEN`)
@@ -33,7 +34,8 @@ into the private `Noctis-Edge-KB` repo.
 6. Click **Generate token** and copy the value.
 7. Go to https://github.com/PearceTech335/Noctis-Edge-Submissions/settings/secrets/actions
 8. Click **New repository secret**, name it `KB_PUSH_TOKEN`, paste the token, and save.
-
+Result:
+-All steps completed
 ---
 
 ### Step 3 · Create a read-only PAT for the Cloudflare Worker (`GITHUB_KB_TOKEN`)
@@ -56,7 +58,8 @@ This token is used by the Cloudflare Worker to read `community_kb.json` from
    wrangler secret put GITHUB_KB_TOKEN
    # Paste the token when prompted
    ```
-
+Result:
+-Done and Secret PAT uploaded to Cloudfare
 ---
 
 ## Phase 2 — Push the submissions pipeline to Noctis-Edge-Submissions
@@ -82,7 +85,7 @@ git add scripts/ .github/
 git commit -m "feat: add submission validation and community KB build pipeline"
 git push origin main
 ```
-
+Result: Done
 ---
 
 ## Phase 3 — Polar.sh product and license configuration
@@ -135,7 +138,8 @@ wrangler secret put POLAR_ORGANIZATION_ID
 # Redeploy the Worker (includes the new /community-kb route)
 wrangler deploy
 ```
-
+Result: 
+-Done
 ---
 
 ## Phase 4 — User-facing: set KB_LICENSE_KEY in noctis.conf
@@ -155,14 +159,14 @@ Once a user subscribes on Polar.sh and receives their license key:
 
 Work through this after completing all steps above:
 
-- [ ] `Noctis-Edge-KB` repository is **private** on GitHub
-- [ ] `KB_PUSH_TOKEN` secret is set on `Noctis-Edge-Submissions`
-- [ ] `GITHUB_KB_TOKEN` Cloudflare secret is set
-- [ ] `POLAR_ORG_ACCESS_TOKEN` and `POLAR_ORGANIZATION_ID` Cloudflare secrets are set
-- [ ] `wrangler deploy` completed without errors
-- [ ] Worker health check passes: `curl https://noctis-kb-relay.pearcetechnologies1.workers.dev/health`
-- [ ] Invalid key rejected: `curl -X POST .../community-kb -d '{"license_key":"bad"}' -H 'Content-Type: application/json'` returns 403
+- [x] `Noctis-Edge-KB` repository is **private** on GitHub
+- [x] `KB_PUSH_TOKEN` secret is set on `Noctis-Edge-Submissions`
+- [x] `GITHUB_KB_TOKEN` Cloudflare secret is set
+- [x] `POLAR_ORG_ACCESS_TOKEN` and `POLAR_ORGANIZATION_ID` Cloudflare secrets are set
+- [x] `wrangler deploy` completed without errors
+- [x] Worker health check passes: `curl https://noctis-kb-relay.pearcetechnologies1.workers.dev/health`
+- [x] Invalid key rejected: `curl -X POST .../community-kb -d '{"license_key":"bad"}' -H 'Content-Type: application/json'` returns 403
 - [ ] Valid key accepted: same request with a real Polar key returns the community KB JSON
-- [ ] `submissions-pipeline/` workflows appear in `Noctis-Edge-Submissions` Actions tab
-- [ ] Pushing a test `.json` submission triggers the validate workflow
+- [x] `submissions-pipeline/` workflows appear in `Noctis-Edge-Submissions` Actions tab
+- [x] Pushing a test `.json` submission triggers the validate workflow
 - [ ] `update.sh` curl path works end-to-end with a valid `KB_LICENSE_KEY` in `noctis.conf`
