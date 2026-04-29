@@ -50,6 +50,9 @@ PROFILE_DESCRIPTIONS = {
     "cloud":       "Cloud Exposure Review — curl, nuclei, dns_enum",
 }
 
+# Regex to strip ANSI/VT100 escape sequences from PTY output before sending to browser
+_ANSI_RE = re.compile(r'\x1b(?:\[[0-9;]*[mGKHFABCDJr]|\([AB]|[^[\(])')
+
 FLAGS = [
     ("--aggressive",   "Disable safe-mode: run gobuster / ffuf / hydra without approval"),
     ("--dns-enum",     "Enable DNS enumeration tools — requires internet"),
@@ -109,13 +112,16 @@ def _pty_reader_thread(proc: subprocess.Popen, master_fd: int):
                 while b"\n" in buf:
                     line_bytes, buf = buf.split(b"\n", 1)
                     line = line_bytes.decode("utf-8", errors="replace").rstrip("\r")
+                    line = _ANSI_RE.sub("", line)
                     if line:
                         _broadcast({"type": "line", "text": line})
-                # Flush partial lines (spinner frames / sudo prompt lacks newline)
+                # Flush partial line as spinner (sudo prompt has no newline)
                 if buf:
                     partial = buf.decode("utf-8", errors="replace").rstrip("\r")
+                    partial = _ANSI_RE.sub("", partial)
                     if partial:
                         _broadcast({"type": "spinner", "text": partial})
+                    buf = b""  # clear so next chunk starts fresh, not prepended with spinner text
             else:
                 if proc.poll() is not None:
                     break
@@ -123,6 +129,7 @@ def _pty_reader_thread(proc: subprocess.Popen, master_fd: int):
         pass
     if buf.strip(b"\r\n"):
         line = buf.decode("utf-8", errors="replace").rstrip()
+        line = _ANSI_RE.sub("", line)
         if line:
             _broadcast({"type": "line", "text": line})
     proc.wait()
@@ -248,7 +255,8 @@ def api_input():
     if mfd is not None:
         try:
             os.write(mfd, (text + "\n").encode())
-            _broadcast({"type": "line", "text": f"> {text}"})
+            # Don't echo raw text — it may be a sudo password; show a redacted marker
+            _broadcast({"type": "line", "text": "> [input sent]"})
             return jsonify({"ok": True})
         except OSError:
             return jsonify({"ok": False, "error": "Process has exited"}), 409
