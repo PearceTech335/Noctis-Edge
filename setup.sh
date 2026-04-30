@@ -230,10 +230,10 @@ else
     if sudo apt install -y netexec 2>/dev/null && command -v nxc &>/dev/null; then
         ok "NetExec installed via apt"
     else
-        # Ubuntu/Debian: pipx is the recommended install method for netexec
-        info "Using pipx to install NetExec (works on Ubuntu/Debian) ..."
+        # netexec is not on PyPI — install from source via pipx
+        info "Using pipx to install NetExec from GitHub source ..."
         sudo apt install -y pipx 2>/dev/null || true
-        if pipx install netexec 2>/dev/null; then
+        if pipx install "git+https://github.com/Pennyw0rth/NetExec" 2>/dev/null; then
             pipx ensurepath 2>/dev/null || true
             ok "NetExec installed via pipx (~/.local/bin/nxc)"
         else
@@ -254,17 +254,10 @@ CVE_DIR="$SCRIPT_DIR/CVE/cve-offline"
 if [[ -d "$CVE_DIR" && -f "$CVE_DIR/updatecsv.sh" ]]; then
     skip "CVE/cve-offline already present — skipping (run ./update.sh to refresh)"
 else
-    info "Cloning CVE offline database ..."
+    info "Building CVE database from trickest/cve source ..."
     mkdir -p "$SCRIPT_DIR/CVE"
-
-    if git clone --depth=1 "$CVE_OFFLINE_ACTUAL" "$CVE_DIR" 2>/dev/null; then
-        ok "CVE/cve-offline cloned"
-    else
-        err "Could not clone $CVE_OFFLINE_ACTUAL"
-        err "Clone the CVE offline repo manually into CVE/cve-offline/ then run:"
-        err "  cd CVE/cve-offline && ./updatecsv.sh"
-        CVE_DIR=""
-    fi
+    # trickest/cve-offline was retired — build the CSV directly from trickest/cve
+    CVE_DIR=""
 fi
 
 build_cve_fallback_csv() {

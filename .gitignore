@@ -19,7 +19,8 @@ cve_knowledge_base.json
 # CVE database (57 MB CSV — regenerate with CVE/cve-offline/updatecsv.sh)
 CVE/cve-offline/cve-summary.csv
 
-# Embedded git repos — tracked separately, not as submodules
+# Embedded git repos — cloned at runtime by setup.sh, not tracked
+CVE/cve/
 CVE/cve-offline/
 
 
