@@ -43,52 +43,72 @@ This architecture makes Noctis Edge particularly suited for regulated environmen
 
 ---
 
-## Docker (Windows / macOS / Linux)
+## Installation
 
-The fastest way to run Noctis Edge on any OS — no manual tool installation required.
+Two installation paths are available — choose whichever suits your environment. Both paths provide identical functionality.
 
-**Requirements:** [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Windows or macOS) or Docker Engine + Docker Compose (Linux).
+| | Docker | Native Linux |
+|---|---|---|
+| **OS** | Windows, macOS, Linux | Kali, Parrot, Ubuntu, Debian |
+| **Setup time** | ~10 min (first build) | ~15 min |
+| **Dependencies** | Docker Desktop only | apt + snap + Go + Ollama |
+| **Isolation** | Full container isolation | System-level install |
+| **Updates** | `docker compose build` + `pull` | `./update.sh` |
+
+---
+
+### Option A — Docker (Windows / macOS / Linux)
+
+**Requirements:** [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Windows or macOS) or Docker Engine + Compose plugin (Linux).
 
 ```bash
-# Clone the repo
+# 1. Clone the repo
 git clone https://github.com/PearceTech335/Noctis-Edge.git
 cd Noctis-Edge
+```
 
-# Linux / macOS — one-shot launcher:
+**Linux / macOS:**
+```bash
 chmod +x docker-run.sh
 ./docker-run.sh
+```
 
-# Windows (PowerShell) — one-shot launcher:
+**Windows (PowerShell):**
+```powershell
 .\docker-run.ps1
 ```
 
-The launcher script (choose your OS):
+The launcher script handles everything automatically:
 1. Pulls the latest source (`git pull`)
-2. Builds the Docker image (tools + CVE database baked in — ~5–10 min first time)
-3. Starts the Ollama sidecar and downloads the LLM model (~1.9 GB, one-time)
+2. Builds the Docker image — all scanning tools and the offline CVE database are baked in (~5–10 min first build; cached on subsequent runs)
+3. Starts the Ollama sidecar and downloads the LLM model (~1.9 GB, one-time, stored in a Docker volume)
 4. Starts the Noctis Edge Web UI
 
-Open **http://localhost:5000** in your browser.
+Open **http://localhost:5000** in your browser — no further configuration needed.
 
+**Useful Docker commands:**
 ```bash
-# CLI scan (without web UI):
+# Run a CLI scan (no web UI):
 docker compose run --rm noctis scan 192.168.0.1
 docker compose run --rm noctis scan 192.168.0.1 web --cve-test
 
-# Stop everything:
+# Stop all containers:
 docker compose down
 
-# View logs:
+# View live logs:
 docker compose logs -f noctis
+
+# Rebuild after a git pull:
+docker compose build && docker compose up -d
 ```
 
-> **Network scanning note:** nmap inside Docker can reach targets on your local network. On Windows/macOS Docker Desktop runs in a VM — scanning your host machine uses `host.docker.internal` instead of `127.0.0.1`.
+> **Network scanning note:** nmap inside Docker can reach targets on your local network. On Windows/macOS, Docker Desktop runs inside a VM — to scan the host machine itself use `host.docker.internal` instead of `127.0.0.1`.
 
 > **GPU acceleration (optional):** Uncomment the `deploy.resources` block in `docker-compose.yml` to route Ollama inference through an NVIDIA GPU (requires `nvidia-container-toolkit` on the host).
 
 ---
 
-## Native Linux Setup (new install)
+### Option B — Native Linux Setup
 
 > Full manual setup instructions: [Readme/requirements.md](Readme/requirements.md)
 
@@ -130,6 +150,23 @@ Run `./update.sh` to keep all components current.
 
 ### Command Line
 
+**Docker:**
+```bash
+# Standard web scan:
+docker compose run --rm noctis scan 192.168.0.1
+
+# With profile and flags:
+docker compose run --rm noctis scan 192.168.0.1 web --cve-test
+docker compose run --rm noctis scan 192.168.0.1 web external --aggressive
+
+# Full aggressive run:
+docker compose run --rm noctis scan 192.168.0.1 --aggressive --msf-validate --cve-test
+
+# Resume an interrupted scan:
+docker compose run --rm noctis scan 192.168.0.1 --resume
+```
+
+**Native Linux:**
 ```bash
 # Standard web scan:
 ./noctis.py 192.168.0.1
@@ -145,9 +182,6 @@ Run `./update.sh` to keep all components current.
 
 # With CVE test scripts:
 ./noctis.py 192.168.0.1 web --cve-test
-
-# No internet / DNS enumeration not needed (default — no flag required):
-./noctis.py 192.168.0.1
 
 # Opt in to DNS enumeration (requires internet):
 ./noctis.py 192.168.0.1 --dns-enum
