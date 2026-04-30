@@ -32,14 +32,15 @@ This architecture makes Noctis Edge particularly suited for regulated environmen
 
 | Item | Size |
 |------|------|
-| Ollama LLM model (`Qwen2.5-Coder-3B-Instruct`) | ~1.9 GB |
+| Ollama model — `qwen2.5-coder:3b-instruct` (tool planning & script generation) | ~1.9 GB |
+| Ollama model — `llama3.2:3b` (report writing) | ~2.0 GB |
 | Nuclei templates | ~1.5 GB |
 | CVE offline database (built by `setup.sh`) | ~3–5 GB |
 | SecLists wordlists (snap) | ~2 GB |
 | Tool binaries + Python venv | ~1 GB |
 | Scan session outputs | Variable |
 
-> **RAM note:** The Qwen2.5-Coder-3B model requires ~2 GB of RAM to load and is optimized for code analysis and security testing. Inference is typically 2–5 seconds on modern hardware. 8 GB RAM is sufficient; 16 GB+ recommended for parallel processing.
+> **RAM note:** Two models run concurrently — `qwen2.5-coder:3b-instruct` (~2 GB RAM) for tool planning and script generation, and `llama3.2:3b` (~2 GB RAM) for report writing. Combined RAM footprint is ~4 GB for model inference. 8 GB RAM is sufficient; 16 GB+ recommended for parallel processing.
 
 ---
 
@@ -129,7 +130,7 @@ chmod +x setup.sh
 | apt packages | `nmap`, `curl`, `gobuster`, `ffuf`, `hydra`, `ssh-audit`, `dnsenum`, `dnsrecon`, `perl`, `golang-go`, `python3-tk`, and more |
 | SecLists | Wordlists via `snap install seclists` |
 | Nuclei | Go-based template scanner (`~/go/bin/nuclei`) |
-| Ollama | Local LLM server + pulls `qwen2.5-coder:3b-instruct` |
+| Ollama | Local LLM server + pulls `qwen2.5-coder:3b-instruct` (scan engine) and `llama3.2:3b` (report writing) |
 | Python venv | `.venv/` with `requests`, `jinja2`, `pycryptodome`, `flask`, `flask-sock` |
 | CVE database | Clones `CVE/cve-offline/` and builds `cve-summary.csv` |
 | rdpscan | Clones `rdpscan/` helper |
@@ -395,7 +396,8 @@ cve_knowledge_base.json           ← cross-engagement CVE test KB (project root
 
 | Constant | Default | Description |
 |----------|---------|-------------|
-| `MODEL` | `qwen2.5-coder:3b-instruct` | Ollama model to use (set `NOCTIS_OLLAMA_MODEL` environment variable to override) |
+| `MODEL` | `qwen2.5-coder:3b-instruct` | Model for tool planning & script generation (`NOCTIS_OLLAMA_MODEL` env var to override) |
+| `REPORT_MODEL` | `llama3.2:3b` | Model for report prose — conclusion + remediation (`NOCTIS_REPORT_MODEL` env var to override) |
 | `OLLAMA_URL` | `http://localhost:11434/api/generate` | Ollama API endpoint |
 | `MAX_ITERATIONS` | `10` | Max Phase 2 sequential loop iterations |
 | `MAX_PARALLEL_ACTIONS` | `4` | Max concurrent tools in the Phase 1 parallel wave |
@@ -433,7 +435,7 @@ Install notes: see [Readme/requirements.md](Readme/requirements.md).
 
 ## Ollama Setup
 
-Noctis Edge requires Ollama. `setup.sh` installs it and pulls the model automatically.
+Noctis Edge requires Ollama. `setup.sh` installs it and pulls both models automatically.
 
 `noctis.py` will **automatically start `ollama serve`** if it is not already running — no manual step needed.
 
@@ -443,11 +445,19 @@ Manual install (if not using `setup.sh`):
 # Install Ollama:
 curl -fsSL https://ollama.com/install.sh | sh
 
-# Pull the model:
-ollama pull qwen2.5-coder:3b-instruct
+# Pull both models:
+ollama pull qwen2.5-coder:3b-instruct   # tool planning, script generation, CVE test scripts
+ollama pull llama3.2:3b                 # report writing (conclusion + remediation guidance)
 ```
 
-Ollama will be started automatically by `noctis.py` on first use. The lightweight 3B model provides fast inference — typically 2–5 seconds per LLM call on modern hardware. The program prints a spinner while waiting.
+Ollama will be started automatically by `noctis.py` on first use. Both models are lightweight 3B variants — inference is typically 2–5 seconds per LLM call on modern hardware. The program prints a spinner while waiting.
+
+### Model roles
+
+| Model | Environment variable | Purpose |
+|-------|---------------------|---------|
+| `qwen2.5-coder:3b-instruct` | `NOCTIS_OLLAMA_MODEL` | Agentic tool decisions, scan planning, CVE exploit scripts, test scripts, verification scripts |
+| `llama3.2:3b` | `NOCTIS_REPORT_MODEL` | Report conclusion paragraph, CVE remediation guidance |
 
 ---
 
@@ -467,7 +477,7 @@ This updates (in order):
 | 2 | SecLists (snap) refreshed |
 | 3 | pip dependencies upgraded |
 | 4 | Nuclei binary + templates updated |
-| 5 | Ollama model pulled |
+| 5 | Both Ollama models pulled (`qwen2.5-coder:3b-instruct` + `llama3.2:3b`) |
 | 6 | CVE offline database pulled + CSV rebuilt |
 | 7 | Noctis Edge repository (`git pull`) |
 | 8 | CVE Knowledge Base submitted to the community relay |

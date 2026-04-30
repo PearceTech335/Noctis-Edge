@@ -12,6 +12,7 @@ set -euo pipefail
 export GIT_TERMINAL_PROMPT=0
 
 OLLAMA_MODEL="qwen2.5-coder:3b-instruct"
+OLLAMA_REPORT_MODEL="llama3.2:3b"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Load per-user configuration (tokens, UUID, paid-tier flag)
@@ -118,22 +119,28 @@ fi
 # =============================================================================
 # 5. Ollama — model refresh
 # =============================================================================
-header "5/7  Ollama model ($OLLAMA_MODEL)"
+header "5/7  Ollama models"
 if command -v ollama &>/dev/null; then
     # Check if server is running; if not, start it temporarily
     if curl -s --max-time 3 http://localhost:11434/api/tags &>/dev/null; then
-        info "Ollama server is running — pulling latest model ..."
+        info "Ollama server is running — pulling latest models ..."
         ollama pull "$OLLAMA_MODEL" \
-            && ok "Ollama model up to date" \
-            || err "Ollama model pull failed"
+            && ok "$OLLAMA_MODEL up to date" \
+            || err "$OLLAMA_MODEL pull failed"
+        ollama pull "$OLLAMA_REPORT_MODEL" \
+            && ok "$OLLAMA_REPORT_MODEL up to date" \
+            || err "$OLLAMA_REPORT_MODEL pull failed"
     else
         info "Ollama server not running — starting temporarily ..."
         ollama serve &>/dev/null &
         OLLAMA_PID=$!
         sleep 5
         ollama pull "$OLLAMA_MODEL" \
-            && ok "Ollama model up to date" \
-            || err "Ollama model pull failed"
+            && ok "$OLLAMA_MODEL up to date" \
+            || err "$OLLAMA_MODEL pull failed"
+        ollama pull "$OLLAMA_REPORT_MODEL" \
+            && ok "$OLLAMA_REPORT_MODEL up to date" \
+            || err "$OLLAMA_REPORT_MODEL pull failed"
         kill "$OLLAMA_PID" 2>/dev/null || true
     fi
 else
