@@ -200,6 +200,19 @@ docker compose run --rm noctis scan 192.168.0.1 --resume
 
 A browser-based front-end is available for users who prefer to interact via a web browser. It features a VS Code dark colour scheme, profile and flag controls, and live terminal output streamed in real time via WebSocket.
 
+**Docker:**
+```bash
+# Start the Web UI (runs in background, Web UI starts automatically):
+./docker-run.sh          # Linux / macOS
+.\docker-run.ps1         # Windows (PowerShell)
+
+# Then open in your browser:
+#   http://localhost:5000
+```
+
+> The `docker-run` script starts both Ollama and the Web UI automatically. Just wait for the terminal to settle and open your browser — no extra steps needed.
+
+**Native Linux:**
 ```bash
 ./noctis_web.py
 # Then open: http://127.0.0.1:5000
