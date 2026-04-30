@@ -60,7 +60,7 @@ SESSION_FILE = os.path.join(BASE_DIR, "session.json")
 OLLAMA_URL     = os.getenv("NOCTIS_OLLAMA_URL", "http://localhost:11434/api/generate")
 # Code/JSON tasks — tool planning, script generation, CVE test scripts
 MODEL          = os.getenv("NOCTIS_OLLAMA_MODEL", "qwen2.5-coder:3b-instruct")
-# Report prose — conclusion text; general-instruct model follows natural-language instructions cleanly
+# Report prose — conclusion + remediation guidance; general-instruct model follows natural-language instructions cleanly
 REPORT_MODEL   = os.getenv("NOCTIS_REPORT_MODEL", "llama3.2:3b")
 OLLAMA_TIMEOUT = int(os.getenv("NOCTIS_OLLAMA_TIMEOUT", "120"))   # seconds — 3B model is much faster
 # Alternative models:
@@ -3589,7 +3589,7 @@ def _generate_remediation(cve: dict) -> str:
     try:
         resp = requests.post(
             OLLAMA_URL,
-            json={"model": MODEL, "prompt": prompt, "stream": False},
+            json={"model": REPORT_MODEL, "prompt": prompt, "stream": False},
             timeout=OLLAMA_TIMEOUT,
         )
         payload = resp.json()
