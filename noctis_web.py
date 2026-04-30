@@ -1049,12 +1049,19 @@ def main():
             except ValueError:
                 pass
 
-    print(f"[*] Noctis Edge Web UI starting on http://127.0.0.1:{port}")
-    print(f"[*] Open your browser at: http://127.0.0.1:{port}")
+    # NOCTIS_BIND_HOST=0.0.0.0 is set automatically by docker-compose so the
+    # container port is reachable from the host.  Locally it stays 127.0.0.1.
+    bind_host = os.environ.get("NOCTIS_BIND_HOST", "127.0.0.1")
+
+    print(f"[*] Noctis Edge Web UI starting on http://{bind_host}:{port}")
+    if bind_host == "0.0.0.0":
+        print(f"[*] Open your browser at: http://localhost:{port}")
+    else:
+        print(f"[*] Open your browser at: http://127.0.0.1:{port}")
     print(f"[*] Press Ctrl+C to stop the server\n")
 
     # use_reloader=False is important — the scanner subprocess must not be forked
-    app.run(host="127.0.0.1", port=port, debug=False, use_reloader=False, threaded=True)
+    app.run(host=bind_host, port=port, debug=False, use_reloader=False, threaded=True)
 
 
 if __name__ == "__main__":

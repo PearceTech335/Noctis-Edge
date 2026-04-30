@@ -43,7 +43,52 @@ This architecture makes Noctis Edge particularly suited for regulated environmen
 
 ---
 
-## Initial Setup (new install)
+## Docker (Windows / macOS / Linux)
+
+The fastest way to run Noctis Edge on any OS — no manual tool installation required.
+
+**Requirements:** [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Windows or macOS) or Docker Engine + Docker Compose (Linux).
+
+```bash
+# Clone the repo
+git clone https://github.com/PearceTech335/Noctis-Edge.git
+cd Noctis-Edge
+
+# Linux / macOS — one-shot launcher:
+chmod +x docker-run.sh
+./docker-run.sh
+
+# Windows (PowerShell) — one-shot launcher:
+.\docker-run.ps1
+```
+
+The launcher script (choose your OS):
+1. Pulls the latest source (`git pull`)
+2. Builds the Docker image (tools + CVE database baked in — ~5–10 min first time)
+3. Starts the Ollama sidecar and downloads the LLM model (~1.9 GB, one-time)
+4. Starts the Noctis Edge Web UI
+
+Open **http://localhost:5000** in your browser.
+
+```bash
+# CLI scan (without web UI):
+docker compose run --rm noctis scan 192.168.0.1
+docker compose run --rm noctis scan 192.168.0.1 web --cve-test
+
+# Stop everything:
+docker compose down
+
+# View logs:
+docker compose logs -f noctis
+```
+
+> **Network scanning note:** nmap inside Docker can reach targets on your local network. On Windows/macOS Docker Desktop runs in a VM — scanning your host machine uses `host.docker.internal` instead of `127.0.0.1`.
+
+> **GPU acceleration (optional):** Uncomment the `deploy.resources` block in `docker-compose.yml` to route Ollama inference through an NVIDIA GPU (requires `nvidia-container-toolkit` on the host).
+
+---
+
+## Native Linux Setup (new install)
 
 > Full manual setup instructions: [Readme/requirements.md](Readme/requirements.md)
 

@@ -57,7 +57,7 @@ else:
 CVE_CSV      = os.path.join(BASE_DIR, "CVE", "cve-offline", "cve-summary.csv")
 SESSION_FILE = os.path.join(BASE_DIR, "session.json")
 
-OLLAMA_URL     = "http://localhost:11434/api/generate"
+OLLAMA_URL     = os.getenv("NOCTIS_OLLAMA_URL", "http://localhost:11434/api/generate")
 MODEL          = os.getenv("NOCTIS_OLLAMA_MODEL", "qwen2.5-coder:3b-instruct")
 OLLAMA_TIMEOUT = int(os.getenv("NOCTIS_OLLAMA_TIMEOUT", "120"))   # seconds — 3B model is much faster
 # Alternative models:
@@ -332,7 +332,10 @@ def ensure_ollama_running() -> bool:
     """
     global _ollama_proc
 
-    tags_url = "http://localhost:11434/api/tags"
+    # Derive the health-check URL from OLLAMA_URL so Docker/remote configs work
+    base_url  = OLLAMA_URL.split("/api/")[0]  # e.g. http://ollama:11434
+    tags_url  = f"{base_url}/api/tags"
+    is_remote = ("localhost" not in base_url and "127.0.0.1" not in base_url)
 
     def _is_up() -> bool:
         try:
@@ -344,6 +347,11 @@ def ensure_ollama_running() -> bool:
     if _is_up():
         print("[*] Ollama is already serving.")
         return True
+
+    # When pointing at a remote/container Ollama host, don't try to spawn locally
+    if is_remote:
+        print(f"[!] Cannot reach Ollama at {base_url} — is the Ollama container running?")
+        return False
 
     if shutil.which("ollama") is None:
         print("[!] 'ollama' binary not found in PATH. Please install Ollama:")

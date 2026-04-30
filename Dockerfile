@@ -1,0 +1,121 @@
+# =============================================================================
+#  Noctis Edge — Dockerfile
+#  Builds a self-contained image with all scanning tools and the offline CVE
+#  database baked in.  Ollama runs as a separate sidecar container (see
+#  docker-compose.yml).
+#
+#  Build:   docker compose build
+#  Run:     docker compose up          (starts web UI on http://localhost:5000)
+#  CLI:     docker compose run --rm noctis scan <target>
+# =============================================================================
+
+FROM debian:bookworm-slim
+
+# Silence interactive apt prompts
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ---------------------------------------------------------------------------
+# 1. System packages
+# ---------------------------------------------------------------------------
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        # Network scanning
+        nmap \
+        curl \
+        # Web scanning dependencies (Nikto is Perl-based)
+        perl \
+        libnet-ssleay-perl \
+        liburi-perl \
+        # Python
+        python3 \
+        python3-pip \
+        python3-venv \
+        # SSH auditing
+        ssh-audit \
+        # DNS enumeration
+        dnsenum \
+        dnsrecon \
+        # General utilities
+        git \
+        ca-certificates \
+        wget \
+        tar \
+        # Required by some Perl modules
+        libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# ---------------------------------------------------------------------------
+# 2. Go toolchain (needed for nuclei, gobuster, ffuf)
+#    Detects host architecture so the image builds on both amd64 and arm64
+#    (Docker Desktop on Apple Silicon).
+# ---------------------------------------------------------------------------
+ENV GOROOT=/usr/local/go
+ENV GOPATH=/root/go
+ENV PATH=$PATH:/usr/local/go/bin:/root/go/bin
+
+ARG GO_VERSION=1.22.5
+RUN ARCH=$(dpkg --print-architecture) && \
+    wget -q "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" \
+        -O /tmp/go.tar.gz && \
+    tar -C /usr/local -xzf /tmp/go.tar.gz && \
+    rm /tmp/go.tar.gz
+
+# ---------------------------------------------------------------------------
+# 3. Go-based security tools
+# ---------------------------------------------------------------------------
+RUN go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest && \
+    go install github.com/OJ/gobuster/v3@latest && \
+    go install github.com/ffuf/ffuf/v2@latest
+
+# Pre-fetch Nuclei templates so the first scan doesn't need internet
+RUN nuclei -update-templates -silent 2>/dev/null || true
+
+# ---------------------------------------------------------------------------
+# 4. Application source
+# ---------------------------------------------------------------------------
+WORKDIR /app
+COPY . .
+
+# ---------------------------------------------------------------------------
+# 5. Nikto (clone fresh — avoids submodule state dependency)
+# ---------------------------------------------------------------------------
+RUN git clone --depth=1 https://github.com/sullo/nikto.git nikto
+
+# ---------------------------------------------------------------------------
+# 6. CVE offline database (cloned and built at image-build time for fully
+#    offline runtime use)
+# ---------------------------------------------------------------------------
+RUN git clone --depth=1 https://github.com/trickest/cve-offline.git \
+        /tmp/cve-offline && \
+    mkdir -p CVE/cve-offline && \
+    cp -r /tmp/cve-offline/. CVE/cve-offline/ && \
+    # Generate the offline CSV summary used by noctis.py
+    (cd CVE/cve-offline && bash updatecsv.sh 2>/dev/null) || \
+        echo "[!] CVE CSV generation failed — CVE matching will be unavailable" && \
+    rm -rf /tmp/cve-offline
+
+# ---------------------------------------------------------------------------
+# 7. Python virtual environment + dependencies
+# ---------------------------------------------------------------------------
+RUN python3 -m venv .venv && \
+    .venv/bin/pip install --upgrade pip --quiet && \
+    .venv/bin/pip install \
+        requests \
+        jinja2 \
+        pycryptodome \
+        flask \
+        flask-sock \
+        --quiet
+
+# ---------------------------------------------------------------------------
+# 8. Entrypoint + runtime directories
+# ---------------------------------------------------------------------------
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh && \
+    mkdir -p /app/sessions /data
+
+EXPOSE 5000
+
+# Default: start the web UI.  Override CMD for CLI use:
+#   docker compose run --rm noctis scan 192.168.0.1
+ENTRYPOINT ["/docker-entrypoint.sh"]
+CMD ["web"]

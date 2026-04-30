@@ -1,0 +1,32 @@
+# Python runtime artefacts
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Git internals (not needed inside image)
+.git/
+
+# Submodule dirs — cloned fresh during build for reproducibility
+nikto/
+CVE/cve-offline/
+
+# Runtime output
+sessions/
+session.json
+nikto_*.txt
+
+# Per-user secrets / config — mounted as volume at runtime
+noctis.conf
+cve_knowledge_base.json
+
+# OS noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# IDE config
+.idea/
+.vscode/
+.continue/

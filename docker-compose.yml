@@ -1,0 +1,100 @@
+# =============================================================================
+#  Noctis Edge — Docker Compose
+#
+#  Services:
+#    ollama   — local LLM server (official image, persists models in a volume)
+#    noctis   — scanner + web UI  (built from ./Dockerfile)
+#
+#  Quick start:
+#    ./docker-run.sh          (Linux / macOS)
+#    .\docker-run.ps1         (Windows PowerShell)
+#
+#  Manual:
+#    docker compose build
+#    docker compose up -d
+#    docker compose exec ollama ollama pull qwen2.5-coder:3b-instruct
+#    # Open http://localhost:5000
+#
+#  CLI scan (without web UI):
+#    docker compose run --rm noctis scan 192.168.0.1
+#    docker compose run --rm noctis scan 192.168.0.1 web --cve-test
+#
+#  Stop:
+#    docker compose down
+# =============================================================================
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # Ollama — local LLM server
+  # ---------------------------------------------------------------------------
+  ollama:
+    image: ollama/ollama:latest
+    container_name: noctis-ollama
+    volumes:
+      # Persist downloaded models across container restarts
+      - ollama_models:/root/.ollama
+    ports:
+      - "11434:11434"
+    # ── GPU acceleration (optional) ──────────────────────────────────────────
+    # Uncomment the deploy block below to use an NVIDIA GPU.
+    # Requires: nvidia-container-toolkit installed on the Docker host.
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:11434/api/tags"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Noctis Edge — scanner + web UI
+  # ---------------------------------------------------------------------------
+  noctis:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: noctis-edge:latest
+    container_name: noctis-edge
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      # Point Noctis at the Ollama sidecar (service name resolves inside compose network)
+      - NOCTIS_OLLAMA_URL=http://ollama:11434/api/generate
+      # Bind to all interfaces so the host browser can reach port 5000
+      - NOCTIS_BIND_HOST=0.0.0.0
+    ports:
+      - "5000:5000"
+    volumes:
+      # Persist scan sessions on the host so reports survive container restarts
+      - ./sessions:/app/sessions
+      # Persist CVE knowledge base (accumulates test results over time)
+      - noctis_kb:/app/cve_knowledge_base.json
+      # Persist per-user config (installation UUID, license key, etc.)
+      - noctis_config:/app/noctis.conf
+    # nmap SYN scans need raw socket capabilities
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+
+# ---------------------------------------------------------------------------
+# Named volumes
+# ---------------------------------------------------------------------------
+volumes:
+  ollama_models:
+    driver: local
+  noctis_kb:
+    driver: local
+  noctis_config:
+    driver: local
