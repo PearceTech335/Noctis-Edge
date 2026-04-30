@@ -381,6 +381,16 @@ During a `--cve-test` run, the terminal displays each CVE under test in sequence
 |---|---|
 | ![LLM script source](https://github.com/user-attachments/assets/b8531a5e-4c5f-4992-9e78-56f486951ad1) | ![HTML report executive summary](https://github.com/user-attachments/assets/2f6d2ce6-77c3-4f21-87ce-7c3ac88d7527) |
 
+| Per-attempt verdict breakdown — INCONCLUSIVE and NOT_VULNERABLE results | VULNERABLE detection with false-positive flagging and expanded script view |
+|---|---|
+| ![Per-attempt verdict breakdown](https://github.com/user-attachments/assets/76a25300-696e-45be-b9bd-52cf35599d47) | ![VULNERABLE detection with false-positive check](https://github.com/user-attachments/assets/70e831f8-6496-4f98-83ad-d08ce5bf5698) |
+
+| CVE test results panel — remediation guidance |
+|---|
+| ![CVE test results with suggested remediation](https://github.com/user-attachments/assets/7b699ade-ddba-4dde-8134-0aa1746dde6f) |
+
+Noctis Edge enforces thorough reporting and rigorous check verification at every stage of the CVE test cycle. Each attempt is individually labelled with a verdict — `VULNERABLE`, `NOT_VULNERABLE`, or `INCONCLUSIVE` — so operators can trace exactly which probe triggered a finding and which fell short. When a result is flagged as `VULNERABLE`, a false-positive check runs automatically, replaying two independent verification passes and surfacing a warning banner if both return `INCONCLUSIVE`, preventing unconfirmed detections from being reported as confirmed hits. The final CVE test results panel consolidates all attempt verdicts alongside AI-generated remediation guidance, covering immediate mitigations, permanent fixes, and step-by-step verification procedures — giving operators both the evidence trail and the actionable next steps needed to confidently triage and remediate every finding.
+
 On completion, the HTML report is generated with an executive summary stating the overall security posture, followed by sections covering the service inventory, findings ranked by risk score, CVE matches, validation results, and the LLM-generated conclusion. 
 
 ---
