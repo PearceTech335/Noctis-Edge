@@ -232,9 +232,11 @@ else
     else
         # netexec is not on PyPI — install from source via pipx
         info "Using pipx to install NetExec from GitHub source ..."
-        sudo apt install -y pipx 2>/dev/null || true
-        if pipx install "git+https://github.com/Pennyw0rth/NetExec" 2>/dev/null; then
-            pipx ensurepath 2>/dev/null || true
+        sudo apt install -y pipx libkrb5-dev 2>/dev/null || true
+        # Ensure ~/.local/bin is on PATH for this session and future shells
+        export PATH="$HOME/.local/bin:$PATH"
+        pipx ensurepath 2>/dev/null || true
+        if pipx install "git+https://github.com/Pennyw0rth/NetExec"; then
             ok "NetExec installed via pipx (~/.local/bin/nxc)"
         else
             fail "NetExec (nxc) could not be installed — internal_ad profile will not function"
