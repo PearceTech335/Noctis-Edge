@@ -13,6 +13,7 @@
 #    docker compose build
 #    docker compose up -d
 #    docker compose exec ollama ollama pull qwen2.5-coder:3b-instruct
+#    docker compose exec ollama ollama pull llama3.2:3b
 #    # Open http://localhost:5000
 #
 #  CLI scan (without web UI):
@@ -69,6 +70,10 @@ services:
     environment:
       # Point Noctis at the Ollama sidecar (service name resolves inside compose network)
       - NOCTIS_OLLAMA_URL=http://ollama:11434/api/generate
+      # Code/JSON model (tool planning, script generation)
+      - NOCTIS_OLLAMA_MODEL=qwen2.5-coder:3b-instruct
+      # Prose model (conclusion text in reports)
+      - NOCTIS_REPORT_MODEL=llama3.2:3b
       # Bind to all interfaces so the host browser can reach port 5000
       - NOCTIS_BIND_HOST=0.0.0.0
     ports:

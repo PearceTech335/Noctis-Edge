@@ -58,11 +58,15 @@ CVE_CSV      = os.path.join(BASE_DIR, "CVE", "cve-offline", "cve-summary.csv")
 SESSION_FILE = os.path.join(BASE_DIR, "session.json")
 
 OLLAMA_URL     = os.getenv("NOCTIS_OLLAMA_URL", "http://localhost:11434/api/generate")
+# Code/JSON tasks — tool planning, script generation, CVE test scripts
 MODEL          = os.getenv("NOCTIS_OLLAMA_MODEL", "qwen2.5-coder:3b-instruct")
+# Report prose — conclusion text; general-instruct model follows natural-language instructions cleanly
+REPORT_MODEL   = os.getenv("NOCTIS_REPORT_MODEL", "llama3.2:3b")
 OLLAMA_TIMEOUT = int(os.getenv("NOCTIS_OLLAMA_TIMEOUT", "120"))   # seconds — 3B model is much faster
 # Alternative models:
 #"qwen2.5-coder:3b-instruct"                             (default — 1.9 GB, fast performance)
 #"qwen2.5-coder:7b-instruct"                             (7B coder — better quality, ~4.7 GB)
+#"llama3.2:3b"                                           (report prose — 2.0 GB, clean instruction following)
 #"qwen2.5-instruct"                                      (general 7B model — 4.68 GB, 1M context)
 
 MAX_OUTPUT          = 3000
@@ -2746,13 +2750,31 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
             try:
                 resp    = requests.post(
                     OLLAMA_URL,
-                    json={"model": MODEL, "stream": False,
-                          "prompt": f"Write a two-sentence penetration testing conclusion. Be concise. Data: {json.dumps(mini_summary, separators=(',', ':'))}"},
+                    json={"model": REPORT_MODEL, "stream": False,
+                          "prompt": (
+                              "You are a professional penetration tester writing a client-facing report. "
+                              "Write exactly two sentences summarising the security posture of the target based on the data below. "
+                              "Output only the two sentences. Do not add questions, headings, bullet points, or any other text. "
+                              f"Data: {json.dumps(mini_summary, separators=(',', ':'))}"
+                          )},
                     timeout=OLLAMA_TIMEOUT,
                 )
                 payload = resp.json()
                 if "response" in payload:
-                    conclusion = payload["response"].strip()
+                    raw = payload["response"].strip()
+                    # Strip any LLM prompt-leak artefacts: lines starting with
+                    # question-like patterns, markdown headings, or blank padding.
+                    clean_lines = []
+                    for line in raw.splitlines():
+                        stripped = line.strip()
+                        if not stripped:
+                            continue
+                        lower = stripped.lower()
+                        # Drop lines that look like leaked prompt artefacts
+                        if lower.startswith(("**", "##", "question", "note:", "follow")):
+                            break
+                        clean_lines.append(stripped)
+                    conclusion = " ".join(clean_lines) if clean_lines else raw
                     break
             except Exception as e:
                 print(f"[!] Conclusion LLM error: {e}")
