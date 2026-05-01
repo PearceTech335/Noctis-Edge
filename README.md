@@ -609,6 +609,15 @@ The following are excluded from version control (see `.gitignore`):
 - No other ffuf behaviour changed — it remains fully available for all web application targets
 - No other tool removed from any service branch
 
+**Tiered KB script selection with per-script success ranking** — as the community CVE Knowledge Base grows, a single CVE can accumulate hundreds of test scripts. Running every script on every scan would be impractical. Noctis now scores and ranks scripts based on their historical performance, then selects a fair tiered sample for each test run.
+
+- Each KB script tracks `runs`, `vulnerable_count`, `not_vulnerable_count`, and `inconclusive_count` — updated every time the script is replayed
+- `VULNERABLE` results are weighted **3×**, `NOT_VULNERABLE` **1×**, `INCONCLUSIVE` **0** — so scripts that reliably detect vulnerabilities rise to the top
+- When a CVE has ≤ 20 KB scripts the full set is run (sorted by score); when the pool exceeds 20, exactly **20 scripts** are selected: **top-10 by rank** + **5 random mid-tier** + **5 random low-tier**
+- The low-tier sample is intentional — previously low-scoring scripts are periodically re-validated against new targets and can climb the rankings over time
+- The verdict line now shows `KB:20/150 replayed` so the full pool size is always visible
+- Fully backward-compatible — existing KB entries without run stats fall back to their single recorded `verdict` field
+
 **Tool Knowledge Base community pipeline** — mirrors the existing CVE KB pipeline with a parallel infrastructure for tool performance data:
 
 - `scripts/submit_tool_kb.py` — submits `tool_knowledge_base.json` to the community relay via `/submit-tool`
