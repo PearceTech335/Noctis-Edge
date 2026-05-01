@@ -506,7 +506,16 @@ This updates (in order):
 | 9 | CVE Knowledge Base submitted to the community relay |
 | 10 | Tool Knowledge Base submitted to the community relay (pull community KB if `KB_LICENSE_KEY` set) |
 
-> **Note on step 7:** `update.sh` uses `git fetch` + `git reset --hard origin/master` rather than `git pull`. This means it will **always** succeed and always result in the exact latest version from GitHub, even if there are local modifications. Any uncommitted local changes will be discarded — this is intentional for an update script.
+> **Note on step 7:** `update.sh` uses `git fetch` + `git reset --hard origin/master` rather than `git pull`. This means it will **always** succeed and always result in the exact latest version from GitHub, even if there are local modifications. Any uncommitted local changes to tracked files will be discarded — this is intentional for an update script.
+>
+> **Your data is safe.** `git reset --hard` only affects files that git tracks. All user-generated data lives in gitignored files and directories and is never touched by the update:
+>
+> | File / Directory | Safe? |
+> |------------------|-------|
+> | `cve_knowledge_base.json` | ✅ gitignored — never modified by update |
+> | `tool_knowledge_base.json` | ✅ gitignored — never modified by update |
+> | `noctis.conf` | ✅ gitignored — your UUID and license key are preserved |
+> | `sessions/` | ✅ gitignored — all scan reports and session files are preserved |
 ---
 
 ## CVE Knowledge Base
