@@ -18,6 +18,31 @@ This architecture makes Noctis Edge particularly suited for regulated environmen
 
 ---
 
+## What Gives Noctis the Edge
+
+Most automated scanners tell you what CVEs *exist* on a system. **Noctis Edge tests whether they're actually exploitable** — and learns from every engagement it runs.
+
+### Community-Driven Knowledge Base
+
+The `--cve-test` flag instructs the local LLM to generate safe, targeted probe scripts for each CVE matched during the scan. These scripts run on-device with a strict timeout, print a clear `VULNERABLE` / `NOT_VULNERABLE` / `INCONCLUSIVE` verdict, and are written to the session folder so operators can audit exactly what was sent to the target.
+
+What makes this more than a one-off test is the **community knowledge base**:
+
+- Every probe script and its verdict is recorded in `cve_knowledge_base.json` at the project root
+- On subsequent runs against the same CVE, **proven scripts are replayed first** — no LLM generation required — giving faster, higher-confidence results
+- Running `./update.sh` automatically submits your results to the community repository and pulls in validated scripts contributed by other users — no account, token, or cloud service required
+- The entire loop (generation → execution → verdict → submission → replay) stays on-device; nothing leaves the host without an explicit `./update.sh`
+
+The result: **the more the community runs, the sharper everyone's scans become**.
+
+### Tooling Intelligence
+
+Alongside CVE probes, `cve_knowledge_base.json` accumulates tooling knowledge — which tool invocations produced real findings versus noise, which scan techniques work reliably against specific service fingerprints, and which scripts generated false positives. The LLM uses this history as context on each new engagement, progressively improving the quality of tool selection and script generation over time.
+
+> **Get the Noctis Edge on your next vulnerability scan** — because knowing a CVE *exists* is just the start; knowing it's *actually exploitable* is the edge that matters.
+
+---
+
 ## System Requirements
 
 | Component | Minimum |
@@ -284,19 +309,34 @@ Pass one or more profile names after the target. Tools from all selected profile
 - Checks if Ollama is serving — starts `ollama serve` automatically if not
 - Validates all tool binaries are present and prints a status table
 - DNS enumeration tools (amass, dnsenum, dnsrecon) are disabled by default — pass `--dns-enum` to enable them
-- Runs `nmap` against the target to discover open ports and services
-- Searches the offline CVE database (`CVE/cve-offline/cve-summary.csv`) for matches on each service
 
-### 2. LLM-Driven Scan — Phase 1 (Parallel)
-Immediately after Nmap, Noctis Edge performs a **parallel initial scan wave**:
+### 2. Five-Phase Nmap Discovery
 
-1. The LLM analyses all discovered services at once and returns a JSON array — one initial tool per service (e.g. `nikto` for HTTP, `ssh_enum` for SSH, `mysql_enum` for MySQL).
+Before any LLM decisions are made, Noctis Edge runs a structured five-phase nmap pipeline that builds a complete, enriched picture of the target:
+
+| Phase | nmap Command | Output |
+|-------|-------------|--------|
+| **Phase 1 — Host Discovery & Port List** | `-Pn -T4 --open -p- --min-rate 2000` | Asset list of all open TCP ports |
+| **Phase 2 — Service & Version Enumeration** | `-sV -sC -T4 -p <ports>` | Service banners, version strings, product names |
+| **Phase 3 — NSE Script Execution** | `--script <service-targeted NSE scripts>` | Per-service intelligence: HTTP headers/methods/auth, SSH algorithms, SMB shares, FTP anon, SSL ciphers, MySQL/MSSQL config, and more |
+| **Phase 4 — OS Detection** | `-O --osscan-guess` | Operating system fingerprint with confidence % |
+| **Phase 5 — Normalise** | (in-process) | All phase data merged into a unified service list; NSE output attached per port; OS context added to each service record |
+
+Phase 3 uses a service-to-NSE script map to select the most decision-relevant scripts per service type — for example, an HTTP service gets `http-title,http-headers,http-methods,http-auth-finder,http-robots.txt` while an SSH service gets `ssh-auth-methods,ssh2-enum-algos,ssh-hostkey`. The complete NSE output is passed to the LLM as context in every subsequent planning prompt, enabling the LLM to choose specific paths, auth methods, and endpoint targets based on real probe data rather than guesswork.
+
+CVE lookups run against the normalised service list after Phase 5 completes.
+
+### 3. LLM-Driven Scan — Phase 1 (Parallel)
+Immediately after nmap discovery, Noctis Edge performs a **parallel initial scan wave**:
+
+1. The LLM analyses all discovered services at once — with NSE context included — and returns a JSON array: one initial tool per service (e.g. `nikto` for HTTP, `ssh_enum` for SSH, `mysql_enum` for MySQL).
 2. All actions in the wave run concurrently via `asyncio.gather()`, bounded by `MAX_PARALLEL_ACTIONS` (default 4) to avoid overwhelming the target.
 3. Findings are enriched, verified, and auto-tagged before being passed into context for Phase 2.
 
-### 3. LLM-Driven Scan — Phase 2 (Sequential loop)
+### 4. LLM-Driven Scan — Phase 2 (Sequential loop)
 The sequential loop continues deeper investigation, asking the LLM what to do next based on:
 - Target, profile, and discovered services
+- NSE script results from nmap Phase 3
 - All findings collected in Phase 1 and so far in Phase 2
 - History of tools already run
 - List of disabled/broken tools
@@ -307,12 +347,12 @@ Noctis Edge executes the tool, parses structured findings from the output, and f
 Tools that time out with no findings or return error signals are auto-disabled for the session.
 In `SAFE` mode (default), aggressive tools (ffuf, hydra) require operator approval before running.
 
-### 4. Finding Verification & Enrichment
+### 5. Finding Verification & Enrichment
 After each tool run (Phase 1 and Phase 2), findings go through:
 - **Verification** — re-requesting a discovered path to confirm it is real rather than a false positive.
 - **Metadata enrichment** — inferring `vuln_type` (e.g. RCE, SQLi, XSS), `cwe_id` (e.g. CWE-89), and applicable `compliance_controls` (PCI-DSS, SOC2, ISO 27001) using the existing internal mapping tables.
 
-### 5. Risk Scoring
+### 6. Risk Scoring
 Each finding is scored using:
 ```
 risk_score = severity_weight × confidence × exposure × tool_confidence
@@ -322,7 +362,7 @@ risk_score = severity_weight × confidence × exposure × tool_confidence
 - **exposure**: 1.2 if internet-facing, 1.0 internal
 - **tool_confidence**: per-tool weighting from the config
 
-### 6. Report Generation
+### 7. Report Generation
 After the scan loop, reports are saved to `sessions/<target>_<timestamp>/`:
 - `report_<target>.json` — full machine-readable report
 - `report_<target>.html` — styled HTML report with collapsible sections
@@ -435,7 +475,7 @@ cve_knowledge_base.json           ← cross-engagement CVE test KB (project root
 
 | Tool | Purpose |
 |------|---------|
-| `nmap` | Port and service discovery |
+| `nmap` | Five-phase discovery: full port scan → service/version enumeration → targeted NSE scripts → OS detection → normalisation |
 | `curl` | HTTP probing |
 | `nikto` | Web server vulnerability scanning (bundled in `nikto/`) |
 | `nuclei` | Template-based scanning |
@@ -600,6 +640,24 @@ The following are excluded from version control (see `.gitignore`):
 ---
 
 ## Version History
+
+## What's New in v0.7.0
+
+**Five-phase nmap discovery** — the single fast-port-scan call has been replaced with a structured five-phase nmap pipeline that runs before any LLM decisions are made:
+
+- **Phase 1 — Host discovery & full port list**: `nmap -Pn -T4 --open -p- --min-rate 2000` scans all 65 535 ports with a fast-rate setting; falls back to a top-1000 scan if the full-range run returns nothing.
+- **Phase 2 — Service & version enumeration**: `-sV -sC` with `--version-intensity 7` runs against only the open ports from Phase 1 — banner grabbing, version strings, product names, and default nmap scripts.
+- **Phase 3 — Targeted NSE script execution**: a service-to-script map selects the most decision-relevant NSE scripts per service (e.g. `http-title,http-headers,http-methods,http-auth-finder,http-robots.txt` for HTTP; `ssh-auth-methods,ssh2-enum-algos,ssh-hostkey` for SSH; `smb-security-mode,smb-enum-shares` for SMB, and so on). Scripts are batched by service family to minimise nmap invocations. Full output is attached to each service record as `nse_output` (dict) and `nse_summary` (string).
+- **Phase 4 — OS detection**: `-O --osscan-guess --max-os-tries 2` fingerprints the target OS and records name, accuracy, type, and vendor. Merged into `TargetInfo` so it appears in the report's Target Summary table.
+- **Phase 5 — Normalisation**: all phase data is merged into a single unified service list. NSE output is attached per port; OS context is added to every service record so the LLM has full host context.
+
+**LLM context enriched with NSE results** — the complete NSE output summary is injected into every LLM planning prompt (both the Phase 1 parallel planner and the sequential loop). The LLM can now choose specific URLs, paths, authentication methods, and tool arguments based on real nmap probe data rather than guesswork.
+
+**HTML report updated** — a new *Nmap NSE Script Results* table is rendered in the report when Phase 3 produced output, listing each port and the scripts executed against it.
+
+**Report metadata** — a `nmap_discovery` key is written to the JSON report containing `open_ports`, `os_detected`, and a `nse_summary` mapping of port → script IDs executed.
+
+---
 
 ## What's New in v0.6.8
 

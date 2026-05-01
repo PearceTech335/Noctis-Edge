@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
-Noctis Edge — Security Through Exposure  v0.6.5
+Noctis Edge — Security Through Exposure  v0.7.0
 Implements: structured findings, verification,
 approval gates, async execution, HTML reports,
-service-specific enumerations, and risk scoring.
+service-specific enumerations, risk scoring, and
+5-phase nmap discovery with LLM-informed NSE scripting.
 """
 
-VERSION = "v0.6.7"
+VERSION = "v0.7.0"
 
 import asyncio
 import dataclasses
@@ -126,6 +127,21 @@ _SAFE_HTTP_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "POST"})
 # PUT, DELETE, PATCH, CONNECT are excluded — they write/remove resources
 
 
+def _sanitise_url(raw_url: str) -> str:
+    """Strip LLM-introduced artifacts from URLs before passing to tools.
+
+    The LLM sometimes appends '*', 'FUZZ', '/FUZZ', '/' or similar when it
+    has seen ffuf examples in context.  Remove all of these so the actual
+    tool receives a clean base URL.
+    """
+    u = raw_url.strip()
+    # Strip trailing FUZZ variants and wildcards
+    for suffix in ("/FUZZ", "FUZZ", "*", "/"):
+        while u.endswith(suffix):
+            u = u[:-len(suffix)]
+    return u.strip()
+
+
 def _safe_tool_args(tool: str, raw) -> dict:
     """Normalise and validate LLM-provided tool args.
 
@@ -140,7 +156,7 @@ def _safe_tool_args(tool: str, raw) -> dict:
     cleaned: dict = {}
 
     if tool == "ffuf":
-        cleaned["url"]      = str(raw.get("url", ""))
+        cleaned["url"]      = _sanitise_url(str(raw.get("url", "")))
         cleaned["wordlist"] = str(raw.get("wordlist", WORDLIST))
 
         exts = str(raw.get("extensions", "")).strip()
@@ -197,7 +213,7 @@ def _safe_tool_args(tool: str, raw) -> dict:
                     pass
 
     elif tool == "nuclei":
-        cleaned["url"] = str(raw.get("url", raw.get("_raw", "")))
+        cleaned["url"] = _sanitise_url(str(raw.get("url", raw.get("_raw", ""))))
 
         tags = str(raw.get("tags", "")).strip()
         if tags:
@@ -214,7 +230,7 @@ def _safe_tool_args(tool: str, raw) -> dict:
                 print(f"[!] [safe-args] unsafe 'severity' dropped: {sev!r}")
 
     elif tool == "curl":
-        cleaned["url"] = str(raw.get("url", raw.get("_raw", "")))
+        cleaned["url"] = _sanitise_url(str(raw.get("url", raw.get("_raw", ""))))
 
         method = str(raw.get("method", "GET")).upper()
         if method in _SAFE_HTTP_METHODS:
@@ -236,7 +252,7 @@ def _safe_tool_args(tool: str, raw) -> dict:
         cleaned["headers"] = safe_hdrs
 
     elif tool in ("nikto", "nikto_cgi"):
-        cleaned["url"] = str(raw.get("url", raw.get("_raw", "")))
+        cleaned["url"] = _sanitise_url(str(raw.get("url", raw.get("_raw", ""))))
         cleaned["ssl"] = bool(raw.get("ssl", False))
 
     else:
@@ -1928,21 +1944,48 @@ def cves_for_service(service):
                 seen.add(cve["id"])
                 results.append(cve)
 
+    # Priority 1: exact product + version match (most precise)
     if product and version:
         _add([product, version])
-    if product:
+
+    # Priority 2: product name only
+    if product and len(results) < 5:
         _add([product])
-    if name and name not in ("unknown", ""):
-        # Map well-known service names to their real product names for better CVE matches
+        # For compound names like "Werkzeug httpd" or "Golang net/http server",
+        # also try just the distinguishing first word if it's specific enough.
+        parts = product.split()
+        if len(parts) > 1:
+            first = parts[0]
+            GENERIC_WORDS = {"the", "this", "open", "free", "net", "web", "http", "server"}
+            if len(first) >= 5 and first.lower() not in GENERIC_WORDS:
+                if version:
+                    _add([first, version])
+                if len(results) < 5:
+                    _add([first])
+
+    # Priority 3: service-specific product keyword mapping.
+    # Only used when no product was detected.  Deliberately omits generic
+    # service names like "http" (matches thousands of unrelated CVEs).
+    if not product and name and name not in ("unknown", ""):
         SERVICE_PRODUCT_MAP = {
-            "ipp": ["cups"],
-            "http": ["apache", "nginx"],
-            "ms-wbt-server": ["rdp"],
-            "microsoft-ds": ["smb"],
+            "ipp":            ["cups"],
+            "ms-wbt-server":  ["rdp", "remote desktop"],
+            "microsoft-ds":   ["smb", "samba"],
+            "ssh":            ["openssh"],
+            "ftp":            ["vsftpd", "proftpd"],
+            "smtp":           ["postfix", "sendmail", "exim"],
+            "mysql":          ["mysql", "mariadb"],
+            "mssql":          ["ms-sql"],
+            "ms-sql":         ["ms-sql"],
+            "rdp":            ["rdp", "remote desktop"],
+            "vnc":            ["vnc", "tightvnc", "realvnc"],
+            "ldap":           ["openldap", "active directory"],
+            "snmp":           ["snmp", "net-snmp"],
         }
-        mapped = SERVICE_PRODUCT_MAP.get(name.lower(), [name])
-        for kw in mapped:
-            _add([kw])
+        for kw in SERVICE_PRODUCT_MAP.get(name.lower(), []):
+            if len(results) < 5:
+                _add([kw])
+
     return results[:5]
 
 
@@ -1950,25 +1993,28 @@ def cves_for_service(service):
 # NMAP
 # ---------------------------------------------------------------------------
 
-def run_nmap(target):
-    """Fast open-port discovery — no -sV/-sC to avoid hanging on non-standard
-    services (e.g. CUPS/IPP).  Phase-1 already carries nmap's built-in service
-    names which is sufficient for CVE lookup and tool dispatch."""
-    print(f"[+] Running nmap on {target}")
+# ---------------------------------------------------------------------------
+# 5-PHASE NMAP DISCOVERY
+# ---------------------------------------------------------------------------
+
+def _nmap_run(args: list, timeout: int = 120) -> str:
+    """Execute nmap with the given args and return stdout. Returns '' on error."""
     try:
         result = subprocess.run(
-            ["nmap", "-Pn", "-T5", "--open", "-oX", "-", target],
-            capture_output=True, text=True, timeout=60,
+            ["nmap"] + args,
+            capture_output=True, text=True, timeout=timeout,
         )
         return result.stdout
     except subprocess.TimeoutExpired:
         print("[!] nmap timed out")
         return ""
     except Exception as e:
-        return str(e)
+        print(f"[!] nmap error: {e}")
+        return ""
 
 
-def parse_nmap(xml_data):
+def _parse_nmap_xml(xml_data: str) -> list:
+    """Parse nmap XML output into a list of service dicts."""
     services = []
     try:
         root = ET.fromstring(xml_data)
@@ -1977,18 +2023,288 @@ def parse_nmap(xml_data):
             if state_el is not None and state_el.attrib.get("state") != "open":
                 continue
             service_el = port.find("service")
+            portid    = port.attrib.get("portid", "")
+            protocol  = port.attrib.get("protocol", "tcp")
+            name      = ""
+            product   = ""
+            version   = ""
+            extrainfo = ""
+            tunnel    = ""
             if service_el is not None:
-                services.append({
-                    "port":      port.attrib.get("portid"),
-                    "protocol":  port.attrib.get("protocol", "tcp"),
-                    "name":      service_el.attrib.get("name", ""),
-                    "product":   service_el.attrib.get("product", ""),
-                    "version":   service_el.attrib.get("version", ""),
-                    "extrainfo": service_el.attrib.get("extrainfo", ""),
-                })
+                name      = service_el.attrib.get("name", "")
+                product   = service_el.attrib.get("product", "")
+                version   = service_el.attrib.get("version", "")
+                extrainfo = service_el.attrib.get("extrainfo", "")
+                tunnel    = service_el.attrib.get("tunnel", "")
+            # Normalise SSL/TLS services so downstream logic can detect HTTPS
+            if tunnel in ("ssl", "tls") and name and "ssl" not in name:
+                name = f"ssl/{name}"
+            services.append({
+                "port":      portid,
+                "protocol":  protocol,
+                "name":      name,
+                "product":   product,
+                "version":   version,
+                "extrainfo": extrainfo,
+            })
     except ET.ParseError as e:
         print(f"[!] Failed to parse nmap XML: {e}")
     return services
+
+
+def _nmap_extract_script_output(xml_data: str) -> dict:
+    """Return {port: {script_id: output}} from nmap XML that contains script results."""
+    results: dict = {}
+    try:
+        root = ET.fromstring(xml_data)
+        for port_el in root.findall(".//port"):
+            portid = port_el.attrib.get("portid", "?")
+            for script_el in port_el.findall("script"):
+                sid    = script_el.attrib.get("id", "")
+                output = script_el.attrib.get("output", "")
+                results.setdefault(portid, {})[sid] = output
+    except ET.ParseError:
+        pass
+    return results
+
+
+# Map service name → NSE scripts that give the most decision-making value.
+# These are used by Phase 3 to build targeted script batches per service.
+_NSE_SCRIPT_MAP = {
+    "http":        "http-title,http-headers,http-methods,http-auth-finder,http-server-header,http-security-headers,http-robots.txt",
+    "ssl/http":    "http-title,http-headers,http-methods,http-auth-finder,ssl-cert,ssl-enum-ciphers,http-security-headers",
+    "https":       "http-title,http-headers,http-methods,http-auth-finder,ssl-cert,ssl-enum-ciphers,http-security-headers",
+    "http-alt":    "http-title,http-headers,http-methods,http-auth-finder,http-server-header",
+    "ssh":         "ssh-auth-methods,ssh2-enum-algos,ssh-hostkey",
+    "ftp":         "ftp-anon,ftp-bounce,ftp-syst",
+    "smtp":        "smtp-open-relay,smtp-commands,smtp-enum-users",
+    "smb":         "smb-security-mode,smb2-security-mode,smb-enum-shares,smb-os-discovery",
+    "microsoft-ds":"smb-security-mode,smb2-security-mode,smb-enum-shares,smb-os-discovery",
+    "mysql":       "mysql-info,mysql-empty-password,mysql-enum",
+    "mssql":       "ms-sql-info,ms-sql-config,ms-sql-empty-password",
+    "ms-sql":      "ms-sql-info,ms-sql-config,ms-sql-empty-password",
+    "rdp":         "rdp-enum-encryption",
+    "vnc":         "vnc-info,vnc-brute",
+    "dns":         "dns-zone-transfer,dns-service-discovery",
+    "ipp":         "http-title,http-headers,http-methods,http-server-header",
+    "telnet":      "telnet-encryption,telnet-ntlm-info",
+    "ldap":        "ldap-rootdse,ldap-novell-getpass",
+    "pop3":        "pop3-capabilities",
+    "imap":        "imap-capabilities",
+    "snmp":        "snmp-info,snmp-sysdescr,snmp-brute",
+}
+
+
+def _select_nse_scripts(service_name: str) -> str:
+    """Return a comma-separated NSE script string for a given service name."""
+    name = service_name.lower()
+    for key, scripts in _NSE_SCRIPT_MAP.items():
+        if key in name:
+            return scripts
+    return ""
+
+
+def run_nmap_discovery(target: str) -> tuple:
+    """Five-phase nmap discovery pipeline.
+
+    Phase 1 — Host discovery + open port list
+    Phase 2 — Service/version enumeration on discovered ports
+    Phase 3 — LLM-informed NSE script execution per service
+    Phase 4 — OS detection
+    Phase 5 — Normalise all data into a unified service list
+
+    Returns
+    -------
+    services : list[dict]
+        Fully annotated service records ready for CVE lookup and tool dispatch.
+    nmap_meta : dict
+        Raw phase outputs and OS information for inclusion in the report.
+    """
+    nmap_meta: dict = {
+        "phase1_raw": "",
+        "phase2_raw": "",
+        "phase3_scripts": {},
+        "phase4_os": {},
+        "open_ports": [],
+    }
+
+    # ------------------------------------------------------------------ #
+    # Phase 1 — Host discovery + open port list                           #
+    # ------------------------------------------------------------------ #
+    print(f"\n[+] Nmap Phase 1 — Host discovery & port list ({target})")
+    p1_xml = _nmap_run([
+        "-Pn", "-T4", "--open",
+        "-p-",                      # all 65 535 ports
+        "--min-rate", "2000",       # speed — safe on LAN, capped by congestion
+        "--max-retries", "1",
+        "-oX", "-",
+        target,
+    ], timeout=300)
+    nmap_meta["phase1_raw"] = p1_xml
+
+    # Fall back to top-1000 scan if the full-port run produced nothing
+    if not p1_xml.strip() or not _parse_nmap_xml(p1_xml):
+        print("[!] Full-port scan returned nothing — falling back to top-1000")
+        p1_xml = _nmap_run(["-Pn", "-T4", "--open", "-oX", "-", target], timeout=120)
+        nmap_meta["phase1_raw"] = p1_xml
+
+    p1_services = _parse_nmap_xml(p1_xml)
+    if not p1_services:
+        print("[!] Phase 1: no open ports found.")
+        return [], nmap_meta
+
+    open_ports = [s["port"] for s in p1_services]
+    ports_arg  = ",".join(open_ports)
+    nmap_meta["open_ports"] = open_ports
+    print(f"[+] Phase 1 complete — {len(open_ports)} open port(s): {ports_arg}")
+
+    # ------------------------------------------------------------------ #
+    # Phase 2 — Port & service enumeration (version + default scripts)    #
+    # ------------------------------------------------------------------ #
+    print(f"[+] Nmap Phase 2 — Service/version enumeration")
+    p2_xml = _nmap_run([
+        "-Pn", "-sV", "-sC",
+        "-T4",
+        "-p", ports_arg,
+        "--version-intensity", "7",
+        "-oX", "-",
+        target,
+    ], timeout=180)
+    nmap_meta["phase2_raw"] = p2_xml
+
+    p2_services = _parse_nmap_xml(p2_xml) if p2_xml.strip() else []
+    # Merge Phase-2 version info back onto Phase-1 records
+    p2_by_port: dict = {s["port"]: s for s in p2_services}
+    for svc in p1_services:
+        p2 = p2_by_port.get(svc["port"])
+        if p2:
+            svc["name"]      = p2["name"]      or svc["name"]
+            svc["product"]   = p2["product"]   or svc.get("product", "")
+            svc["version"]   = p2["version"]   or svc.get("version", "")
+            svc["extrainfo"] = p2["extrainfo"] or svc.get("extrainfo", "")
+
+    print(f"[+] Phase 2 complete — version data enriched on {len(p2_services)} port(s)")
+
+    # ------------------------------------------------------------------ #
+    # Phase 3 — Targeted NSE scripts per service                         #
+    # ------------------------------------------------------------------ #
+    print(f"[+] Nmap Phase 3 — Targeted NSE script execution")
+    # Group ports by service family to batch NSE calls
+    script_groups: dict = {}  # scripts_csv -> [port, ...]
+    for svc in p1_services:
+        scripts = _select_nse_scripts(svc.get("name", ""))
+        if scripts:
+            script_groups.setdefault(scripts, []).append(svc["port"])
+
+    nse_results: dict = {}  # port -> {script_id: output}
+    for scripts, ports in script_groups.items():
+        batch_ports = ",".join(ports)
+        batch_xml = _nmap_run([
+            "-Pn", "-sT", "-sV", "--version-intensity", "2", "-T4",
+            "-p", batch_ports,
+            "--script", scripts,
+            "--script-timeout", "30s",
+            "-oX", "-",
+            target,
+        ], timeout=180)
+        if batch_xml:
+            batch_results = _nmap_extract_script_output(batch_xml)
+            for port, scripts_out in batch_results.items():
+                nse_results.setdefault(port, {}).update(scripts_out)
+
+    nmap_meta["phase3_scripts"] = nse_results
+
+    # Attach NSE output to the matching service record
+    for svc in p1_services:
+        port_scripts = nse_results.get(svc["port"], {})
+        if port_scripts:
+            svc["nse_output"] = port_scripts
+            # Flatten to a readable string for LLM context
+            svc["nse_summary"] = "; ".join(
+                f"{sid}: {out[:200]}" for sid, out in port_scripts.items()
+            )
+        else:
+            svc["nse_output"]  = {}
+            svc["nse_summary"] = ""
+
+    nse_port_count = sum(1 for p in nse_results if nse_results[p])
+    print(f"[+] Phase 3 complete — NSE data on {nse_port_count} port(s)")
+
+    # ------------------------------------------------------------------ #
+    # Phase 4 — OS detection                                              #
+    # ------------------------------------------------------------------ #
+    print(f"[+] Nmap Phase 4 — OS detection")
+    p4_xml = _nmap_run([
+        "-Pn", "-O",
+        "--osscan-guess",
+        "--max-os-tries", "2",
+        "-p", ports_arg,
+        "-oX", "-",
+        target,
+    ], timeout=60)
+
+    os_info: dict = {"name": "", "accuracy": 0, "type": "", "vendor": ""}
+    if p4_xml:
+        try:
+            root = ET.fromstring(p4_xml)
+            best = None
+            for osmatch in root.findall(".//osmatch"):
+                acc = int(osmatch.attrib.get("accuracy", "0"))
+                if best is None or acc > best["accuracy"]:
+                    best = {
+                        "name":     osmatch.attrib.get("name", ""),
+                        "accuracy": acc,
+                    }
+                    osclass = osmatch.find("osclass")
+                    if osclass is not None:
+                        best["type"]   = osclass.attrib.get("type", "")
+                        best["vendor"] = osclass.attrib.get("vendor", "")
+            if best:
+                os_info = best
+        except ET.ParseError:
+            pass
+    nmap_meta["phase4_os"] = os_info
+    if os_info.get("name"):
+        print(f"[+] Phase 4 complete — OS: {os_info['name']} ({os_info['accuracy']}% confidence)")
+    else:
+        print("[+] Phase 4 complete — OS fingerprint not determined")
+
+    # ------------------------------------------------------------------ #
+    # Phase 5 — Normalise all data                                        #
+    # ------------------------------------------------------------------ #
+    print(f"[+] Nmap Phase 5 — Normalising discovery data")
+    # p1_services now carries merged Phase-2 version data and Phase-3 NSE output.
+    # Add OS context to each service so the LLM has full host context per record.
+    os_str = os_info.get("name", "")
+    for svc in p1_services:
+        svc.setdefault("product",   "")
+        svc.setdefault("version",   "")
+        svc.setdefault("extrainfo", "")
+        svc["os_context"] = os_str
+
+    port_summary = ", ".join(
+        f"{s['port']}/{s.get('name', '?')} {s.get('product', '')} {s.get('version', '')}".strip()
+        for s in p1_services
+    )
+    print(f"[+] Phase 5 complete — {len(p1_services)} service(s) normalised: {port_summary}")
+
+    return p1_services, nmap_meta
+
+
+def run_nmap(target):
+    """Compatibility shim — calls the 5-phase discovery pipeline and discards metadata."""
+    services, _ = run_nmap_discovery(target)
+    # Convert back to XML-based flow is no longer needed; return sentinel so
+    # callers that expect XML can detect the change.
+    return services
+
+
+def parse_nmap(xml_data):
+    """Legacy XML parser — kept for backward compatibility with any callers that
+    still pass raw XML.  Returns an empty list when given a list (new path)."""
+    if isinstance(xml_data, list):
+        return xml_data
+    return _parse_nmap_xml(xml_data)
 
 
 # ---------------------------------------------------------------------------
@@ -2089,7 +2405,7 @@ def query_llm(context, broken_tools=None, available_tools=None, used_actions=Non
         "nikto":      'nikto: {"url": "http://target:port", "ssl": false}  — optional: ssl:true to force SSL',
         "nikto_cgi":  'nikto_cgi: {"url": "http://target:port", "ssl": false}  — nikto with -C all (scan ALL CGI directories); use after plain nikto if more coverage needed',
         "nuclei":     'nuclei: {"url": "http://target:port", "tags": "cve,lfi,sqli", "severity": "medium,high,critical"}  — optional: tags (template filter), severity filter',
-        "ffuf":       f'ffuf: {{"url": "http://target:port", "wordlist": "{WORDLIST}", "extensions": "php,html", "method": "GET", "match_codes": "200,301,302,401,403"}}  — optional: extensions, method (GET/POST/HEAD/OPTIONS), match_codes, threads (5-15), rate (10-50), filter_size, filter_words, maxtime (60-600s, default 300; set higher for large wordlists e.g. 600 for common.txt)',
+        "ffuf":       f'ffuf: {{"url": "http://target:port", "wordlist": "{WORDLIST}", "extensions": "php,html", "method": "GET", "match_codes": "200,301,302,401,403"}}  — IMPORTANT: url must be a plain base URL with NO slash, NO asterisk, NO FUZZ suffix (FUZZ is appended automatically). Optional: extensions, method (GET/POST/HEAD/OPTIONS), match_codes, threads (5-15), rate (10-50), filter_size, filter_words, maxtime (60-600s, default 300)',
         "curl":       'curl: {"url": "http://target:port/path", "method": "GET", "headers": {"Authorization": "Bearer token"}}  — optional: method (GET/POST/HEAD/OPTIONS), headers dict',
         "ssh_enum":   'ssh_enum: {"host": "...", "port": "22"}',
         "rdp_enum":   'rdp_enum: {"host": "...", "port": "3389"}',
@@ -2123,6 +2439,9 @@ def query_llm(context, broken_tools=None, available_tools=None, used_actions=Non
     kb_block = context.get("tool_kb_text", "")
     kb_section = f"\n{kb_block}\n" if kb_block else ""
 
+    nse_block = context.get("nse_context", "")
+    nse_section = f"\nNSE SCRIPT RESULTS (from nmap Phase 3 — use to prioritise paths):\n{nse_block}\n" if nse_block else ""
+
     # Format already_run as a clear block-list the model can't miss
     already_run_sorted = sorted(used_actions)
     already_run_block = (
@@ -2149,12 +2468,13 @@ You are a penetration testing assistant. Reply with a single JSON object only.
 3. NEVER suggest a tool+args pair from ALREADY RUN above.
 4. NEVER suggest a tool from DISABLED TOOLS above.
 5. Prefer tools from each service's "recommended_tools" — use higher KB success rate tools first.
-6. If all recommended tools are exhausted, try a general tool (curl, nmap) with a new endpoint or argument.
-7. If there is nothing new to try, return {{"tool": "none"}}.
+6. Use NSE SCRIPT RESULTS to choose specific URLs, paths, or auth methods to test.
+7. If all recommended tools are exhausted, try a general tool (curl, nmap) with a new endpoint or argument.
+8. If there is nothing new to try, return {{"tool": "none"}}.
 
 AVAILABLE TOOLS:
 {tools_block}
-{kb_section}
+{kb_section}{nse_section}
 CURRENT FINDINGS:
 {json.dumps(ctx_summary, indent=2)}
 
@@ -2214,7 +2534,7 @@ def query_llm_parallel(context, broken_tools=None, available_tools=None, used_ac
         "nikto":      'nikto: {"url": "http://target:port", "ssl": false}',
         "nikto_cgi":  'nikto_cgi: {"url": "http://target:port", "ssl": false}',
         "nuclei":     'nuclei: {"url": "http://target:port", "tags": "cve,lfi,sqli", "severity": "medium,high,critical"}',
-        "ffuf":       f'ffuf: {{"url": "http://target:port", "wordlist": "{WORDLIST}", "extensions": "php,html", "method": "GET", "match_codes": "200,301,302,401,403", "maxtime": 300}}',
+        "ffuf":       f'ffuf: {{"url": "http://target:port", "wordlist": "{WORDLIST}", "extensions": "php,html", "method": "GET", "match_codes": "200,301,302,401,403", "maxtime": 300}}  — url must be a plain base URL, no FUZZ suffix (appended automatically)',
         "ssh_enum":   'ssh_enum: {"host": "...", "port": "22"}',
         "rdp_enum":   'rdp_enum: {"host": "...", "port": "3389"}',
         "dns_enum":   'dns_enum: {"domain": "..."}',
@@ -2253,6 +2573,7 @@ def query_llm_parallel(context, broken_tools=None, available_tools=None, used_ac
 - BLACKLIST — DO NOT USE ANY OF THESE: {sorted(used_actions | broken_tools)}
 - Return EXACTLY ONE action per service listed.
 - Use the recommended tool for each service — prefer tools with higher KB success rates.
+- Use NSE script results to choose specific paths or auth methods.
 
 TARGET: {target}
 
@@ -2262,6 +2583,7 @@ AVAILABLE TOOLS:
 SERVICES (assign one tool per service):
 {services_block}
 {context.get("tool_kb_text", "")}
+{("NSE SCRIPT RESULTS:\\n" + context.get("nse_context", "")) if context.get("nse_context") else ""}
 Return a JSON object:
 {{"actions": [{{"tool": "<name>", "args": <value>}}, ...]}}
 
@@ -2773,6 +3095,16 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   </tr>
   {% endfor %}
 </table>
+
+{% if nmap_discovery and nmap_discovery.nse_summary %}
+<h2>Nmap NSE Script Results (Phase 3)</h2>
+<table>
+  <tr><th>Port</th><th>Scripts Executed</th></tr>
+  {% for port, scripts in nmap_discovery.nse_summary.items() %}
+  <tr><td>{{ port }}</td><td>{{ scripts|join(', ') }}</td></tr>
+  {% endfor %}
+</table>
+{% endif %}
 
 <h2>Findings ({{ findings|length }})</h2>
 {% if findings %}
@@ -3552,6 +3884,21 @@ def _parse_llm_script_response(raw: str) -> dict | None:
             return {
                 "language": lang_m.group(1),
                 "strategy": strategy_m.group(1),
+                "script":   script,
+            }
+
+    # Strategy 5: the model output a bare Python/bash code block with no JSON.
+    # Wrap it in a minimal dict so it can still be executed.
+    code_m = re.search(r'```(?:python|bash)?\n(.*?)```', text, re.DOTALL)
+    if not code_m:
+        # Also try un-fenced code that starts with "import" or "#!/"
+        code_m = re.search(r'((?:import|#!/)[^\n].*)', text, re.DOTALL)
+    if code_m:
+        script = code_m.group(1).strip()
+        if len(script) > 20 and "VERDICT:" in script:
+            return {
+                "language": "python",
+                "strategy": "model-generated script (unwrapped)",
                 "script":   script,
             }
 
@@ -4596,9 +4943,13 @@ async def main_async():
         else:
             print("[!] No saved session found — starting fresh.")
 
-    # Nmap
-    nmap_xml = run_nmap(target)
-    services = parse_nmap(nmap_xml)
+    # ---------------------------------------------------------------------------
+    # Nmap 5-Phase Discovery
+    # ---------------------------------------------------------------------------
+    print(f"\n{'=' * 52}")
+    print("  Nmap Discovery — 5 Phases")
+    print(f"{'=' * 52}")
+    services, nmap_meta = run_nmap_discovery(target)
 
     if not services:
         print("[!] No open services found. Exiting.")
@@ -4609,6 +4960,11 @@ async def main_async():
     print("[+] Gathering target identity information ...")
     target_info = await gather_target_info(target, available_tools, airgap=AIRGAP_MODE)
     target_info.open_ports = len(services)
+    # Merge OS data from Phase 4 into TargetInfo if gather_target_info didn't find one
+    if not target_info.os_guess and nmap_meta.get("phase4_os", {}).get("name"):
+        os4 = nmap_meta["phase4_os"]
+        target_info.os_guess    = os4.get("name", "")
+        target_info.os_accuracy = os4.get("accuracy", 0)
 
     # CVE lookup
     print("[+] Searching CVE database ...")
@@ -4627,12 +4983,21 @@ async def main_async():
     )
     print(f"[+] Ranked services: {svc_summary}")
 
+    # Build a compact NSE summary for the LLM context so it can make better
+    # decisions about which additional tools/paths to pursue.
+    nse_context_lines: list = []
+    for svc in services:
+        nse_sum = svc.get("nse_summary", "")
+        if nse_sum:
+            nse_context_lines.append(f"  port {svc['port']}/{svc.get('name', '?')}: {nse_sum[:300]}")
+
     context = {
         "target":       target,
         "services":     services,
         "history":      [],
         "findings":     [],
         "tool_kb_text": "",   # populated below after KB load
+        "nse_context":  "\n".join(nse_context_lines) if nse_context_lines else "",
     }
 
     tool_kb = _load_tool_kb()
@@ -4644,7 +5009,11 @@ async def main_async():
         print("[+] Tool KB: no prior data — will start building from this scan")
 
     broken_tools = set()
-    scan_records = [{"tool": "nmap", "args": target, "cmd": f"nmap -Pn -T5 --open -oX - {target}", "status": "ok", "findings_count": 0}]
+    nmap_phase_cmd = (
+        f"nmap -Pn -T4 --open -p- --min-rate 2000 {target} | "
+        f"-sV -sC -p <ports> | --script <nse> | -O"
+    )
+    scan_records = [{"tool": "nmap", "args": target, "cmd": nmap_phase_cmd, "status": "ok", "findings_count": 0}]
     all_findings = []
     used_actions: set = set()  # deduplicate tool+args combos
 
@@ -4860,6 +5229,16 @@ async def main_async():
     print(f"{'=' * 52}")
 
     report = generate_report(target, services, all_findings, scan_records, profile_name, target_info=target_info)
+    # Attach nmap discovery metadata for report consumers and the HTML renderer
+    report["nmap_discovery"] = {
+        "open_ports":  nmap_meta.get("open_ports", []),
+        "os_detected": nmap_meta.get("phase4_os", {}),
+        "nse_summary": {
+            port: list(scripts.keys())
+            for port, scripts in nmap_meta.get("phase3_scripts", {}).items()
+            if scripts
+        },
+    }
 
     # Save final session state (includes target_info)
     save_session({
