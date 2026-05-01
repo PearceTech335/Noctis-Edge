@@ -508,14 +508,14 @@ This updates (in order):
 
 > **Note on step 7:** `update.sh` uses `git fetch` + `git reset --hard origin/master` rather than `git pull`. This means it will **always** succeed and always result in the exact latest version from GitHub, even if there are local modifications. Any uncommitted local changes to tracked files will be discarded — this is intentional for an update script.
 >
-> **Your data is safe.** `git reset --hard` only affects files that git tracks. All user-generated data lives in gitignored files and directories and is never touched by the update:
+> **Your data is safe.** `git reset --hard` only affects files that git tracks. All user-generated data lives in gitignored files and will never be deleted by the update:
 >
-> | File / Directory | Safe? |
-> |------------------|-------|
-> | `cve_knowledge_base.json` | ✅ gitignored — never modified by update |
-> | `tool_knowledge_base.json` | ✅ gitignored — never modified by update |
-> | `noctis.conf` | ✅ gitignored — your UUID and license key are preserved |
-> | `sessions/` | ✅ gitignored — all scan reports and session files are preserved |
+> | File / Directory | What the update does |
+> |------------------|----------------------|
+> | `cve_knowledge_base.json` | ✅ gitignored — `git reset --hard` never touches it. Subscribed users receive community KB entries **additively merged** in step 9 (new entries added, nothing overwritten or deleted). |
+> | `tool_knowledge_base.json` | ✅ gitignored — `git reset --hard` never touches it. Subscribed users receive community tool KB entries **additively merged** in step 10 (new entries added, nothing overwritten or deleted). |
+> | `noctis.conf` | ✅ gitignored — your UUID and license key are always preserved. |
+> | `sessions/` | ✅ gitignored — all scan reports and session files are always preserved. |
 ---
 
 ## CVE Knowledge Base
