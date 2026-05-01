@@ -32,15 +32,15 @@ This architecture makes Noctis Edge particularly suited for regulated environmen
 
 | Item | Size |
 |------|------|
-| Ollama model — `qwen2.5-coder:3b-instruct` (tool planning & script generation) | ~1.9 GB |
-| Ollama model — `llama3.2:3b` (report writing) | ~2.0 GB |
+| Ollama model — `phi4-mini:3.8b` (planning + reports) | ~2.5 GB |
+| Ollama model — `qwen2.5-coder:3b-instruct` (script generation) | ~2.0 GB |
 | Nuclei templates | ~1.5 GB |
 | CVE offline database (built by `setup.sh`) | ~3–5 GB |
 | SecLists wordlists (snap) | ~2 GB |
 | Tool binaries + Python venv | ~1 GB |
 | Scan session outputs | Variable |
 
-> **RAM note:** Two models run concurrently — `qwen2.5-coder:3b-instruct` (~2 GB RAM) for tool planning and script generation, and `llama3.2:3b` (~2 GB RAM) for report writing. Combined RAM footprint is ~4 GB for model inference. 8 GB RAM is sufficient; 16 GB+ recommended for parallel processing.
+> **RAM note:** Split-model architecture — `phi4-mini:3.8b` (~3 GB) handles planning, iteration decisions, and report prose; `qwen2.5-coder:3b-instruct` (~2 GB) handles all CVE script generation. Models are called sequentially so only one is loaded at a time. 8 GB RAM is sufficient; 16 GB+ recommended.
 
 ---
 
@@ -127,10 +127,10 @@ chmod +x setup.sh
 | Step | What gets installed |
 |------|---------------------|
 | Git submodules | `nikto/` — cloned from [sullo/nikto](https://github.com/sullo/nikto) |
-| apt packages | `nmap`, `curl`, `gobuster`, `ffuf`, `hydra`, `ssh-audit`, `dnsenum`, `dnsrecon`, `perl`, `golang-go`, `python3-tk`, and more |
+| apt packages | `nmap`, `curl`, `ffuf`, `hydra`, `ssh-audit`, `dnsenum`, `dnsrecon`, `perl`, `golang-go`, `python3-tk`, and more |
 | SecLists | Wordlists via `snap install seclists` |
 | Nuclei | Go-based template scanner (`~/go/bin/nuclei`) |
-| Ollama | Local LLM server + pulls `qwen2.5-coder:3b-instruct` (scan engine) and `llama3.2:3b` (report writing) |
+| Ollama | Local LLM server + pulls `phi4-mini:3.8b` (planning/reports) and `qwen2.5-coder:3b-instruct` (script generation) |
 | Python venv | `.venv/` with `requests`, `jinja2`, `pycryptodome`, `flask`, `flask-sock` |
 | CVE database | Clones `CVE/cve-offline/` and builds `cve-summary.csv` |
 | rdpscan | Clones `rdpscan/` helper |
@@ -255,7 +255,7 @@ The Web UI provides:
 |------|-------------|
 | `<target>` | IP address or hostname to scan (required) |
 | `[profile]` | Assessment profile (default: `web`). See Profiles section below. |
-| `--aggressive` | Disable safe mode — runs gobuster, ffuf, hydra without asking for approval |
+| `--aggressive` | Disable safe mode — runs ffuf, hydra without asking for approval |
 | `--dns-enum` | Enable DNS enumeration tools (amass, dnsenum, dnsrecon) — disabled by default, requires internet access |
 | `--msf-validate` | After scan, use Metasploit `check` commands to non-destructively validate each CVE match |
 | `--cve-test` | After scan, use the LLM to generate and execute safe probe scripts for each matched CVE |
@@ -270,8 +270,8 @@ Pass one or more profile names after the target. Tools from all selected profile
 
 | Profile | Focus | Key Tools |
 |---------|-------|-----------|
-| `web` | Web Application Assessment | curl, nikto, nuclei, gobuster, ffuf |
-| `external` | External Perimeter Review | nmap, curl, nuclei, gobuster, dns_enum |
+| `web` | Web Application Assessment | curl, nikto, nuclei, ffuf |
+| `external` | External Perimeter Review | nmap, curl, nuclei, ffuf, dns_enum |
 | `internal_ad` | Internal AD Assessment | nmap, nxc (SMB/LDAP) |
 | `api` | API Assessment | curl, nuclei, ffuf |
 | `cloud` | Cloud Exposure Review | curl, nuclei, dns_enum |
@@ -305,7 +305,7 @@ The LLM responds with a single JSON action `{"tool": "<name>", "args": "<value>"
 Noctis Edge executes the tool, parses structured findings from the output, and feeds results back into context for the next iteration.
 
 Tools that time out with no findings or return error signals are auto-disabled for the session.
-In `SAFE` mode (default), aggressive tools (gobuster, ffuf, hydra) require operator approval before running.
+In `SAFE` mode (default), aggressive tools (ffuf, hydra) require operator approval before running.
 
 ### 4. Finding Verification & Enrichment
 After each tool run (Phase 1 and Phase 2), findings go through:
@@ -419,8 +419,8 @@ cve_knowledge_base.json           ← cross-engagement CVE test KB (project root
 
 | Constant | Default | Description |
 |----------|---------|-------------|
-| `MODEL` | `qwen2.5-coder:3b-instruct` | Model for tool planning & script generation (`NOCTIS_OLLAMA_MODEL` env var to override) |
-| `REPORT_MODEL` | `llama3.2:3b` | Model for report prose — conclusion + remediation (`NOCTIS_REPORT_MODEL` env var to override) |
+| `MODEL` | `phi4-mini:3.8b` | Planning, iteration decisions, report prose, CVE remediation (`NOCTIS_OLLAMA_MODEL` env var to override) |
+| `SCRIPT_MODEL` | `qwen2.5-coder:3b-instruct` | CVE exploit scripts, test scripts, verification scripts (`NOCTIS_OLLAMA_SCRIPT_MODEL` env var to override) |
 | `OLLAMA_URL` | `http://localhost:11434/api/generate` | Ollama API endpoint |
 | `MAX_ITERATIONS` | `10` | Max Phase 2 sequential loop iterations |
 | `MAX_PARALLEL_ACTIONS` | `4` | Max concurrent tools in the Phase 1 parallel wave |
@@ -439,8 +439,7 @@ cve_knowledge_base.json           ← cross-engagement CVE test KB (project root
 | `curl` | HTTP probing |
 | `nikto` | Web server vulnerability scanning (bundled in `nikto/`) |
 | `nuclei` | Template-based scanning |
-| `gobuster` | Directory brute-forcing |
-| `ffuf` | Web fuzzing |
+| `ffuf` | Directory and web fuzzing (rate-limited, auto-calibrated) |
 | `hydra` | Credential brute-forcing (aggressive only) |
 | `ssh-audit` | SSH configuration auditing |
 | `amass` | Subdomain enumeration (internet required) |
@@ -458,7 +457,7 @@ Install notes: see [Readme/requirements.md](Readme/requirements.md).
 
 ## Ollama Setup
 
-Noctis Edge requires Ollama. `setup.sh` installs it and pulls both models automatically.
+Noctis Edge requires Ollama. `setup.sh` installs it and pulls the model automatically.
 
 `noctis.py` will **automatically start `ollama serve`** if it is not already running — no manual step needed.
 
@@ -469,18 +468,18 @@ Manual install (if not using `setup.sh`):
 curl -fsSL https://ollama.com/install.sh | sh
 
 # Pull both models:
-ollama pull qwen2.5-coder:3b-instruct   # tool planning, script generation, CVE test scripts
-ollama pull llama3.2:3b                 # report writing (conclusion + remediation guidance)
+ollama pull phi4-mini:3.8b                 # planning, iteration decisions, report prose
+ollama pull qwen2.5-coder:3b-instruct      # CVE exploit scripts, test scripts, verification scripts
 ```
 
-Ollama will be started automatically by `noctis.py` on first use. Both models are lightweight 3B variants — inference is typically 2–5 seconds per LLM call on modern hardware. The program prints a spinner while waiting.
+Ollama will be started automatically by `noctis.py` on first use. The split-model architecture routes natural-language reasoning tasks to `phi4-mini:3.8b` (128K context, native function calling) and all Python script generation to `qwen2.5-coder:3b-instruct` (code-specialist training, stronger structured-output for exploit probes). Models are called sequentially — only one is loaded in RAM at a time. Inference is typically 30–90 seconds per LLM call on CPU-only hardware.
 
-### Model roles
+### Model
 
 | Model | Environment variable | Purpose |
 |-------|---------------------|---------|
-| `qwen2.5-coder:3b-instruct` | `NOCTIS_OLLAMA_MODEL` | Agentic tool decisions, scan planning, CVE exploit scripts, test scripts, verification scripts |
-| `llama3.2:3b` | `NOCTIS_REPORT_MODEL` | Report conclusion paragraph, CVE remediation guidance |
+| `phi4-mini:3.8b` | `NOCTIS_OLLAMA_MODEL` | Agentic tool decisions, scan planning, report conclusion, CVE remediation guidance |
+| `qwen2.5-coder:3b-instruct` | `NOCTIS_OLLAMA_SCRIPT_MODEL` | CVE known-exploit scripts, CVE test scripts, verification scripts |
 
 ---
 
@@ -500,11 +499,10 @@ This updates (in order):
 | 2 | SecLists (snap) refreshed |
 | 3 | pip dependencies upgraded |
 | 4 | Nuclei binary + templates updated |
-| 5 | Both Ollama models pulled (`qwen2.5-coder:3b-instruct` + `llama3.2:3b`) |
+| 5 | Ollama models pulled (`phi4-mini:3.8b` + `qwen2.5-coder:3b-instruct`) |
 | 6 | CVE offline database pulled + CSV rebuilt |
 | 7 | Noctis Edge repository (`git pull`) |
-| 8 | CVE Knowledge Base submitted to the community relay |
-
+| 8 | CVE Knowledge Base submitted to the community relay || 9 | Tool Knowledge Base submitted to the community relay (pull community KB if `KB_LICENSE_KEY` set) |
 ---
 
 ## CVE Knowledge Base
@@ -541,9 +539,11 @@ The community KB is pulled on every subsequent `./update.sh` run as long as `PAI
 | Script | Purpose |
 |--------|---------|
 | `setup.sh` | One-shot setup for a fresh install — run once after cloning. Also generates a unique installation ID stored in `noctis.conf`. |
-| `update.sh` | Refresh of all components. On completion, automatically submits your local `cve_knowledge_base.json` to the community relay (no token required). |
+| `update.sh` | Refresh of all components. On completion, automatically submits your local `cve_knowledge_base.json` and `tool_knowledge_base.json` to the community relay (no token required). |
 | `scripts/submit_kb.py` | POSTs the local CVE knowledge base to the Cloudflare community relay. Called automatically by `update.sh`. |
-| `scripts/merge_kb.py` | Additively merges an external knowledge base JSON into the local one (no data is overwritten or removed). |
+| `scripts/merge_kb.py` | Additively merges an external CVE knowledge base JSON into the local one (no data is overwritten or removed). |
+| `scripts/submit_tool_kb.py` | POSTs the local tool performance knowledge base to the Cloudflare community relay. Called automatically by `update.sh`. |
+| `scripts/merge_tool_kb.py` | Additively merges an external tool knowledge base JSON into the local one (no data is overwritten or removed). |
 
 ---
 
@@ -556,6 +556,15 @@ The `cloudflare/` directory contains the Cloudflare Worker that relays KB submis
 | `cloudflare/worker.js` | Worker source — validates, rate-limits, and writes submissions to GitHub |
 | `cloudflare/wrangler.toml` | Wrangler deployment config (KV bindings, route) |
 | `cloudflare/.gitignore` | Excludes `.wrangler/` cache (contains sensitive account credentials) |
+
+The worker handles four routes:
+
+| Route | Method | Purpose |
+|-------|--------|---------|
+| `/submit` | POST | CVE KB submission — writes to `Noctis-Edge-Submissions` repo |
+| `/community-kb` | POST | CVE community KB pull — reads from `Noctis-Edge-KB` (Polar license check) |
+| `/submit-tool` | POST | Tool KB submission — writes to `Noctis-Edge-Tool-Submissions` repo |
+| `/community-tool-kb` | POST | Tool community KB pull — reads from `Noctis-Edge-Tool-KB` (Polar license check) |
 
 The worker is already deployed at `https://noctis-kb-relay.pearcetechnologies1.workers.dev`. End users do not need to deploy anything — `update.sh` handles submission automatically.
 
@@ -577,6 +586,72 @@ The following are excluded from version control (see `.gitignore`):
 
 ---
 
+## Version History
+
+## What's New in v0.6.7
+
+**ffuf scoped to HTTP/HTTPS only** — ffuf is a directory fuzzer and is now dispatched only when the service is a genuine HTTP or HTTPS endpoint. Previously, `ipp` services (CUPS/printing on port 631) also triggered ffuf, which ran its full 300-second timeout budget against a printing protocol that returns no directory listings, inflating scan times by ~5 minutes per IPP port with zero findings.
+
+- `_tools_for_service` split into two branches: `http/ssl` → `[curl, nikto, nuclei, ffuf]`; `ipp` → `[curl, nikto, nuclei]` (no ffuf)
+- No other ffuf behaviour changed — it remains fully available for all web application targets
+- No other tool removed from any service branch
+
+**Tool Knowledge Base community pipeline** — mirrors the existing CVE KB pipeline with a parallel infrastructure for tool performance data:
+
+- `scripts/submit_tool_kb.py` — submits `tool_knowledge_base.json` to the community relay via `/submit-tool`
+- `scripts/merge_tool_kb.py` — additively merges community tool KB into the local file
+- `cloudflare/worker.js` extended with `/submit-tool` and `/community-tool-kb` routes (same rate-limiting, same Polar license gate for pull)
+- `update.sh` step 9/9 added — submits and pulls tool KB alongside the existing CVE KB step
+- Submissions pipeline added to `Noctis-Edge-Tool-Submissions` GitHub repo (validate + build workflows)
+
+---
+
+## What's New in v0.6.6
+
+**Split-model architecture** — CVE script generation now uses `qwen2.5-coder:3b-instruct` (code-specialist model) while planning, iteration decisions, report prose, and remediation guidance continue using `phi4-mini:3.8b`.
+
+- `SCRIPT_MODEL` constant added — controls the script generation model (`NOCTIS_OLLAMA_SCRIPT_MODEL` env var to override)
+- Three script generation call sites switched to `SCRIPT_MODEL`: `_generate_known_exploit_script`, `_generate_cve_test_script`, `_generate_verification_script`
+- Models are called sequentially — only one loaded in RAM at a time, no memory overhead over single-model architecture
+- Addresses false-positive CVE verdicts caused by broken Python syntax in LLM-generated probe scripts (logic fall-through, missing imports, wrong protocol)
+- `setup.sh` and `update.sh` pull both models automatically
+- Total additional storage: ~2.0 GB
+
+---
+
+## What's New in v0.6.5
+
+**Single-model architecture** — `llama3.2:3b` has been removed. All LLM tasks (tool planning, CVE script generation, report conclusion, CVE remediation guidance) now run through `phi4-mini:3.8b`.
+
+- Reduces storage requirements by ~2.0 GB
+- Reduces RAM footprint by ~2 GB (no second model loaded for report generation)
+- Simplifies setup: only one `ollama pull` required
+- Removes `REPORT_MODEL` / `NOCTIS_REPORT_MODEL` constant and env var — `MODEL` is now used for everything
+- `phi4-mini:3.8b` performs equivalently to `llama3.2:3b` on the two-sentence conclusion and remediation prose prompts, while being a stronger model overall
+
+**Improved LLM prompts (phi4-mini v1)** — all five prompts rewritten for phi4-mini's behaviour:
+- `### PYTHON RULES` block in all three CVE script prompts — prevents broken-Python / non-stdlib import failures
+- `FORBIDDEN` import list — eliminates `bs4`/`lxml` failures
+- Single-quote rule — stops escaped double-quotes breaking JSON output
+- Concrete working script example in JSON reply format — model adapts rather than invents syntax
+- `### CONTRAST RULE — MANDATORY` in verification prompt — enforces independent approach
+- `ALREADY RUN` moved to top of iteration prompt (primacy bias)
+- Numbered rules + rule #6 general-tool fallback in iteration prompt
+- Single `BLACKLIST` in parallel-scan prompt merges `used_actions` + `broken_tools`
+
+**Collapsible CVE test result cards** in HTML report — each CVE card collapses to header-only by default; click to expand attempts, verification, and remediation.
+
+---
+
+| Version | Date | Changes |
+|---------|------|---------|
+| **v0.6.7** | May 2026 | ffuf scoped to HTTP/HTTPS only (removed from IPP/CUPS service branch); Tool KB community pipeline added (`submit_tool_kb.py`, `merge_tool_kb.py`, Cloudflare routes `/submit-tool` + `/community-tool-kb`, `update.sh` step 9/9) |
+| **v0.6.6** | May 2026 | Split-model architecture: `qwen2.5-coder:3b-instruct` added for CVE script generation; `phi4-mini:3.8b` retained for planning/reports; `SCRIPT_MODEL` constant + `NOCTIS_OLLAMA_SCRIPT_MODEL` env var |
+| **v0.6.5** | May 2026 | Single-model architecture: removed `llama3.2:3b`, `phi4-mini:3.8b` now handles all LLM tasks; phi4-mini v1 prompt improvements (PYTHON RULES, CONTRAST RULE, BLACKLIST consolidation, primacy bias); collapsible CVE test result cards in HTML report |
+| **v0.6.4** | May 2026 | Switched scan engine to `phi4-mini:3.8b` (2.5 GB, 128K ctx, native function calling — ~60–90s/call on CPU vs ~3–5 min for 7b); added 4-strategy LLM response parser; added `nikto_cgi` tool; port-qualified service keys and best-tool-per-service rankings; fixed `ffuf -retries` flag; fixed Phase 1 URL construction; exposed `maxtime` in ffuf descriptions; CVE test verdicts in console summary; version in CLI banner and Web UI; dedicated short-term/long-term remediation and Steps to Reproduce sections in HTML report |
+
+---
+
 ## Credits
 
 Noctis Edge builds on and bundles a number of excellent open-source projects:
@@ -586,7 +661,6 @@ Noctis Edge builds on and bundles a number of excellent open-source projects:
 | [Nikto](https://github.com/sullo/nikto) | Chris Sullo | Web server vulnerability scanner (bundled as submodule) |
 | [Nuclei](https://github.com/projectdiscovery/nuclei) | ProjectDiscovery | Template-based vulnerability scanning |
 | [nmap](https://nmap.org) | Gordon Lyon (Fyodor) | Network discovery and port scanning |
-| [Gobuster](https://github.com/OJ/gobuster) | OJ Reeves | Directory and DNS enumeration |
 | [ffuf](https://github.com/ffuf/ffuf) | Joona Hoikkala | Fast web fuzzer |
 | [Hydra](https://github.com/vanhauser-thc/thc-hydra) | van Hauser / THC | Login brute-force testing |
 | [ssh-audit](https://github.com/jtesta/ssh-audit) | Joe Testa | SSH configuration auditing |

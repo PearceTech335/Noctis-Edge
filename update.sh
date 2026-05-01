@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  Noctis Edge — Monthly Update Script
+#  Noctis Edge — Update Script
 #  Run: ./update.sh
-#  Updates: apt packages, snap, pip deps, nuclei, Ollama model, CVE database
+#  Updates: apt packages, snap, pip deps, nuclei, Ollama models, CVE database,
+#           CVE knowledge base (submit + pull), Tool knowledge base (submit + pull)
 # =============================================================================
 
 set -euo pipefail
@@ -11,8 +12,8 @@ set -euo pipefail
 # fail immediately rather than hanging the terminal waiting for a password.
 export GIT_TERMINAL_PROMPT=0
 
-OLLAMA_MODEL="qwen2.5-coder:3b-instruct"
-OLLAMA_REPORT_MODEL="llama3.2:3b"
+OLLAMA_MODEL="phi4-mini:3.8b"
+OLLAMA_SCRIPT_MODEL="qwen2.5-coder:3b-instruct"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Load per-user configuration (tokens, UUID, paid-tier flag)
@@ -55,7 +56,7 @@ ok "sudo credentials cached"
 # =============================================================================
 # 1. apt — system packages
 # =============================================================================
-header "1/7  System packages (apt)"
+header "1/9  System packages (apt)"
 info "Running apt update + upgrade ..."
 sudo apt update -qq      || err "apt update failed — continuing"
 sudo apt upgrade -y      || err "apt upgrade failed — continuing"
@@ -67,7 +68,7 @@ ok "apt done"
 # =============================================================================
 # 2. snap — SecLists
 # =============================================================================
-header "2/7  Snap packages (seclists)"
+header "2/9  Snap packages (seclists)"
 if command -v snap &>/dev/null; then
     info "Refreshing snap packages ..."
     sudo snap refresh || err "snap refresh failed — continuing"
@@ -79,7 +80,7 @@ fi
 # =============================================================================
 # 3. pip — Python dependencies
 # =============================================================================
-header "3/7  Python dependencies (pip)"
+header "3/9  Python dependencies (pip)"
 VENV="$SCRIPT_DIR/.venv"
 if [[ -f "$VENV/bin/activate" ]]; then
     info "Updating packages in venv at $VENV ..."
@@ -101,7 +102,7 @@ fi
 # =============================================================================
 # 4. Nuclei — binary + templates
 # =============================================================================
-header "4/7  Nuclei (Go binary + templates)"
+header "4/9  Nuclei (Go binary + templates)"
 if command -v nuclei &>/dev/null; then
     info "Updating nuclei binary ..."
     go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest 2>/dev/null \
@@ -119,7 +120,7 @@ fi
 # =============================================================================
 # 5. Ollama — model refresh
 # =============================================================================
-header "5/7  Ollama models"
+header "5/9  Ollama models"
 if command -v ollama &>/dev/null; then
     # Check if server is running; if not, start it temporarily
     if curl -s --max-time 3 http://localhost:11434/api/tags &>/dev/null; then
@@ -127,9 +128,9 @@ if command -v ollama &>/dev/null; then
         ollama pull "$OLLAMA_MODEL" \
             && ok "$OLLAMA_MODEL up to date" \
             || err "$OLLAMA_MODEL pull failed"
-        ollama pull "$OLLAMA_REPORT_MODEL" \
-            && ok "$OLLAMA_REPORT_MODEL up to date" \
-            || err "$OLLAMA_REPORT_MODEL pull failed"
+        ollama pull "$OLLAMA_SCRIPT_MODEL" \
+            && ok "$OLLAMA_SCRIPT_MODEL up to date" \
+            || err "$OLLAMA_SCRIPT_MODEL pull failed"
     else
         info "Ollama server not running — starting temporarily ..."
         ollama serve &>/dev/null &
@@ -138,9 +139,9 @@ if command -v ollama &>/dev/null; then
         ollama pull "$OLLAMA_MODEL" \
             && ok "$OLLAMA_MODEL up to date" \
             || err "$OLLAMA_MODEL pull failed"
-        ollama pull "$OLLAMA_REPORT_MODEL" \
-            && ok "$OLLAMA_REPORT_MODEL up to date" \
-            || err "$OLLAMA_REPORT_MODEL pull failed"
+        ollama pull "$OLLAMA_SCRIPT_MODEL" \
+            && ok "$OLLAMA_SCRIPT_MODEL up to date" \
+            || err "$OLLAMA_SCRIPT_MODEL pull failed"
         kill "$OLLAMA_PID" 2>/dev/null || true
     fi
 else
@@ -150,7 +151,7 @@ fi
 # =============================================================================
 # 6. CVE offline database
 # =============================================================================
-header "6/7  CVE offline database"
+header "6/9  CVE offline database"
 CVE_DIR="$SCRIPT_DIR/CVE/cve-offline"
 if [[ -d "$CVE_DIR/.git" ]]; then
     info "Pulling latest CVE repo ..."
@@ -174,7 +175,7 @@ fi
 # =============================================================================
 # 7. Noctis Edge itself
 # =============================================================================
-header "7/7  Noctis Edge repository"
+header "7/9  Noctis Edge repository"
 if [[ -d "$SCRIPT_DIR/.git" ]]; then
     info "Pulling latest Noctis Edge ..."
     # Always pull via HTTPS so no SSH key or GitHub credentials are required.
@@ -189,7 +190,7 @@ fi
 # =============================================================================
 # 8. CVE Knowledge Base sync
 # =============================================================================
-header "8/8  CVE Knowledge Base sync"
+header "8/9  CVE Knowledge Base sync"
 
 KB_LOCAL="$SCRIPT_DIR/cve_knowledge_base.json"
 VENV="$SCRIPT_DIR/.venv"
@@ -246,6 +247,59 @@ else
 fi
 
 ok "KB sync done"
+
+# =============================================================================
+# 9. Tool Knowledge Base sync
+# =============================================================================
+header "9/9  Tool Knowledge Base sync"
+
+TOOL_KB_LOCAL="$SCRIPT_DIR/tool_knowledge_base.json"
+
+# ── Submit (all users) ────────────────────────────────────────────────────────
+if [[ -z "$KB_USER_ID" ]]; then
+    err "Tool KB submission skipped — KB_USER_ID missing"
+else
+    info "Submitting tool knowledge base via community relay ..."
+    TOOL_RELAY_ARGS=("$TOOL_KB_LOCAL" "$KB_USER_ID")
+    [[ -n "$KB_RELAY_URL" ]] && TOOL_RELAY_ARGS+=("$KB_RELAY_URL")
+    "$PYTHON" "$SCRIPT_DIR/scripts/submit_tool_kb.py" "${TOOL_RELAY_ARGS[@]}" \
+        && ok "Tool KB submission complete" \
+        || err "Tool KB submission failed — will retry on next update"
+fi
+
+# ── Pull community tool KB (subscribers only) ─────────────────────────────────
+if [[ -z "$KB_LICENSE_KEY" ]]; then
+    promo "Community tool KB pull skipped — KB_LICENSE_KEY not set in noctis.conf"
+else
+    info "Pulling community tool knowledge base (license key found) ..."
+    _TOOL_RELAY="https://noctis-kb-relay.pearcetechnologies1.workers.dev"
+    _TMP_TOOL_KB="/tmp/_noctis_community_tool_kb_$$.json"
+    HTTP_CODE=$(curl -sS -w "%{http_code}" -o "$_TMP_TOOL_KB" \
+        --max-time 30 \
+        -X POST "$_TOOL_RELAY/community-tool-kb" \
+        -H "Content-Type: application/json" \
+        -d "{\"license_key\":\"$KB_LICENSE_KEY\"}" 2>/dev/null)
+    CURL_EXIT=$?
+    if [[ "$CURL_EXIT" != "0" ]]; then
+        err "Community tool KB download failed (curl error $CURL_EXIT) — will retry on next update"
+        rm -f "$_TMP_TOOL_KB"
+    elif [[ "$HTTP_CODE" == "200" ]]; then
+        MERGE_OUTPUT=$("$PYTHON" "$SCRIPT_DIR/scripts/merge_tool_kb.py" \
+            "$_TMP_TOOL_KB" "$TOOL_KB_LOCAL" 2>&1)
+        MERGE_EXIT=$?
+        [[ "$MERGE_EXIT" == "0" ]] && ok "Community tool KB merged: $MERGE_OUTPUT" \
+            || err "Tool KB merge failed: $MERGE_OUTPUT"
+        rm -f "$_TMP_TOOL_KB"
+    elif [[ "$HTTP_CODE" == "403" ]]; then
+        err "License key rejected — check your subscription at https://buy.polar.sh/polar_cl_rEP2IebC07PDSnIal0HF4kZSBJVecdZSmkREx3Emnin"
+        rm -f "$_TMP_TOOL_KB"
+    else
+        err "Community tool KB download failed (HTTP $HTTP_CODE) — will retry on next update"
+        rm -f "$_TMP_TOOL_KB"
+    fi
+fi
+
+ok "Tool KB sync done"
 
 # =============================================================================
 # Done

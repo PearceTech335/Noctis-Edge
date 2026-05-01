@@ -29,8 +29,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-OLLAMA_MODEL="qwen2.5-coder:3b-instruct"
-OLLAMA_REPORT_MODEL="llama3.2:3b"
+OLLAMA_MODEL="phi4-mini:3.8b"
+OLLAMA_SCRIPT_MODEL="qwen2.5-coder:3b-instruct"
 
 CVE_REPO="https://github.com/trickest/cve.git"
 CVE_OFFLINE_REPO="https://github.com/trickest/cve-offline.git"
@@ -92,7 +92,6 @@ sudo apt install -y \
     nmap \
     curl \
     wget \
-    gobuster \
     ffuf \
     hydra \
     ssh-audit \
@@ -188,10 +187,10 @@ ollama pull "$OLLAMA_MODEL" \
     && ok "Model $OLLAMA_MODEL ready" \
     || err "Model pull failed — run 'ollama pull $OLLAMA_MODEL' manually after setup"
 
-info "Pulling report model: $OLLAMA_REPORT_MODEL ..."
-ollama pull "$OLLAMA_REPORT_MODEL" \
-    && ok "Model $OLLAMA_REPORT_MODEL ready" \
-    || err "Model pull failed — run 'ollama pull $OLLAMA_REPORT_MODEL' manually after setup"
+info "Pulling model: $OLLAMA_SCRIPT_MODEL (code-specialist — script generation) ..."
+ollama pull "$OLLAMA_SCRIPT_MODEL" \
+    && ok "Model $OLLAMA_SCRIPT_MODEL ready" \
+    || err "Model pull failed — run 'ollama pull $OLLAMA_SCRIPT_MODEL' manually after setup"
 
 if [[ "${STARTED_OLLAMA:-0}" == "1" ]]; then
     kill "$OLLAMA_PID" 2>/dev/null || true

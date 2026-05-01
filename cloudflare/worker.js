@@ -14,8 +14,10 @@
  *   RATE_LIMIT_KV          (KV)      Namespace for per-UUID rate-limit tracking
  *
  * Routes:
- *   POST /submit        Accept a KB submission
- *   POST /community-kb  Validate Polar license key and serve community_kb.json
+ *   POST /submit        Accept a CVE KB submission
+ *   POST /submit-tool   Accept a tool performance KB submission
+ *   POST /community-kb       Validate Polar license key and serve community_kb.json
+ *   POST /community-tool-kb  Validate Polar license key and serve community_tool_kb.json
  *   GET  /health        Liveness probe
  */
 
@@ -23,14 +25,22 @@ const GITHUB_OWNER    = "PearceTech335";
 const GITHUB_REPO     = "Noctis-Edge-Submissions";
 const GITHUB_API_BASE = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents`;
 
-const MAX_KB_BYTES   = 10 * 1024 * 1024;  // 10 MB hard limit
+// Tool KB repos
+const GITHUB_TOOL_OWNER    = "PearceTech335";
+const GITHUB_TOOL_REPO     = "Noctis-Edge-Tool-Submissions";
+const GITHUB_TOOL_API_BASE = `https://api.github.com/repos/${GITHUB_TOOL_OWNER}/${GITHUB_TOOL_REPO}/contents`;
+
+const MAX_KB_BYTES      = 10 * 1024 * 1024;  // 10 MB hard limit
+const MAX_TOOL_KB_BYTES =  1 * 1024 * 1024;  //  1 MB — tool KB is small (no scripts)
 const MAX_DAILY_SUBS = 4;                  // max submissions per UUID per 24 h
 const RATE_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 // UUID v4 pattern
 const UUID_RE    = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-// CVE ID pattern — top-level keys of every submitted KB must match this
+// CVE ID pattern — top-level keys of every submitted CVE KB must match this
 const CVE_KEY_RE = /^CVE-\d{4}-\d+$/;
+// Tool name pattern — lowercase alnum + underscores/hyphens, max 50 chars
+const TOOL_KEY_RE = /^[a-z_][a-z0-9_-]{0,49}$/;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -56,8 +66,8 @@ function githubHeaders(token) {
 // Rate limiting (Cloudflare KV)
 // ---------------------------------------------------------------------------
 
-async function checkRateLimit(kv, userId) {
-  const key  = `rate:${userId}`;
+async function checkRateLimit(kv, userId, prefix = "rate") {
+  const key  = `${prefix}:${userId}`;
   const now  = Date.now();
   const raw  = await kv.get(key, { type: "json" });
   // Keep only hits within the rolling window
@@ -93,6 +103,27 @@ async function putFile(filename, contentB64, message, token, sha = null) {
   if (sha) payload.sha = sha;
 
   const resp = await fetch(`${GITHUB_API_BASE}/${filename}`, {
+    method: "PUT",
+    headers: { ...githubHeaders(token), "Content-Type": "application/json" },
+    body:    JSON.stringify(payload),
+  });
+  return resp.status;
+}
+
+async function getToolFileSha(filename, token) {
+  const resp = await fetch(`${GITHUB_TOOL_API_BASE}/${filename}`, {
+    headers: githubHeaders(token),
+  });
+  if (!resp.ok) return null;
+  const data = await resp.json();
+  return data.sha ?? null;
+}
+
+async function putToolFile(filename, contentB64, message, token, sha = null) {
+  const payload = { message, content: contentB64 };
+  if (sha) payload.sha = sha;
+
+  const resp = await fetch(`${GITHUB_TOOL_API_BASE}/${filename}`, {
     method: "PUT",
     headers: { ...githubHeaders(token), "Content-Type": "application/json" },
     body:    JSON.stringify(payload),
@@ -255,6 +286,157 @@ async function handleCommunityKB(request, env) {
 }
 
 // ---------------------------------------------------------------------------
+// Tool KB request handlers
+// ---------------------------------------------------------------------------
+
+async function handleToolSubmit(request, env) {
+  // ── Parse body ────────────────────────────────────────────────────────────
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return jsonResp({ error: "Request body must be valid JSON" }, 400);
+  }
+
+  const { user_id, tool_kb } = body;
+
+  // ── Validate user_id ──────────────────────────────────────────────────────
+  if (!user_id || typeof user_id !== "string" || !UUID_RE.test(user_id)) {
+    return jsonResp({ error: "user_id must be a valid UUID v4" }, 400);
+  }
+
+  // ── Validate tool_kb shape ────────────────────────────────────────────────
+  if (!tool_kb || typeof tool_kb !== "object" || Array.isArray(tool_kb)) {
+    return jsonResp({ error: "tool_kb must be a non-null JSON object" }, 400);
+  }
+
+  const invalidKeys = Object.keys(tool_kb).filter(k => k !== "_meta" && !TOOL_KEY_RE.test(k));
+  if (invalidKeys.length > 0) {
+    return jsonResp({
+      error: `Invalid tool name keys: ${invalidKeys.slice(0, 3).join(", ")}`,
+    }, 400);
+  }
+
+  // ── Size check ────────────────────────────────────────────────────────────
+  const kbStr   = JSON.stringify(tool_kb);
+  const kbBytes = new TextEncoder().encode(kbStr).length;
+  if (kbBytes > MAX_TOOL_KB_BYTES) {
+    return jsonResp({
+      error: `Tool KB payload exceeds 1 MB limit (${(kbBytes / 1_048_576).toFixed(1)} MB received)`,
+    }, 413);
+  }
+
+  // ── Rate limiting (separate key prefix from CVE submissions) ─────────────
+  const rate = await checkRateLimit(env.RATE_LIMIT_KV, user_id, "tool-rate");
+  if (!rate.allowed) {
+    return jsonResp({
+      error: `Rate limit exceeded — max ${MAX_DAILY_SUBS} tool KB submissions per 24 hours`,
+    }, 429);
+  }
+
+  // ── Strip _meta before writing to GitHub ─────────────────────────────────
+  const { _meta: _stripped, ...cleanKb } = tool_kb;
+  const kbCleanStr = JSON.stringify(cleanKb);
+  const filename   = `${user_id}.json`;
+  const contentB64 = btoa(String.fromCharCode(...new Uint8Array(new TextEncoder().encode(kbCleanStr))));
+  const ts         = new Date().toISOString();
+  const message    = `tool-kb-submission: ${user_id} ${ts}`;
+
+  let status = await putToolFile(filename, contentB64, message, env.GITHUB_TOOL_TOKEN);
+
+  if (status === 422) {
+    const sha = await getToolFileSha(filename, env.GITHUB_TOOL_TOKEN);
+    if (sha) {
+      status = await putToolFile(filename, contentB64, message, env.GITHUB_TOOL_TOKEN, sha);
+    } else {
+      return jsonResp({ error: "SHA conflict — please retry in a moment" }, 409);
+    }
+  }
+
+  if (status === 200 || status === 201) {
+    return jsonResp({
+      status:    "ok",
+      action:    status === 201 ? "created" : "updated",
+      remaining: rate.remaining,
+    });
+  }
+
+  console.error(`[tool-kb-relay] GitHub PUT failed HTTP ${status} for ${filename}`);
+  return jsonResp({ error: `Upstream write failed (HTTP ${status}) — try again later` }, 502);
+}
+
+async function handleCommunityToolKB(request, env) {
+  // ── Parse body ────────────────────────────────────────────────────────────
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return jsonResp({ error: "Request body must be valid JSON" }, 400);
+  }
+
+  const licenseKey = body?.license_key;
+  if (!licenseKey || typeof licenseKey !== "string" || licenseKey.trim() === "") {
+    return jsonResp({ error: "license_key is required" }, 400);
+  }
+
+  // ── Validate license key with Polar.sh ────────────────────────────────────
+  let polarResp;
+  try {
+    polarResp = await fetch("https://api.polar.sh/v1/license-keys/validate", {
+      method: "POST",
+      headers: {
+        Authorization:  `Bearer ${env.POLAR_ORG_ACCESS_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        key:             licenseKey.trim(),
+        organization_id: env.POLAR_ORGANIZATION_ID,
+      }),
+    });
+  } catch (err) {
+    console.error("[community-tool-kb] Polar validate network error:", err);
+    return jsonResp({ error: "License validation temporarily unavailable — try again later" }, 503);
+  }
+
+  if (!polarResp.ok) {
+    return jsonResp({
+      error:   "invalid_key",
+      message: "License key not recognised or inactive. Subscribe at https://buy.polar.sh/polar_cl_rEP2IebC07PDSnIal0HF4kZSBJVecdZSmkREx3Emnin",
+    }, 403);
+  }
+
+  const polarData = await polarResp.json();
+  if (polarData?.status !== "granted") {
+    return jsonResp({
+      error:   "key_not_granted",
+      message: "License key is not active for this product.",
+    }, 403);
+  }
+
+  // ── Fetch community_tool_kb.json from private GitHub repo ────────────────
+  const kbResp = await fetch(
+    "https://api.github.com/repos/PearceTech335/Noctis-Edge-Tool-KB/contents/community_tool_kb.json",
+    {
+      headers: {
+        ...githubHeaders(env.GITHUB_TOOL_KB_TOKEN),
+        Accept: "application/vnd.github.v3.raw",
+      },
+    }
+  );
+
+  if (!kbResp.ok) {
+    console.error(`[community-tool-kb] GitHub fetch failed HTTP ${kbResp.status}`);
+    return jsonResp({ error: "Community tool KB temporarily unavailable — try again later" }, 502);
+  }
+
+  const kbText = await kbResp.text();
+  return new Response(kbText, {
+    status:  200,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
@@ -270,8 +452,16 @@ export default {
       return handleSubmit(request, env);
     }
 
+    if (pathname === "/submit-tool" && request.method === "POST") {
+      return handleToolSubmit(request, env);
+    }
+
     if (pathname === "/community-kb" && request.method === "POST") {
       return handleCommunityKB(request, env);
+    }
+
+    if (pathname === "/community-tool-kb" && request.method === "POST") {
+      return handleCommunityToolKB(request, env);
     }
 
     return jsonResp({ error: "Not found" }, 404);

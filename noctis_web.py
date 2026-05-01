@@ -39,6 +39,7 @@ from flask_sock import Sock
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 NOCTIS   = os.path.join(BASE_DIR, "noctis.py")
 PYTHON   = sys.executable
+VERSION  = "v0.6.7"
 
 PROFILES = ["web", "external", "internal_ad", "api", "cloud"]
 
@@ -187,6 +188,7 @@ def index():
         profiles=PROFILES,
         profile_descriptions=PROFILE_DESCRIPTIONS,
         flags=FLAGS,
+        version=VERSION,
     )
 
 
@@ -643,6 +645,14 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   padding: 2px 10px;
   font-size: 9px;
   color: var(--btn-fg);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+#version-badge {
+  font-size: 9px;
+  opacity: 0.75;
+  letter-spacing: 0.04em;
 }
 
 /* ── Report modal ─────────────────────────────────────────────────────── */
@@ -757,7 +767,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 </div>
 
 <!-- Status bar -->
-<div id="status-bar"><span id="status-text">Ready</span></div>
+<div id="status-bar"><span id="status-text">Ready</span><span id="version-badge">{{ version }}</span></div>
 
 <!-- Report modal -->
 <div id="modal-overlay">

@@ -40,6 +40,9 @@ reconotron.db
 .noctis_config
 noctis.conf
 
+# Tool performance knowledge base — runtime-generated, machine-specific
+tool_knowledge_base.json
+
 # Internal planning and setup files — not for public distribution
 ForYouToDo.md
 .codex
