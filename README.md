@@ -617,6 +617,7 @@ The following are excluded from version control (see `.gitignore`):
 - The low-tier sample is intentional — previously low-scoring scripts are periodically re-validated against new targets and can climb the rankings over time
 - The verdict line now shows `KB:20/150 replayed` so the full pool size is always visible
 - Fully backward-compatible — existing KB entries without run stats fall back to their single recorded `verdict` field
+- **Community confirmation bonus** — the build pipeline now stamps `community_confirmations: N` onto every script in the community KB (the count of independent users who submitted that exact script hash). `_script_score()` adds +0.5 per confirmation beyond the minimum-2 required for inclusion, so a script confirmed by 10 users arrives pre-ranked above an untested local script. Run stats and confirmation bonus stack, so locally-validated scripts still earn their position over time.
 
 **Tool Knowledge Base community pipeline** — mirrors the existing CVE KB pipeline with a parallel infrastructure for tool performance data:
 

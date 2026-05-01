@@ -134,7 +134,9 @@ def main() -> None:
                 print(f"[build_kb] SAFETY GATE blocked {cve_id}/{script_hash[:8]}…")
                 continue
 
-            accepted.append(info["script_obj"])
+            script_entry = dict(info["script_obj"])
+            script_entry["community_confirmations"] = len(info["user_ids"])
+            accepted.append(script_entry)
             included += 1
 
         if accepted:

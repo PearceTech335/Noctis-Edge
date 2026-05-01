@@ -3781,15 +3781,21 @@ def _script_score(s: dict) -> float:
     VULNERABLE results are weighted 3x (finding vulns is the goal).
     NOT_VULNERABLE results are weighted 1x (clear negative answer is still useful).
     INCONCLUSIVE results contribute 0 (broken or unreliable).
-    Backward-compatible: if per-run stats are absent, falls back to the single
-    recorded 'verdict' field from the first run.
+    community_confirmations (set by the build pipeline) adds a bonus proportional
+    to the number of independent users who submitted the same script — a script
+    confirmed by 10 users starts with a meaningful head-start over an untested one.
+    Backward-compatible: fields absent in old KB entries default to safe values.
     """
     runs = s.get("runs", 1)
     v    = s.get("vulnerable_count",
                  1 if s.get("verdict") == "VULNERABLE" else 0)
     n    = s.get("not_vulnerable_count",
                  1 if s.get("verdict") == "NOT_VULNERABLE" else 0)
-    return (v * 3 + n) / max(runs, 1)
+    base_score   = (v * 3 + n) / max(runs, 1)
+    # Each additional community confirmation beyond the minimum-2 adds 0.5 bonus
+    confirmations = s.get("community_confirmations", 0)
+    community_bonus = max(0, confirmations - 2) * 0.5
+    return base_score + community_bonus
 
 
 def _select_kb_scripts(scripts: list) -> list:
