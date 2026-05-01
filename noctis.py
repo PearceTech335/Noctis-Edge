@@ -13,6 +13,7 @@ import dataclasses
 import hashlib
 import json
 import os
+import random
 import re
 import shutil
 import socket
@@ -3774,6 +3775,56 @@ def _print_timing(start: float, done: int, total: int) -> None:
     print(f"  Elapsed: {_fmt_dur(elapsed)}  |  ETA: {eta_str}  ({done}/{total} attempts)")
 
 
+def _script_score(s: dict) -> float:
+    """
+    Score a KB script for ranking. Higher = more historically useful.
+    VULNERABLE results are weighted 3x (finding vulns is the goal).
+    NOT_VULNERABLE results are weighted 1x (clear negative answer is still useful).
+    INCONCLUSIVE results contribute 0 (broken or unreliable).
+    Backward-compatible: if per-run stats are absent, falls back to the single
+    recorded 'verdict' field from the first run.
+    """
+    runs = s.get("runs", 1)
+    v    = s.get("vulnerable_count",
+                 1 if s.get("verdict") == "VULNERABLE" else 0)
+    n    = s.get("not_vulnerable_count",
+                 1 if s.get("verdict") == "NOT_VULNERABLE" else 0)
+    return (v * 3 + n) / max(runs, 1)
+
+
+def _select_kb_scripts(scripts: list) -> list:
+    """
+    Select a fair, tiered sample from a pool of KB scripts so that large
+    knowledge bases don't exhaust the test budget on a single CVE.
+
+    Tiers:
+      Top  10 — highest-ranked scripts (most historically reliable)
+      Mid   5 — random sample from the middle third (stable but not star performers)
+      Low   5 — random sample from the bottom third (low-scorers worth re-validating)
+
+    If the pool has <= 20 scripts the full pool is returned (sorted by score).
+    """
+    TOP_N      = 10
+    MID_SAMPLE = 5
+    LOW_SAMPLE = 5
+    THRESHOLD  = TOP_N + MID_SAMPLE + LOW_SAMPLE  # 20
+
+    scored = sorted(scripts, key=_script_score, reverse=True)
+    if len(scored) <= THRESHOLD:
+        return scored
+
+    top       = scored[:TOP_N]
+    remainder = scored[TOP_N:]
+    third     = max(1, len(remainder) // 3)
+    mid_pool  = remainder[:third]
+    low_pool  = remainder[third:]
+
+    mid = random.sample(mid_pool, min(MID_SAMPLE, len(mid_pool))) if mid_pool else []
+    low = random.sample(low_pool, min(LOW_SAMPLE, len(low_pool))) if low_pool else []
+
+    return top + mid + low
+
+
 async def run_cve_tests(cve_matches: list, target: str,
                         session_dir: str, kb: dict) -> tuple[list, dict]:
     """
@@ -3804,10 +3855,17 @@ async def run_cve_tests(cve_matches: list, target: str,
     for cve_idx, cve in enumerate(cve_matches, 1):
         cve_start = time.monotonic()
         cve_id    = cve.get("cve_id", "UNKNOWN")
-        kb_entry  = kb.get(cve_id)
-        kb_scripts = kb_entry["scripts"] if kb_entry else []
-        kb_count   = len(kb_scripts)
-        kb_label   = f"{kb_count} prior script(s) in KB" if kb_count else "new to KB"
+        kb_entry         = kb.get(cve_id)
+        kb_scripts       = kb_entry["scripts"] if kb_entry else []
+        kb_count         = len(kb_scripts)
+        selected_scripts = _select_kb_scripts(kb_scripts)
+        kb_selected      = len(selected_scripts)
+        if kb_count == 0:
+            kb_label = "new to KB"
+        elif kb_selected < kb_count:
+            kb_label = f"{kb_count} in KB (top-{kb_selected} selected by rank)"
+        else:
+            kb_label = f"{kb_count} prior script(s) in KB"
 
         print(f"\n{'=' * 52}")
         print(f"  CVE TEST: {cve_id}  [{cve_idx}/{total_cves}]")
@@ -3867,11 +3925,15 @@ async def run_cve_tests(cve_matches: list, target: str,
                 print("  [P0] Known-exploit script generation failed — skipping.")
 
         # ------------------------------------------------------------------
-        # Phase 1: Replay KB scripts (proven techniques from prior runs)
+        # Phase 1: Replay KB scripts — tiered selection by success score
         # ------------------------------------------------------------------
         if kb_scripts:
-            print(f"  [KB] Replaying {kb_count} known script(s) ...")
-        for kb_idx, kb_script in enumerate(kb_scripts, 1):
+            if kb_selected < kb_count:
+                print(f"  [KB] Pool: {kb_count} scripts — replaying {kb_selected} "
+                      f"(top-10 by rank + 5 mid-tier + 5 low-tier sample) ...")
+            else:
+                print(f"  [KB] Replaying {kb_selected} known script(s) ...")
+        for kb_idx, kb_script in enumerate(selected_scripts, 1):
             language   = kb_script.get("language", "python")
             strategy   = kb_script.get("strategy", "KB replay")
             script     = kb_script.get("script", "")
@@ -3884,7 +3946,7 @@ async def run_cve_tests(cve_matches: list, target: str,
                 fh.write(script)
 
             attempt_num = len(attempts) + 1
-            sp = _Spinner(f"[KB {kb_idx:02d}/{kb_count:02d}] Replaying ({language}) ...").start()
+            sp = _Spinner(f"[KB {kb_idx:02d}/{kb_selected:02d}] Replaying ({language}) ...").start()
             run_result = await asyncio.get_event_loop().run_in_executor(
                 None, lambda s=script, l=language: _run_script(s, l, cve_tests_dir, timeout=30)
             )
@@ -3899,6 +3961,15 @@ async def run_cve_tests(cve_matches: list, target: str,
             if verdict == "VULNERABLE":
                 vulnerable_found = True
             sp.stop(f" {verdict}")
+
+            # Update per-script run stats so future ranking improves over time
+            kb_script["runs"] = kb_script.get("runs", 1) + 1
+            if verdict == "VULNERABLE":
+                kb_script["vulnerable_count"] = kb_script.get("vulnerable_count", 0) + 1
+            elif verdict == "NOT_VULNERABLE":
+                kb_script["not_vulnerable_count"] = kb_script.get("not_vulnerable_count", 0) + 1
+            else:
+                kb_script["inconclusive_count"] = kb_script.get("inconclusive_count", 0) + 1
 
             attempts.append({
                 "attempt_num": attempt_num,
@@ -4000,14 +4071,18 @@ async def run_cve_tests(cve_matches: list, target: str,
             existing_hashes = {s["script_hash"] for s in entry["scripts"]}
             if script_hash not in existing_hashes:
                 entry["scripts"].append({
-                    "script_hash":    script_hash,
-                    "strategy":       strategy,
-                    "language":       language,
-                    "script":         script,
-                    "verdict":        verdict,
-                    "output_sample":  output[:400],
-                    "target_context": f"{cve.get('product', '')} {cve.get('service', '')}".strip(),
-                    "tested_at":      datetime.now(timezone.utc).isoformat(),
+                    "script_hash":          script_hash,
+                    "strategy":             strategy,
+                    "language":             language,
+                    "script":               script,
+                    "verdict":              verdict,
+                    "runs":                 1,
+                    "vulnerable_count":     1 if verdict == "VULNERABLE" else 0,
+                    "not_vulnerable_count": 1 if verdict == "NOT_VULNERABLE" else 0,
+                    "inconclusive_count":   1 if verdict == "INCONCLUSIVE" else 0,
+                    "output_sample":        output[:400],
+                    "target_context":       f"{cve.get('product', '')} {cve.get('service', '')}".strip(),
+                    "tested_at":            datetime.now(timezone.utc).isoformat(),
                 })
             _verdict_rank = {"VULNERABLE": 3, "INCONCLUSIVE": 2, "NOT_VULNERABLE": 1}
             if _verdict_rank.get(verdict, 0) > _verdict_rank.get(entry["best_verdict"], 0):
@@ -4088,7 +4163,7 @@ async def run_cve_tests(cve_matches: list, target: str,
         cve_elapsed = _fmt_dur(time.monotonic() - cve_start)
         print(f"  Overall : {overall}  "
               f"(V:{verdict_counts['VULNERABLE']} N:{verdict_counts['NOT_VULNERABLE']} "
-              f"I:{verdict_counts['INCONCLUSIVE']}, KB:{kb_count} replayed)  "
+              f"I:{verdict_counts['INCONCLUSIVE']}, KB:{kb_selected}/{kb_count} replayed)  "
               f"[CVE time: {cve_elapsed}]")
 
         cve_test_results.append({
@@ -4098,7 +4173,8 @@ async def run_cve_tests(cve_matches: list, target: str,
             "overall_verdict":      overall,
             "verdict_counts":       verdict_counts,
             "attempts_run":         len(attempts),
-            "kb_replayed":          kb_count,
+            "kb_replayed":          kb_selected,
+            "kb_pool_size":         kb_count,
             "verified":             verified,
             "verification_results": verification_results,
             "attempts":             attempts,
