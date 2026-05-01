@@ -177,12 +177,14 @@ fi
 # =============================================================================
 header "7/10  Noctis Edge repository"
 if [[ -d "$SCRIPT_DIR/.git" ]]; then
-    info "Pulling latest Noctis Edge ..."
-    # Always pull via HTTPS so no SSH key or GitHub credentials are required.
-    git -C "$SCRIPT_DIR" pull --rebase --quiet \
-        https://github.com/PearceTech335/Noctis-Edge.git master \
-        && ok "Noctis Edge up to date" \
-        || err "git pull failed (may have uncommitted changes)"
+    info "Fetching latest Noctis Edge from GitHub ..."
+    # fetch + reset guarantees the working tree matches origin/master regardless
+    # of any local modifications (dirty working tree, failed rebase, etc.)
+    git -C "$SCRIPT_DIR" fetch --quiet \
+        https://github.com/PearceTech335/Noctis-Edge.git master:refs/remotes/origin/master \
+        && git -C "$SCRIPT_DIR" reset --hard origin/master --quiet \
+        && ok "Noctis Edge updated to latest" \
+        || err "Noctis Edge update failed — check network or run 'git fetch && git reset --hard origin/master' manually"
 else
     info "No .git directory found — skipping self-update"
 fi
