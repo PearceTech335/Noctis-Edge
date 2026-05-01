@@ -601,6 +601,21 @@ The following are excluded from version control (see `.gitignore`):
 
 ## Version History
 
+## What's New in v0.6.8
+
+**Docker deployment fixes** — resolved several issues with the Docker install path that prevented clean first-run setups:
+
+- **Ollama health check** — replaced `curl -sf http://localhost:11434/api/tags` with a pure-bash TCP probe (`bash -c '</dev/tcp/localhost/11434'`) in `docker-compose.yml`, `docker-run.sh`, and `docker-test.sh`. The official `ollama/ollama` image does not include `curl`, causing the health check to always fail and the `noctis` container to never start.
+- `start_period` for the Ollama health check increased from `20s` to `45s` to allow enough time for the Ollama server process to initialise before health checks begin.
+- **Model env vars corrected** — `docker-compose.yml` was using `NOCTIS_REPORT_MODEL` which is not a recognised env var in `noctis.py`. Replaced with the correct split-model variables: `NOCTIS_OLLAMA_MODEL=phi4-mini:3.8b` (planning) and `NOCTIS_OLLAMA_SCRIPT_MODEL=qwen2.5-coder:3b-instruct` (scripts). This aligns the Docker path with the native Linux path and the documented split-model architecture.
+- **Disk space pre-flight** added to `docker-run.sh` (requires 8 GB free) and `docker-test.sh` (requires 2 GB free) — exits with a clear message rather than failing silently mid-build.
+- **`exec -T` flag** added to all `docker compose exec` calls in `docker-run.sh` and `docker-test.sh` — required for non-interactive execution in scripts and CI environments.
+- **Dockerfile Go cache cleanup** — `rm -rf /root/go/pkg/mod /root/go/pkg/cache /root/.cache/go-build` added after `go install` steps. The compiled binaries are retained in `/root/go/bin`; the module download and build caches (which can exceed 1 GB) are stripped, reducing the final image size.
+- **`.dockerignore` expanded** — `CVE/cve/` (raw NVD JSON files, ~200 MB) excluded from the Docker build context. The container uses the pre-built `cve-offline/cve-summary.csv` at runtime; the raw JSON files are not needed in the image.
+- **`docker-test.sh` model variable** — `REPORT_MODEL` renamed to `SCRIPT_MODEL` and mapped to `NOCTIS_OLLAMA_SCRIPT_MODEL`; defaults to the same value as `OLLAMA_MODEL` so the test suite only requires one model download.
+
+---
+
 ## What's New in v0.6.7
 
 **ffuf scoped to HTTP/HTTPS only** — ffuf is a directory fuzzer and is now dispatched only when the service is a genuine HTTP or HTTPS endpoint. Previously, `ipp` services (CUPS/printing on port 631) also triggered ffuf, which ran its full 300-second timeout budget against a printing protocol that returns no directory listings, inflating scan times by ~5 minutes per IPP port with zero findings.
@@ -668,6 +683,7 @@ The following are excluded from version control (see `.gitignore`):
 
 | Version | Date | Changes |
 |---------|------|---------|
+| **v0.6.8** | May 2026 | Docker deployment fixes: bash TCP health check (curl not in ollama image), `start_period` 45s, correct `NOCTIS_OLLAMA_MODEL` + `NOCTIS_OLLAMA_SCRIPT_MODEL` env vars, disk pre-flight checks, `exec -T` flag, Dockerfile Go cache cleanup, `.dockerignore` CVE/cve/ exclusion |
 | **v0.6.7** | May 2026 | ffuf scoped to HTTP/HTTPS only (removed from IPP/CUPS service branch); Tool KB community pipeline added (`submit_tool_kb.py`, `merge_tool_kb.py`, Cloudflare routes `/submit-tool` + `/community-tool-kb`, `update.sh` step 9/9) |
 | **v0.6.6** | May 2026 | Split-model architecture: `qwen2.5-coder:3b-instruct` added for CVE script generation; `phi4-mini:3.8b` retained for planning/reports; `SCRIPT_MODEL` constant + `NOCTIS_OLLAMA_SCRIPT_MODEL` env var |
 | **v0.6.5** | May 2026 | Single-model architecture: removed `llama3.2:3b`, `phi4-mini:3.8b` now handles all LLM tasks; phi4-mini v1 prompt improvements (PYTHON RULES, CONTRAST RULE, BLACKLIST consolidation, primacy bias); collapsible CVE test result cards in HTML report |

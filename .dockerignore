@@ -9,7 +9,13 @@ __pycache__/
 
 # Submodule dirs — cloned fresh during build for reproducibility
 nikto/
+# Exclude cve-offline directory but keep the pre-built CSV for the Docker image
 CVE/cve-offline/
+!CVE/cve-offline/cve-summary.csv
+
+# Raw NVD CVE JSON files — not used at runtime (container uses cve-offline CSV instead)
+# Excluding this saves ~200 MB of build context transfer time
+CVE/cve/
 
 # Runtime output
 sessions/

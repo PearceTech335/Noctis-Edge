@@ -18,9 +18,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# LLM models used during the test scan (must match docker-compose.yml)
+# LLM models used during the test scan.
+# SCRIPT_MODEL defaults to OLLAMA_MODEL so the test only needs ONE model download.
+# Override via environment variables to match your docker-compose.yml in production.
 OLLAMA_MODEL="${NOCTIS_OLLAMA_MODEL:-qwen2.5-coder:3b-instruct}"
-REPORT_MODEL="${NOCTIS_REPORT_MODEL:-llama3.2:3b}"
+SCRIPT_MODEL="${NOCTIS_OLLAMA_SCRIPT_MODEL:-${OLLAMA_MODEL}}"
 
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; CYAN='\033[1;36m'; NC='\033[0m'
 ok()   { echo -e "${GREEN}[OK]${NC}  $*"; }
@@ -54,6 +56,18 @@ if ! docker info > /dev/null 2>&1; then
 fi
 ok "Docker is running"
 
+# Minimum free disk space required (GB): model pull ~2 GB.
+# (Ollama image and noctis-edge layers are pre-cached; only the model volume needs filling.)
+MIN_FREE_GB=2
+FREE_KB=$(df --output=avail / | tail -1)
+FREE_GB=$(( FREE_KB / 1024 / 1024 ))
+if [[ $FREE_GB -lt $MIN_FREE_GB ]]; then
+    err "Insufficient disk space: ${FREE_GB} GB free, need at least ${MIN_FREE_GB} GB."
+    err "Free up disk space and try again."
+    exit 1
+fi
+ok "Disk space: ${FREE_GB} GB free"
+
 if docker compose version > /dev/null 2>&1; then
     DC="docker compose"
 elif command -v docker-compose > /dev/null 2>&1; then
@@ -81,7 +95,7 @@ CONTAINERS_STARTED=1
 
 info "Waiting for Ollama health check ..."
 WAITED=0
-until $DC exec -T ollama curl -sf http://localhost:11434/api/tags > /dev/null 2>&1; do
+until $DC exec -T ollama bash -c '</dev/tcp/localhost/11434' 2>/dev/null; do
     if [[ $WAITED -ge 120 ]]; then
         err "Ollama did not become healthy within 2 minutes."
         $DC logs ollama --tail 30
@@ -97,8 +111,8 @@ ok "Ollama ready"
 # ---------------------------------------------------------------------------
 hdr "3/6  Ensuring LLM models are present"
 
-for MODEL in "$OLLAMA_MODEL" "$REPORT_MODEL"; do
-    if $DC exec -T ollama ollama list 2>/dev/null | grep -q "^${MODEL%:*}"; then
+for MODEL in "$OLLAMA_MODEL" "$SCRIPT_MODEL"; do
+    if $DC exec -T ollama ollama list 2>/dev/null | grep -qF "$MODEL"; then
         ok "${MODEL} already present"
     else
         info "Pulling ${MODEL} ..."
@@ -119,7 +133,7 @@ echo ""
 $DC run --rm \
     -e NOCTIS_OLLAMA_URL=http://ollama:11434/api/generate \
     -e NOCTIS_OLLAMA_MODEL="$OLLAMA_MODEL" \
-    -e NOCTIS_REPORT_MODEL="$REPORT_MODEL" \
+    -e NOCTIS_OLLAMA_SCRIPT_MODEL="$SCRIPT_MODEL" \
     noctis scan localhost --aggressive --cve-test --unattended \
     && SCAN_EXIT=0 || SCAN_EXIT=$?
 

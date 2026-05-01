@@ -12,8 +12,8 @@
 #  Manual:
 #    docker compose build
 #    docker compose up -d
+#    docker compose exec ollama ollama pull phi4-mini:3.8b
 #    docker compose exec ollama ollama pull qwen2.5-coder:3b-instruct
-#    docker compose exec ollama ollama pull llama3.2:3b
 #    # Open http://localhost:5000
 #
 #  CLI scan (without web UI):
@@ -48,11 +48,11 @@ services:
     #           count: 1
     #           capabilities: [gpu]
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:11434/api/tags"]
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/11434'"]
       interval: 10s
       timeout: 5s
       retries: 12
-      start_period: 20s
+      start_period: 45s
     restart: unless-stopped
 
   # ---------------------------------------------------------------------------
@@ -70,10 +70,10 @@ services:
     environment:
       # Point Noctis at the Ollama sidecar (service name resolves inside compose network)
       - NOCTIS_OLLAMA_URL=http://ollama:11434/api/generate
-      # Code/JSON model (tool planning, script generation)
-      - NOCTIS_OLLAMA_MODEL=qwen2.5-coder:3b-instruct
-      # Prose model (conclusion text in reports)
-      - NOCTIS_REPORT_MODEL=llama3.2:3b
+      # Planning model — tool decisions, iteration, report prose, remediation guidance
+      - NOCTIS_OLLAMA_MODEL=phi4-mini:3.8b
+      # Script model — CVE exploit scripts, test scripts, verification scripts
+      - NOCTIS_OLLAMA_SCRIPT_MODEL=qwen2.5-coder:3b-instruct
       # Bind to all interfaces so the host browser can reach port 5000
       - NOCTIS_BIND_HOST=0.0.0.0
     ports:

@@ -20,7 +20,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-OLLAMA_MODEL="qwen2.5-coder:3b-instruct"
+OLLAMA_MODEL="phi4-mini:3.8b"          # planning, iteration, report prose (NOCTIS_OLLAMA_MODEL)
+SCRIPT_MODEL="qwen2.5-coder:3b-instruct" # CVE scripts, test scripts (NOCTIS_OLLAMA_SCRIPT_MODEL)
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; CYAN='\033[1;36m'; NC='\033[0m'
 ok()   { echo -e "${GREEN}[OK]${NC}  $*"; }
 info() { echo -e "${YELLOW}[--]${NC}  $*"; }
@@ -38,6 +39,17 @@ if ! docker info > /dev/null 2>&1; then
     exit 1
 fi
 ok "Docker is running"
+
+# Minimum free disk space required (GB): Ollama image ~2.5 GB + two models ~4 GB + headroom
+MIN_FREE_GB=8
+FREE_KB=$(df --output=avail / | tail -1)
+FREE_GB=$(( FREE_KB / 1024 / 1024 ))
+if [[ $FREE_GB -lt $MIN_FREE_GB ]]; then
+    err "Insufficient disk space: ${FREE_GB} GB free, need at least ${MIN_FREE_GB} GB."
+    err "Free up disk space and try again."
+    exit 1
+fi
+ok "Disk space: ${FREE_GB} GB free"
 
 # docker compose (v2) or docker-compose (v1)?
 if docker compose version > /dev/null 2>&1; then
@@ -77,7 +89,7 @@ hdr "3/5  Starting Ollama"
 $DC up -d ollama
 info "Waiting for Ollama to become healthy ..."
 WAITED=0
-until $DC exec ollama curl -sf http://localhost:11434/api/tags > /dev/null 2>&1; do
+until $DC exec -T ollama bash -c '</dev/tcp/localhost/11434' 2>/dev/null; do
     if [[ $WAITED -ge 120 ]]; then
         err "Ollama did not start within 2 minutes."
         $DC logs ollama --tail 20
@@ -89,16 +101,18 @@ done
 ok "Ollama is ready"
 
 # ---------------------------------------------------------------------------
-# 4. Pull the LLM model (skips if already in the volume)
+# 4. Pull required LLM models (skips models already in the volume)
 # ---------------------------------------------------------------------------
-hdr "4/5  Pulling LLM model ($OLLAMA_MODEL)"
-if $DC exec ollama ollama list 2>/dev/null | grep -q "$OLLAMA_MODEL"; then
-    ok "Model already present — skipping download"
-else
-    info "Downloading model (~1.9 GB). This only happens once ..."
-    $DC exec ollama ollama pull "$OLLAMA_MODEL"
-    ok "Model downloaded"
-fi
+hdr "4/5  Pulling LLM models"
+for MODEL in "$OLLAMA_MODEL" "$SCRIPT_MODEL"; do
+    if $DC exec -T ollama ollama list 2>/dev/null | grep -qF "$MODEL"; then
+        ok "${MODEL} already present — skipping download"
+    else
+        info "Downloading ${MODEL}. This only happens once ..."
+        $DC exec -T ollama ollama pull "$MODEL"
+        ok "${MODEL} downloaded"
+    fi
+done
 
 # ---------------------------------------------------------------------------
 # 5. Start Noctis Edge
