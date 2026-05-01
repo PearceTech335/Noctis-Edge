@@ -501,10 +501,12 @@ This updates (in order):
 | 4 | Nuclei binary + templates updated |
 | 5 | Ollama models pulled (`phi4-mini:3.8b` + `qwen2.5-coder:3b-instruct`) |
 | 6 | CVE offline database pulled + CSV rebuilt |
-| 7 | Noctis Edge repository (`git pull`) |
-| 8 | Nikto submodule (`git pull` inside `nikto/`) |
+| 7 | Noctis Edge — `git fetch` + `git reset --hard origin/master` (always gets latest, even with local changes) |
+| 8 | Nikto submodule — `git pull` inside `nikto/` (initialises submodule if missing) |
 | 9 | CVE Knowledge Base submitted to the community relay |
 | 10 | Tool Knowledge Base submitted to the community relay (pull community KB if `KB_LICENSE_KEY` set) |
+
+> **Note on step 7:** `update.sh` uses `git fetch` + `git reset --hard origin/master` rather than `git pull`. This means it will **always** succeed and always result in the exact latest version from GitHub, even if there are local modifications. Any uncommitted local changes will be discarded — this is intentional for an update script.
 ---
 
 ## CVE Knowledge Base
