@@ -175,7 +175,7 @@ fi
 # =============================================================================
 # 7. Noctis Edge itself
 # =============================================================================
-header "7/9  Noctis Edge repository"
+header "7/10  Noctis Edge repository"
 if [[ -d "$SCRIPT_DIR/.git" ]]; then
     info "Pulling latest Noctis Edge ..."
     # Always pull via HTTPS so no SSH key or GitHub credentials are required.
@@ -188,9 +188,28 @@ else
 fi
 
 # =============================================================================
-# 8. CVE Knowledge Base sync
+# 8. Nikto submodule
 # =============================================================================
-header "8/9  CVE Knowledge Base sync"
+header "8/10  Nikto (submodule update)"
+NIKTO_DIR="$SCRIPT_DIR/nikto"
+if [[ -d "$NIKTO_DIR/.git" ]]; then
+    info "Pulling latest nikto ..."
+    git -C "$NIKTO_DIR" pull --quiet \
+        && ok "nikto up to date" \
+        || err "nikto git pull failed — continuing"
+elif [[ -d "$NIKTO_DIR" ]]; then
+    info "nikto/ exists but is not a git repo — initialising submodule ..."
+    git -C "$SCRIPT_DIR" submodule update --init --remote nikto \
+        && ok "nikto submodule initialised and up to date" \
+        || err "nikto submodule update failed — run 'git submodule update --init --remote nikto' manually"
+else
+    err "nikto/ directory not found — run 'git submodule update --init --recursive' to clone it"
+fi
+
+# =============================================================================
+# 9. CVE Knowledge Base sync
+# =============================================================================
+header "9/10  CVE Knowledge Base sync"
 
 KB_LOCAL="$SCRIPT_DIR/cve_knowledge_base.json"
 VENV="$SCRIPT_DIR/.venv"
@@ -249,9 +268,9 @@ fi
 ok "KB sync done"
 
 # =============================================================================
-# 9. Tool Knowledge Base sync
+# 10. Tool Knowledge Base sync
 # =============================================================================
-header "9/9  Tool Knowledge Base sync"
+header "10/10  Tool Knowledge Base sync"
 
 TOOL_KB_LOCAL="$SCRIPT_DIR/tool_knowledge_base.json"
 
@@ -306,7 +325,7 @@ ok "Tool KB sync done"
 # =============================================================================
 echo ""
 echo "============================================================"
-echo "  All updates complete."
+echo "  All updates complete (10/10 steps)."
 echo "  Remember to restart Ollama if it was already running:"
 echo "    sudo systemctl restart ollama"
 echo "============================================================"

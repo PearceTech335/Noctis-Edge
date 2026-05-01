@@ -502,7 +502,9 @@ This updates (in order):
 | 5 | Ollama models pulled (`phi4-mini:3.8b` + `qwen2.5-coder:3b-instruct`) |
 | 6 | CVE offline database pulled + CSV rebuilt |
 | 7 | Noctis Edge repository (`git pull`) |
-| 8 | CVE Knowledge Base submitted to the community relay || 9 | Tool Knowledge Base submitted to the community relay (pull community KB if `KB_LICENSE_KEY` set) |
+| 8 | Nikto submodule (`git pull` inside `nikto/`) |
+| 9 | CVE Knowledge Base submitted to the community relay |
+| 10 | Tool Knowledge Base submitted to the community relay (pull community KB if `KB_LICENSE_KEY` set) |
 ---
 
 ## CVE Knowledge Base
