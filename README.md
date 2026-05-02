@@ -6,9 +6,9 @@
 
 **Security Through Exposure**
 
-Noctis Edge is a Python-based, AI-assisted penetration testing platform built with a strong focus on **local execution, data sovereignty, and operational security**.
+Noctis Edge is a Python-based, AI-assisted vulnerability exposure and testing platform built with a strong focus on **local execution, data sovereignty, and operational security**.
 
-Unlike cloud-dependent security platforms, **Noctis Edge runs entirely on the local machine**. All scanning, analysis, LLM-assisted testing, CVE validation, reporting, and evidence generation are performed on-device, ensuring that **no target data, credentials, vulnerability findings, or client-sensitive information ever leaves the host system**.
+Unlike cloud-dependent security platforms, **Noctis Edge runs entirely on your local machine**. All scanning, analysis, LLM-assisted testing, CVE validation, reporting, and evidence generation are performed on-device, ensuring that **no target data, credentials, vulnerability findings, or client-sensitive information ever leaves the host system**.
 
 The platform conducts automated, LLM-guided penetration testing against a target environment, collects and verifies findings, generates professional HTML reports, and can optionally validate CVEs using Metasploit modules or locally generated probe scripts.
 
@@ -26,20 +26,18 @@ Most automated scanners tell you what CVEs *exist* on a system. **Noctis Edge te
 
 The `--cve-test` flag instructs the local LLM to generate safe, targeted probe scripts for each CVE matched during the scan. These scripts run on-device with a strict timeout, print a clear `VULNERABLE` / `NOT_VULNERABLE` / `INCONCLUSIVE` verdict, and are written to the session folder so operators can audit exactly what was sent to the target.
 
-What makes this more than a one-off test is the **community knowledge base**:
+What makes this platform more than a one-shot testing tool is the **community intelligence knowledge base**:
 
 - Every probe script and its verdict is recorded in `cve_knowledge_base.json` at the project root
 - On subsequent runs against the same CVE, **proven scripts are replayed first** — no LLM generation required — giving faster, higher-confidence results
-- Running `./update.sh` automatically submits your results to the community repository — no account, token, or cloud service required for submission. Validated scripts and tooling knowledge contributed by other users are available to those with a [Polar.sh subscription](https://buy.polar.sh/polar_cl_rEP2IebC07PDSnIal0HF4kZSBJVecdZSmkREx3Emnin)
-- The entire loop (generation → execution → verdict → submission → replay) stays on-device; nothing leaves the host without an explicit `./update.sh`
+- Running `./update.sh` automatically submits your results to the community repository — no account, token, or cloud service required for submission. Submitted scripts are then vetted and validated to ensure no malicious code or potentially harmful actions can result from execution. Validated scripts and tooling knowledge contributed by other users are available to those with a [Noctis Edge Intelligence subscription](https://buy.polar.sh/polar_cl_rEP2IebC07PDSnIal0HF4kZSBJVecdZSmkREx3Emnin)
+- The entire loop (generation → execution → verdict → submission → replay) stays on-device; nothing leaves the host without an explicit `./update.sh`. All CVE and Tooling knowledge are anonymised and identified only by eithe the CVE identifier or the service the tool ran against. **NO YARGET** data, information or identifiers ever leaves your device.
 
-The result: **the more the community runs, the sharper everyone's scans become**.
+The result: **the more the community runs, the sharper the community scans become**.
 
 ### Tooling Intelligence
 
-Alongside CVE probes, `cve_knowledge_base.json` accumulates tooling knowledge — which tool invocations produced real findings versus noise, which scan techniques work reliably against specific service fingerprints, and which scripts generated false positives. The LLM uses this history as context on each new engagement, progressively improving the quality of tool selection and script generation over time. Your local tooling knowledge base grows continuously with every scan you run. Community-contributed tooling intelligence — aggregated across all users — is pulled down during `./update.sh` for those with a subscription token set in `noctis.conf`.
-
-> **Get the Noctis Edge on your next vulnerability scan** — because knowing a CVE *exists* is just the start; knowing it's *actually exploitable* is the edge that matters.
+Alongside CVE probes, `tooling_knowledge_base.json` accumulates tooling knowledge — which tool invocations produced real findings versus noise, which scan techniques work reliably against specific service fingerprints, and which scripts generated false positives. The LLM uses this history as context on each new engagement, progressively improving the quality of tool selection and script generation over time. Your local tooling knowledge base grows continuously with every scan you run. Community-contributed tooling intelligence — aggregated across all users — is pulled down during `./update.sh` for those with a [subscription](https://buy.polar.sh/polar_cl_rEP2IebC07PDSnIal0HF4kZSBJVecdZSmkREx3Emnin) token set in `noctis.conf`.
 
 ---
 
