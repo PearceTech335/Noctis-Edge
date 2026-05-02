@@ -303,7 +303,8 @@ Pass one or more profile names after the target. Tools from all selected profile
 ## How It Works
 
 ### 1. Startup Checks
-- Checks if Ollama is serving — starts `ollama serve` automatically if not
+- Checks if Ollama is serving — starts `ollama serve` automatically if not (waits up to 30 seconds)
+- If the configured model is not present locally, pulls it automatically via `ollama pull` before proceeding
 - Validates all tool binaries are present and prints a status table
 - DNS enumeration tools (amass, dnsenum, dnsrecon) are disabled by default — pass `--dns-enum` to enable them
 
@@ -637,6 +638,10 @@ The following are excluded from version control (see `.gitignore`):
 ## Version History
 
 ## What's New in v0.7.1
+
+**Automatic Ollama startup and model pull** — `noctis.py` now starts `ollama serve` automatically if it is not running and waits up to 30 seconds (up from 15 s) for it to become ready. If the configured model (`qwen2.5-coder:3b-instruct`) is not present locally, it is pulled automatically via `ollama pull` before the scan begins — no manual setup step required after a fresh install.
+
+**Line-buffered output when piped** — `stdout` is now forced into line-buffering mode at startup (`sys.stdout.reconfigure(line_buffering=True)`), ensuring every log line appears immediately when noctis is run via a pipe or `tee` rather than being held in the OS pipe buffer until it fills.
 
 **Single-model architecture** — `phi4-mini:3.8b` has been removed. `qwen2.5-coder:3b-instruct` now handles all LLM tasks: tool planning, iteration decisions, report prose, CVE remediation guidance, and CVE script generation. Running two models simultaneously on CPU-only hardware caused both to compete for RAM, forcing swap usage and collapsing generation speed to < 0.3 tok/s. The single 2 GB model fits entirely in available RAM and generates at 1–8 tok/s on typical CPU-only hosts.
 

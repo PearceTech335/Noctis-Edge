@@ -178,8 +178,17 @@ else
     ollama serve &>/dev/null &
     OLLAMA_PID=$!
     STARTED_OLLAMA=1
-    sleep 6
-    info "Ollama server started (PID $OLLAMA_PID)"
+    info "Ollama server started (PID $OLLAMA_PID) — waiting up to 30s for it to become ready ..."
+    _waited=0
+    until curl -s --max-time 2 http://localhost:11434/api/tags &>/dev/null; do
+        if [[ $_waited -ge 30 ]]; then
+            err "Ollama did not become ready within 30s — model pull may fail"
+            break
+        fi
+        sleep 1
+        _waited=$(( _waited + 1 ))
+    done
+    [[ $_waited -lt 30 ]] && info "Ollama ready after ${_waited}s"
 fi
 
 info "Pulling model: $OLLAMA_MODEL (this may take several minutes on first run) ..."

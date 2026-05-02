@@ -41,6 +41,9 @@ if __name__ == "__main__":
 import requests
 from jinja2 import Template
 
+# Force line-buffered stdout so output is visible immediately when piped/tee'd
+sys.stdout.reconfigure(line_buffering=True)
+
 # ---------------------------------------------------------------------------
 # CONFIGURATION
 # ---------------------------------------------------------------------------
@@ -383,11 +386,26 @@ def make_finding_id(tool, target, title):
 
 _ollama_proc: Optional[subprocess.Popen] = None
 
+
+def _ollama_is_up() -> bool:
+    """Return True if Ollama is reachable and responding on OLLAMA_URL."""
+    base_url = OLLAMA_URL.split("/api/")[0]
+    tags_url = f"{base_url}/api/tags"
+    assert isinstance(tags_url, str) and tags_url.startswith("http"), \
+        "OLLAMA_URL must be a valid HTTP URL"
+    try:
+        r = requests.get(tags_url, timeout=3)
+        assert r is not None, "requests.get returned None"
+        return r.status_code == 200
+    except Exception:
+        return False
+
+
 def ensure_ollama_running() -> bool:
     """Return True if Ollama is already serving or was successfully started.
 
     Checks http://localhost:11434/api/tags.  If it is not reachable, spawns
-    `ollama serve` as a background process and waits up to 15 seconds for it
+    `ollama serve` as a background process and waits up to 30 seconds for it
     to become available.  The process handle is kept in _ollama_proc so it is
     not garbage-collected and can be cleaned up at exit.
     """
@@ -437,7 +455,7 @@ def ensure_ollama_running() -> bool:
         print(f"[!] Failed to start Ollama: {exc}")
         return False
 
-    deadline = time.time() + 15
+    deadline = time.time() + 30
     while time.time() < deadline:
         if _is_up():
             print("[*] Ollama is now serving.")
@@ -445,7 +463,7 @@ def ensure_ollama_running() -> bool:
             return True
         time.sleep(0.5)
 
-    print("[!] Ollama did not become ready within 15 seconds.")
+    print("[!] Ollama did not become ready within 30 seconds.")
     return False
 
 
@@ -458,8 +476,38 @@ def _warmup_models() -> None:
     """
     base_url = OLLAMA_URL.split("/api/")[0]
     gen_url  = f"{base_url}/api/generate"
+    tags_url = f"{base_url}/api/tags"
     warmup_prompt = "Reply with the single word: ready"
+
+    # Fetch the set of locally available model names once.
+    try:
+        _tags_resp = requests.get(tags_url, timeout=5)
+        _local_models: set = {
+            m["name"] for m in (_tags_resp.json().get("models") or [])
+        } if _tags_resp.status_code == 200 else set()
+    except Exception:
+        _local_models = set()
+
     for model in set([MODEL, SCRIPT_MODEL]):
+        # Pull the model if it is not available locally.
+        _model_present = any(
+            m == model or m.startswith(model + ":")
+            for m in _local_models
+        )
+        if not _model_present:
+            print(f"[*] Model '{model}' not found locally — pulling from Ollama library …")
+            ollama_bin = shutil.which("ollama")
+            if ollama_bin:
+                pull_result = subprocess.run(
+                    [ollama_bin, "pull", model],
+                    timeout=600,
+                )
+                if pull_result.returncode != 0:
+                    print(f"[!] 'ollama pull {model}' failed — LLM calls may not work.")
+                else:
+                    print(f"[*] Model '{model}' pulled successfully.")
+            else:
+                print(f"[!] Cannot pull '{model}': ollama binary not found.")
         try:
             print(f"[*] Pre-loading model '{model}' into memory …")
             resp = requests.post(
@@ -4148,7 +4196,7 @@ Reply with ONLY this JSON (no markdown, no code fences):
                         "prompt":     prompt,
                         "stream":     False,
                         "keep_alive": _OLLAMA_KEEP_ALIVE,
-                        "options":    {"num_ctx": 1024, "temperature": 0},
+                        "options":    {"num_ctx": 2048, "temperature": 0},
                     },
                     timeout=180,
                 )
@@ -4157,10 +4205,14 @@ Reply with ONLY this JSON (no markdown, no code fences):
                 obj = _parse_llm_script_response(raw)
                 if obj:
                     return obj
+                print(f"\n  [LLM] Known-exploit parse failure. Raw (first 200): {raw[:200]!r}")
             except requests.exceptions.Timeout:
                 break
-            except Exception:
-                pass
+            except requests.exceptions.ConnectionError as exc:
+                print(f"\n  [LLM] Ollama connection error: {exc}")
+                break
+            except Exception as exc:
+                print(f"\n  [LLM] Unexpected error: {exc}")
     finally:
         _sp.stop(f" done ({_fmt_dur(time.monotonic() - _t0)})")
     return None
@@ -4216,7 +4268,7 @@ Reply with ONLY this JSON (no markdown, no code fences):
                         "prompt":     prompt,
                         "stream":     False,
                         "keep_alive": _OLLAMA_KEEP_ALIVE,
-                        "options":    {"num_ctx": 1024, "temperature": 0},
+                        "options":    {"num_ctx": 2048, "temperature": 0},
                     },
                     timeout=180,
                 )
@@ -4225,10 +4277,15 @@ Reply with ONLY this JSON (no markdown, no code fences):
                 obj = _parse_llm_script_response(raw)
                 if obj:
                     return obj
+                # Response received but unparseable — log raw output for diagnosis
+                print(f"\n  [LLM] Parse failure. Raw response (first 200 chars): {raw[:200]!r}")
             except requests.exceptions.Timeout:
                 break  # no point retrying a timeout — LLM is too slow right now
-            except Exception:
-                pass
+            except requests.exceptions.ConnectionError as exc:
+                print(f"\n  [LLM] Ollama connection error: {exc}")
+                break  # Ollama is down — no point retrying
+            except Exception as exc:
+                print(f"\n  [LLM] Unexpected error: {exc}")
     finally:
         _sp.stop(f" done ({_fmt_dur(time.monotonic() - _t0)})")
     return None
@@ -4271,7 +4328,7 @@ Reply with ONLY this JSON (no markdown, no code fences):
                         "prompt":     prompt,
                         "stream":     False,
                         "keep_alive": _OLLAMA_KEEP_ALIVE,
-                        "options":    {"num_ctx": 1024, "temperature": 0},
+                        "options":    {"num_ctx": 2048, "temperature": 0},
                     },
                     timeout=180,
                 )
@@ -4280,10 +4337,14 @@ Reply with ONLY this JSON (no markdown, no code fences):
                 obj = _parse_llm_script_response(raw)
                 if obj:
                     return obj
+                print(f"\n  [LLM] Verifier parse failure. Raw (first 200 chars): {raw[:200]!r}")
             except requests.exceptions.Timeout:
                 break
-            except Exception:
-                pass
+            except requests.exceptions.ConnectionError as exc:
+                print(f"\n  [LLM] Ollama connection error: {exc}")
+                break  # Ollama is down — no point retrying
+            except Exception as exc:
+                print(f"\n  [LLM] Unexpected error: {exc}")
     finally:
         _sp.stop(f" done ({_fmt_dur(time.monotonic() - _t0)})")
     return None
@@ -4560,8 +4621,27 @@ async def run_cve_tests(cve_matches: list, target: str,
             print(f"  [Phase 2] VULNERABLE already confirmed — skipping fresh script generation.")
         new_slots   = CVE_FRESH_ATTEMPTS if not vulnerable_found else 0
         done_new    = 0
+
+        # Check Ollama once before the loop to avoid burning all slots on
+        # connection errors and to surface the real failure reason.
+        _p2_ollama_up = _ollama_is_up() if new_slots > 0 else True
+        if new_slots > 0 and not _p2_ollama_up:
+            print(f"  [Phase 2] Ollama is not reachable — skipping LLM script generation.")
+
         for i in range(1, new_slots + 1):
             attempt_num = len(attempts) + 1
+            if not _p2_ollama_up:
+                attempts.append({
+                    "attempt_num": attempt_num,
+                    "source":      "llm_generated",
+                    "strategy":    "Ollama unavailable",
+                    "language":    "", "script": "", "script_path": "",
+                    "output":      "", "verdict": "INCONCLUSIVE",
+                })
+                verdict_counts["INCONCLUSIVE"] += 1
+                done_new += 1
+                continue
+
             sp = _Spinner(f"[{i:02d}/{new_slots:02d}] Generating script ...").start()
             generated = _generate_cve_test_script(cve, target, attempts, kb_entry, attempt_num)
             if not generated:
@@ -4665,8 +4745,18 @@ async def run_cve_tests(cve_matches: list, target: str,
         if vulnerable_found:
             triggering = next((a for a in attempts if a["verdict"] == "VULNERABLE"), None)
             print(f"\n  [VERIFY] VULNERABLE found — running {CVE_VERIFY_ATTEMPTS} independent verifier(s) ...")
+            _p3_ollama_up = _ollama_is_up()
+            if not _p3_ollama_up:
+                print(f"  [VERIFY] Ollama is not reachable — skipping verification.")
             verify_confirmed = 0
             for v_i in range(1, CVE_VERIFY_ATTEMPTS + 1):
+                if not _p3_ollama_up:
+                    verification_results.append({
+                        "verifier_num": v_i, "strategy": "Ollama unavailable",
+                        "language": "", "script": "", "output": "", "verdict": "INCONCLUSIVE",
+                    })
+                    continue
+
                 sp = _Spinner(f"  [V{v_i}/{CVE_VERIFY_ATTEMPTS}] Generating verifier ...").start()
                 v_gen = _generate_verification_script(cve, target, triggering)
                 if not v_gen:
