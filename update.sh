@@ -12,7 +12,7 @@ set -euo pipefail
 # fail immediately rather than hanging the terminal waiting for a password.
 export GIT_TERMINAL_PROMPT=0
 
-OLLAMA_MODEL="phi4-mini:3.8b"
+OLLAMA_MODEL="qwen2.5-coder:3b-instruct"
 OLLAMA_SCRIPT_MODEL="qwen2.5-coder:3b-instruct"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 

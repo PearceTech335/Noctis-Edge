@@ -20,8 +20,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-OLLAMA_MODEL="phi4-mini:3.8b"          # planning, iteration, report prose (NOCTIS_OLLAMA_MODEL)
-SCRIPT_MODEL="qwen2.5-coder:3b-instruct" # CVE scripts, test scripts (NOCTIS_OLLAMA_SCRIPT_MODEL)
+OLLAMA_MODEL="qwen2.5-coder:3b-instruct"   # single model: planning + scripts (NOCTIS_OLLAMA_MODEL / NOCTIS_OLLAMA_SCRIPT_MODEL)
+SCRIPT_MODEL="qwen2.5-coder:3b-instruct"   # same model avoids dual-model RAM pressure on CPU-only hosts
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; CYAN='\033[1;36m'; NC='\033[0m'
 ok()   { echo -e "${GREEN}[OK]${NC}  $*"; }
 info() { echo -e "${YELLOW}[--]${NC}  $*"; }

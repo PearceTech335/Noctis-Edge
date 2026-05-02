@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Noctis Edge — Security Through Exposure  v0.7.0
+Noctis Edge — Security Through Exposure  v0.7.1
 Implements: structured findings, verification,
 approval gates, async execution, HTML reports,
 service-specific enumerations, risk scoring, and
 5-phase nmap discovery with LLM-informed NSE scripting.
 """
 
-VERSION = "v0.7.0"
+VERSION = "v0.7.1"
 
 import asyncio
 import dataclasses
@@ -62,12 +62,25 @@ CVE_CSV      = os.path.join(BASE_DIR, "CVE", "cve-offline", "cve-summary.csv")
 SESSION_FILE = os.path.join(BASE_DIR, "session.json")
 
 OLLAMA_URL     = os.getenv("NOCTIS_OLLAMA_URL", "http://localhost:11434/api/generate")
-# Split-model architecture:
-#   MODEL        — phi4-mini:3.8b  — tool planning, iteration decisions, report prose, remediation
-#   SCRIPT_MODEL — qwen2.5-coder:3b-instruct — CVE exploit scripts, test scripts, verification scripts
-MODEL          = os.getenv("NOCTIS_OLLAMA_MODEL",        "phi4-mini:3.8b")
+# Single-model architecture: use qwen2.5-coder:3b-instruct for ALL LLM tasks.
+# Running two models simultaneously (planning + scripting) consumed 4GB RAM on an 11GB system,
+# forcing swap usage and collapsing generation speed to ~0.2 tok/s.  A single 2GB model stays
+# fully in RAM (5GB+ available after OS), achieving 5-8 tok/s on CPU-only hardware.
+# qwen2.5-coder:3b-instruct handles JSON planning AND Python script generation equally well.
+MODEL          = os.getenv("NOCTIS_OLLAMA_MODEL",        "qwen2.5-coder:3b-instruct")
 SCRIPT_MODEL   = os.getenv("NOCTIS_OLLAMA_SCRIPT_MODEL", "qwen2.5-coder:3b-instruct")
-OLLAMA_TIMEOUT = int(os.getenv("NOCTIS_OLLAMA_TIMEOUT", "300"))   # seconds
+OLLAMA_TIMEOUT = int(os.getenv("NOCTIS_OLLAMA_TIMEOUT", "180"))   # seconds — generous for cold start; warm calls are fast
+
+# Ollama inference options applied to all planning/decision calls.
+# num_ctx:     1024 — caps KV cache; prompts are <700 tokens; reduces resident RAM ~400MB vs 2048
+# temperature: 0    — deterministic; no creativity needed for tool selection JSON
+# top_p:       1    — with temp=0 this is irrelevant, set explicitly for clarity
+# num_thread:  0    — let Ollama auto-detect optimal thread count for the CPU
+_OLLAMA_PLAN_OPTIONS = {"num_ctx": 1024, "temperature": 0, "top_p": 1, "num_thread": 0}
+# keep_alive value sent with every request — keeps model weights resident between scan phases.
+# "1h" is a valid Go time.Duration string accepted by all Ollama versions.
+# Override via NOCTIS_OLLAMA_KEEP_ALIVE env var (e.g. "30m", "2h").
+_OLLAMA_KEEP_ALIVE: str = os.getenv("NOCTIS_OLLAMA_KEEP_ALIVE", "1h")
 
 MAX_OUTPUT          = 3000
 MAX_ITERATIONS      = 10   # minimum base iteration count (used when few services found)
@@ -394,6 +407,7 @@ def ensure_ollama_running() -> bool:
 
     if _is_up():
         print("[*] Ollama is already serving.")
+        _warmup_models()
         return True
 
     # When pointing at a remote/container Ollama host, don't try to spawn locally
@@ -408,11 +422,16 @@ def ensure_ollama_running() -> bool:
 
     print("[*] Ollama is not running — starting 'ollama serve' in the background …")
     try:
+        # Pass OLLAMA_KEEP_ALIVE so the server-level default matches our per-request value.
+        # Without this, models evict after 5 min regardless of per-request keep_alive.
+        serve_env = os.environ.copy()
+        serve_env.setdefault("OLLAMA_KEEP_ALIVE", _OLLAMA_KEEP_ALIVE)
         _ollama_proc = subprocess.Popen(
             ["ollama", "serve"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
+            env=serve_env,
         )
     except OSError as exc:
         print(f"[!] Failed to start Ollama: {exc}")
@@ -422,11 +441,44 @@ def ensure_ollama_running() -> bool:
     while time.time() < deadline:
         if _is_up():
             print("[*] Ollama is now serving.")
+            _warmup_models()
             return True
         time.sleep(0.5)
 
     print("[!] Ollama did not become ready within 15 seconds.")
     return False
+
+
+def _warmup_models() -> None:
+    """Pre-load MODEL and SCRIPT_MODEL into Ollama's memory before the scan starts.
+
+    Sends a tiny prompt to each model with keep_alive=-1 so the weights stay
+    resident for the entire scan.  This eliminates the cold-load delay (typically
+    30-90 seconds on CPU-only hardware) that otherwise hits the first real LLM call.
+    """
+    base_url = OLLAMA_URL.split("/api/")[0]
+    gen_url  = f"{base_url}/api/generate"
+    warmup_prompt = "Reply with the single word: ready"
+    for model in set([MODEL, SCRIPT_MODEL]):
+        try:
+            print(f"[*] Pre-loading model '{model}' into memory …")
+            resp = requests.post(
+                gen_url,
+                json={
+                    "model":      model,
+                    "prompt":     warmup_prompt,
+                    "stream":     False,
+                    "keep_alive": _OLLAMA_KEEP_ALIVE,
+                    "options":    {"num_ctx": 64, "num_predict": 4, "temperature": 0},
+                },
+                timeout=120,
+            )
+            if resp.status_code == 200:
+                print(f"[*] Model '{model}' loaded and warm.")
+            else:
+                print(f"[!] Warmup for '{model}' returned HTTP {resp.status_code} — continuing anyway.")
+        except Exception as e:
+            print(f"[!] Warmup for '{model}' failed: {e} — continuing anyway.")
 
 
 def normalize_severity(sev):
@@ -1944,19 +1996,39 @@ def cves_for_service(service):
                 seen.add(cve["id"])
                 results.append(cve)
 
+    # Strip generic OS/vendor prefixes ("Microsoft Windows ", "Apple macOS ", etc.)
+    # before deciding how to search. If the remainder is too short or generic we
+    # fall straight through to Priority 3 (service-name product map).
+    VENDOR_PREFIXES = [
+        "microsoft windows ", "microsoft ", "apple macos ", "apple ", "google ",
+        "sun ", "novell ", "ibm ", "hp ", "oracle ",
+    ]
+    effective_product = product.lower()
+    for pfx in VENDOR_PREFIXES:
+        if effective_product.startswith(pfx):
+            effective_product = effective_product[len(pfx):].strip()
+            break
+    TRIVIAL_WORDS = {"rpc", "ssn", "server", "client", "service", "host", "daemon"}
+    searchable_product = product if (len(effective_product) >= 5 and effective_product not in TRIVIAL_WORDS) else ""
+
     # Priority 1: exact product + version match (most precise)
-    if product and version:
-        _add([product, version])
+    if searchable_product and version:
+        _add([searchable_product, version])
 
     # Priority 2: product name only
-    if product and len(results) < 5:
-        _add([product])
+    if searchable_product and len(results) < 5:
+        _add([searchable_product])
         # For compound names like "Werkzeug httpd" or "Golang net/http server",
         # also try just the distinguishing first word if it's specific enough.
-        parts = product.split()
+        parts = searchable_product.split()
         if len(parts) > 1:
             first = parts[0]
-            GENERIC_WORDS = {"the", "this", "open", "free", "net", "web", "http", "server"}
+            GENERIC_WORDS = {
+                "the", "this", "open", "free", "net", "web", "http", "server",
+                # vendor/OS names too broad to search alone:
+                "microsoft", "windows", "linux", "unix", "gnu", "apple", "google",
+                "cisco", "oracle", "ibm", "hp", "sun", "novell", "redhat", "debian",
+            }
             if len(first) >= 5 and first.lower() not in GENERIC_WORDS:
                 if version:
                     _add([first, version])
@@ -1964,13 +2036,14 @@ def cves_for_service(service):
                     _add([first])
 
     # Priority 3: service-specific product keyword mapping.
-    # Only used when no product was detected.  Deliberately omits generic
-    # service names like "http" (matches thousands of unrelated CVEs).
-    if not product and name and name not in ("unknown", ""):
+    # Used when no searchable product was detected or results still < 5.
+    if not searchable_product and name and name not in ("unknown", ""):
         SERVICE_PRODUCT_MAP = {
             "ipp":            ["cups"],
             "ms-wbt-server":  ["rdp", "remote desktop"],
             "microsoft-ds":   ["smb", "samba"],
+            "netbios-ssn":    ["netbios", "samba"],
+            "msrpc":          ["ms-rpc", "dcerpc"],
             "ssh":            ["openssh"],
             "ftp":            ["vsftpd", "proftpd"],
             "smtp":           ["postfix", "sendmail", "exim"],
@@ -2052,17 +2125,29 @@ def _parse_nmap_xml(xml_data: str) -> list:
     return services
 
 
-def _nmap_extract_script_output(xml_data: str) -> dict:
-    """Return {port: {script_id: output}} from nmap XML that contains script results."""
+def _nmap_extract_script_output(xml_data: str, batch_ports: list | None = None) -> dict:
+    """Return {port: {script_id: output}} from nmap XML that contains script results.
+
+    Host-level scripts (e.g. SMB scripts that run against the host rather than
+    a specific port) are attributed to the first port in batch_ports, or to the
+    special key 'host' when batch_ports is not supplied.
+    """
     results: dict = {}
     try:
         root = ET.fromstring(xml_data)
+        # Per-port scripts
         for port_el in root.findall(".//port"):
             portid = port_el.attrib.get("portid", "?")
             for script_el in port_el.findall("script"):
                 sid    = script_el.attrib.get("id", "")
                 output = script_el.attrib.get("output", "")
                 results.setdefault(portid, {})[sid] = output
+        # Host-level scripts (SMB, OS detection scripts etc.)
+        host_key = batch_ports[0] if batch_ports else "host"
+        for script_el in root.findall(".//hostscript/script"):
+            sid    = script_el.attrib.get("id", "")
+            output = script_el.attrib.get("output", "")
+            results.setdefault(host_key, {})[sid] = output
     except ET.ParseError:
         pass
     return results
@@ -2208,7 +2293,7 @@ def run_nmap_discovery(target: str) -> tuple:
             target,
         ], timeout=180)
         if batch_xml:
-            batch_results = _nmap_extract_script_output(batch_xml)
+            batch_results = _nmap_extract_script_output(batch_xml, batch_ports=ports)
             for port, scripts_out in batch_results.items():
                 nse_results.setdefault(port, {}).update(scripts_out)
 
@@ -2427,13 +2512,14 @@ def query_llm(context, broken_tools=None, available_tools=None, used_actions=Non
     tools_block = "\n".join(available_descs)
 
     ctx_summary = {
-        "target":          context["target"],
-        "services":        context["services"],
-        "history_count":   len(context.get("history", [])),
-        "last_3_actions":  context.get("history", [])[-3:],
-        "findings_so_far": len(context.get("findings", [])),
-        "disabled_tools":  sorted(broken_tools),
-        "already_run":     sorted(used_actions),
+        "target":         context["target"],
+        "services":       [
+            f"{s['port']}/{s.get('name','')} {s.get('product','').split()[0] if s.get('product') else ''}".strip()
+            for s in context["services"]
+        ],
+        "last_3_actions": context.get("history", [])[-3:],
+        "findings_count": len(context.get("findings", [])),
+        "already_run":    sorted(used_actions),
     }
 
     kb_block = context.get("tool_kb_text", "")
@@ -2492,7 +2578,14 @@ Or if exhausted:
             try:
                 response = requests.post(
                     OLLAMA_URL,
-                    json={"model": MODEL, "prompt": prompt, "stream": False},
+                    json={
+                        "model":      MODEL,
+                        "prompt":     prompt,
+                        "stream":     False,
+                        "format":     "json",
+                        "keep_alive": _OLLAMA_KEEP_ALIVE,
+                        "options":    _OLLAMA_PLAN_OPTIONS,
+                    },
                     timeout=OLLAMA_TIMEOUT,
                 )
                 payload = response.json()
@@ -2517,6 +2610,87 @@ Or if exhausted:
     return {"tool": "none"}
 
 
+# ---------------------------------------------------------------------------
+# FAST-PATH TOOL SELECTOR
+# Pre-emptively maps well-known nmap service names → the correct first tool.
+# This fires before the LLM is consulted, eliminating LLM latency for every
+# service the model would have reasoned to the same answer anyway.
+# Entries are ordered: first match wins.  Use the most specific key first.
+# ---------------------------------------------------------------------------
+_FAST_PATH: list[tuple[str, str, dict]] = [
+    # (service_name_substring, tool_name, args_template)
+    # Keys match against service["name"].lower()
+    # {target} and {port} are substituted at call time.
+    ("microsoft-ds",    "nxc_smb",    {"host": "{target}", "port": "445"}),
+    ("netbios-ssn",     "nxc_smb",    {"host": "{target}", "port": "{port}"}),
+    ("msrpc",           "curl",       {"url": "http://{target}:{port}"}),
+    ("ssl/vmware-auth", "curl",       {"url": "https://{target}:{port}"}),
+    ("vmware-auth",     "curl",       {"url": "https://{target}:{port}"}),
+    ("ssl/http",        "nikto",      {"url": "https://{target}:{port}", "ssl": True}),
+    ("https",           "nikto",      {"url": "https://{target}:{port}", "ssl": True}),
+    ("http-alt",        "nikto",      {"url": "http://{target}:{port}", "ssl": False}),
+    ("http",            "nikto",      {"url": "http://{target}:{port}", "ssl": False}),
+    ("ipp",             "curl",       {"url": "http://{target}:{port}"}),
+    ("ssh",             "ssh_enum",   {"host": "{target}", "port": "{port}"}),
+    ("rdp",             "rdp_enum",   {"host": "{target}", "port": "{port}"}),
+    ("ftp",             "curl",       {"url": "ftp://{target}:{port}"}),
+    ("smtp",            "curl",       {"url": "smtp://{target}:{port}"}),
+    ("mysql",           "mysql_enum", {"host": "{target}", "port": "{port}"}),
+    ("ms-sql-s",        "mssql_enum", {"host": "{target}", "port": "{port}"}),
+    ("mssql",           "mssql_enum", {"host": "{target}", "port": "{port}"}),
+    ("domain",          "dns_enum",   {"domain": "{target}"}),
+    ("dns",             "dns_enum",   {"domain": "{target}"}),
+    ("snmp",            "curl",       {"url": "udp://{target}:{port}"}),
+    ("ldap",            "nxc_ldap",   {"host": "{target}", "port": "{port}"}),
+]
+
+
+def _fast_path_actions(
+    services: list,
+    target: str,
+    broken_tools: set,
+    available_tools: dict,
+    used_actions: set,
+) -> list[dict]:
+    """Return a list of validated tool actions derived from the fast-path table.
+
+    For each service, find the first matching fast-path entry whose tool is not
+    broken, not already used, and is present in available_tools.  Returns only
+    actions for services that have a clear fast-path match; services with no
+    match are left for the LLM.
+    """
+    actions: list[dict] = []
+    seen: set = set()
+    for svc in services:
+        svc_name = svc.get("name", "").lower()
+        port     = svc.get("port", "")
+        for name_key, tool, args_tmpl in _FAST_PATH:
+            if name_key not in svc_name:
+                continue
+            if tool in broken_tools:
+                break  # try next fast-path entry for this service
+            # Tool availability checks (mirrors query_llm logic)
+            if tool == "ssh_enum"  and "ssh-audit" not in available_tools:
+                break
+            if tool == "rdp_enum"  and "rdpscan"   not in available_tools:
+                break
+            if tool in ("nxc_smb", "nxc_ldap") and "nxc" not in available_tools:
+                break
+            # Substitute template vars
+            def _sub(v):
+                if isinstance(v, str):
+                    return v.replace("{target}", target).replace("{port}", port)
+                return v
+            resolved_args = {k: _sub(v) for k, v in args_tmpl.items()}
+            key = f"{tool}:{str(resolved_args)}"
+            if key in used_actions or key in seen:
+                break
+            seen.add(key)
+            actions.append({"tool": tool, "args": resolved_args})
+            break  # one tool per service
+    return actions
+
+
 def query_llm_parallel(context, broken_tools=None, available_tools=None, used_actions=None):
     """Phase-1 LLM call: plan ONE initial action per discovered service simultaneously.
 
@@ -2528,76 +2702,99 @@ def query_llm_parallel(context, broken_tools=None, available_tools=None, used_ac
     if available_tools is None: available_tools = {}
     if used_actions    is None: used_actions    = set()
 
-    # Reuse the same tool description format as query_llm
+    target   = context["target"]
+    services = context.get("services", [])
+
+    # ------------------------------------------------------------------
+    # Fast-path: deterministically assign tools for well-known services.
+    # This runs at zero LLM cost and correctly handles the vast majority
+    # of real-world services (SMB, HTTP, SSH, RDP, VMware, etc.).
+    # ------------------------------------------------------------------
+    fast_actions = _fast_path_actions(services, target, broken_tools, available_tools, used_actions)
+    fast_covered_ports = {
+        str(a["args"].get("port") or (a["args"].get("url", "").split(":")[-1].split("/")[0]))
+        for a in fast_actions
+    }
+
+    # Identify services that were NOT covered by the fast path
+    unmatched = [
+        s for s in services
+        if s.get("port") not in fast_covered_ports and s.get("recommended_tools")
+    ]
+
+    if fast_actions:
+        covered = ", ".join(
+            f"{a['tool']}→{a['args'].get('host') or a['args'].get('url','')}" for a in fast_actions
+        )
+        print(f"[+] Fast-path assigned {len(fast_actions)} action(s): {covered}")
+
+    # If all services are covered, skip the LLM entirely
+    if not unmatched:
+        return fast_actions
+
+    # ------------------------------------------------------------------
+    # LLM fallback: only for services not handled by the fast path.
+    # ------------------------------------------------------------------
     all_tool_descs = {
         "curl":       'curl: {"url": "http://target:port/path", "method": "GET", "headers": {}}',
         "nikto":      'nikto: {"url": "http://target:port", "ssl": false}',
         "nikto_cgi":  'nikto_cgi: {"url": "http://target:port", "ssl": false}',
         "nuclei":     'nuclei: {"url": "http://target:port", "tags": "cve,lfi,sqli", "severity": "medium,high,critical"}',
-        "ffuf":       f'ffuf: {{"url": "http://target:port", "wordlist": "{WORDLIST}", "extensions": "php,html", "method": "GET", "match_codes": "200,301,302,401,403", "maxtime": 300}}  — url must be a plain base URL, no FUZZ suffix (appended automatically)',
+        "ffuf":       f'ffuf: {{"url": "http://target:port", "wordlist": "{WORDLIST}", "extensions": "php,html", "method": "GET", "match_codes": "200,301,302,401,403", "maxtime": 300}}',
         "ssh_enum":   'ssh_enum: {"host": "...", "port": "22"}',
         "rdp_enum":   'rdp_enum: {"host": "...", "port": "3389"}',
         "dns_enum":   'dns_enum: {"domain": "..."}',
         "mysql_enum": 'mysql_enum: {"host": "...", "port": "3306"}',
         "mssql_enum": 'mssql_enum: {"host": "...", "port": "1433"}',
     }
-
-    available_descs = []
-    for name, desc in all_tool_descs.items():
-        if name in broken_tools:
-            continue
-        if name == "ssh_enum"  and "ssh-audit" not in available_tools:
-            continue
-        if name == "rdp_enum"  and "rdpscan"   not in available_tools:
-            continue
-        available_descs.append(f"- {desc}")
+    available_descs = [
+        f"- {desc}" for name, desc in all_tool_descs.items()
+        if name not in broken_tools
+        and not (name == "ssh_enum"  and "ssh-audit" not in available_tools)
+        and not (name == "rdp_enum"  and "rdpscan"   not in available_tools)
+    ]
     tools_block = "\n".join(available_descs)
 
-    target   = context["target"]
-    services = context.get("services", [])
-    services_with_tools = [s for s in services if s.get("recommended_tools")]
-    if not services_with_tools:
-        return []
-
+    # Compact service list for unmatched services only
     services_block = "\n".join(
-        f"  Port {s['port']}/{s.get('name', '')} -> URL http://{target}:{s['port']} (priority {s['priority']}): "
-        f"recommended={','.join(s['recommended_tools'])}"
-        + (f", CVEs={','.join(c['id'] for c in s.get('cves', []))}" if s.get('cves') else "")
-        for s in services_with_tools
+        f"  Port {s['port']}/{s.get('name', '')} {s.get('product','').split()[0] if s.get('product') else ''}"
+        for s in unmatched
     )
 
-    prompt = f"""You are a penetration testing assistant.
+    # Minimal context summary — no full findings dump to keep prompt short
+    already_run_block = (
+        "DO NOT REPEAT: " + ", ".join(sorted(used_actions)) if used_actions else "ALREADY RUN: (none)"
+    )
 
-### CRITICAL CONSTRAINTS:
-- RESPONSE MUST BE VALID JSON ONLY — no prose, no markdown.
-- BLACKLIST — DO NOT USE ANY OF THESE: {sorted(used_actions | broken_tools)}
-- Return EXACTLY ONE action per service listed.
-- Use the recommended tool for each service — prefer tools with higher KB success rates.
-- Use NSE script results to choose specific paths or auth methods.
+    prompt = f"""You are a penetration tester. Reply with valid JSON only, no prose.
+
+{already_run_block}
 
 TARGET: {target}
+UNRECOGNISED SERVICES (assign one tool each):
+{services_block}
 
 AVAILABLE TOOLS:
 {tools_block}
 
-SERVICES (assign one tool per service):
-{services_block}
-{context.get("tool_kb_text", "")}
-{("NSE SCRIPT RESULTS:\\n" + context.get("nse_context", "")) if context.get("nse_context") else ""}
-Return a JSON object:
-{{"actions": [{{"tool": "<name>", "args": <value>}}, ...]}}
-
-If no actions are possible:
-{{"actions": []}}"""
+Return: {{"actions": [{{"tool": "<name>", "args": <value>}}, ...]}}
+If no suitable tool exists: {{"actions": []}}"""
 
     _t0 = time.monotonic()
-    _sp  = _Spinner("[ LLM ]  Planning parallel initial scan ...").start()
+    _sp  = _Spinner(f"[ LLM ]  Planning {len(unmatched)} unmatched service(s) ...").start()
     try:
         for attempt in range(MAX_LLM_RETRIES):
             try:
                 response = requests.post(
                     OLLAMA_URL,
-                    json={"model": MODEL, "prompt": prompt, "stream": False},
+                    json={
+                        "model":      MODEL,
+                        "prompt":     prompt,
+                        "stream":     False,
+                        "format":     "json",
+                        "keep_alive": _OLLAMA_KEEP_ALIVE,
+                        "options":    _OLLAMA_PLAN_OPTIONS,
+                    },
                     timeout=OLLAMA_TIMEOUT,
                 )
                 payload = response.json()
@@ -2622,8 +2819,8 @@ If no actions are possible:
                         continue
                     seen.add(key)
                     valid.append(action)
-                if valid:
-                    return valid
+                # Merge fast-path + LLM results
+                return fast_actions + valid
             except json.JSONDecodeError:
                 pass
             except Exception as e:
@@ -2631,8 +2828,9 @@ If no actions are possible:
     finally:
         _sp.stop(f" done ({_fmt_dur(time.monotonic() - _t0)})")
 
-    print("[!] Parallel LLM planning returned no valid actions.")
-    return []
+    print("[!] Parallel LLM planning returned no valid actions for unmatched services.")
+    # Return fast-path results even if LLM failed
+    return fast_actions
 
 
 # ---------------------------------------------------------------------------
@@ -3501,6 +3699,8 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
                 resp    = requests.post(
                     OLLAMA_URL,
                     json={"model": MODEL, "stream": False,
+                          "keep_alive": _OLLAMA_KEEP_ALIVE,
+                          "options":    {"num_ctx": 1024, "temperature": 0},
                           "prompt": (
                               "You are a professional penetration tester writing a client-facing report. "
                               "Write exactly two sentences summarising the security posture of the target based on the data below. "
@@ -3943,7 +4143,13 @@ Reply with ONLY this JSON (no markdown, no code fences):
             try:
                 resp = requests.post(
                     OLLAMA_URL,
-                    json={"model": SCRIPT_MODEL, "prompt": prompt, "stream": False},
+                    json={
+                        "model":      SCRIPT_MODEL,
+                        "prompt":     prompt,
+                        "stream":     False,
+                        "keep_alive": _OLLAMA_KEEP_ALIVE,
+                        "options":    {"num_ctx": 1024, "temperature": 0},
+                    },
                     timeout=180,
                 )
                 payload = resp.json()
@@ -4005,7 +4211,13 @@ Reply with ONLY this JSON (no markdown, no code fences):
             try:
                 resp = requests.post(
                     OLLAMA_URL,
-                    json={"model": SCRIPT_MODEL, "prompt": prompt, "stream": False},
+                    json={
+                        "model":      SCRIPT_MODEL,
+                        "prompt":     prompt,
+                        "stream":     False,
+                        "keep_alive": _OLLAMA_KEEP_ALIVE,
+                        "options":    {"num_ctx": 1024, "temperature": 0},
+                    },
                     timeout=180,
                 )
                 payload = resp.json()
@@ -4054,7 +4266,13 @@ Reply with ONLY this JSON (no markdown, no code fences):
             try:
                 resp = requests.post(
                     OLLAMA_URL,
-                    json={"model": SCRIPT_MODEL, "prompt": prompt, "stream": False},
+                    json={
+                        "model":      SCRIPT_MODEL,
+                        "prompt":     prompt,
+                        "stream":     False,
+                        "keep_alive": _OLLAMA_KEEP_ALIVE,
+                        "options":    {"num_ctx": 1024, "temperature": 0},
+                    },
                     timeout=180,
                 )
                 payload = resp.json()
@@ -4585,7 +4803,13 @@ def _generate_remediation(cve: dict) -> str:
     try:
         resp = requests.post(
             OLLAMA_URL,
-            json={"model": MODEL, "prompt": prompt, "stream": False},
+            json={
+                "model":      MODEL,
+                "prompt":     prompt,
+                "stream":     False,
+                "keep_alive": _OLLAMA_KEEP_ALIVE,
+                "options":    {"num_ctx": 1024, "temperature": 0},
+            },
             timeout=OLLAMA_TIMEOUT,
         )
         payload = resp.json()

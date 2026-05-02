@@ -12,7 +12,7 @@
 #  Manual:
 #    docker compose build
 #    docker compose up -d
-#    docker compose exec ollama ollama pull phi4-mini:3.8b
+
 #    docker compose exec ollama ollama pull qwen2.5-coder:3b-instruct
 #    # Open http://localhost:5000
 #
@@ -71,7 +71,7 @@ services:
       # Point Noctis at the Ollama sidecar (service name resolves inside compose network)
       - NOCTIS_OLLAMA_URL=http://ollama:11434/api/generate
       # Planning model — tool decisions, iteration, report prose, remediation guidance
-      - NOCTIS_OLLAMA_MODEL=phi4-mini:3.8b
+      - NOCTIS_OLLAMA_MODEL=qwen2.5-coder:3b-instruct
       # Script model — CVE exploit scripts, test scripts, verification scripts
       - NOCTIS_OLLAMA_SCRIPT_MODEL=qwen2.5-coder:3b-instruct
       # Bind to all interfaces so the host browser can reach port 5000

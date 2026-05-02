@@ -29,7 +29,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-OLLAMA_MODEL="phi4-mini:3.8b"
+OLLAMA_MODEL="qwen2.5-coder:3b-instruct"
 OLLAMA_SCRIPT_MODEL="qwen2.5-coder:3b-instruct"
 
 CVE_REPO="https://github.com/trickest/cve.git"

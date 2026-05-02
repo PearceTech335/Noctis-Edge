@@ -53,19 +53,18 @@ Alongside CVE probes, `cve_knowledge_base.json` accumulates tooling knowledge �
 | **OS** | Kali / Parrot / Ubuntu / Debian-based |
 | **Python** | 3.10+ |
 
-**Storage breakdown** (approximate):
+| **Storage breakdown** (approximate):
 
 | Item | Size |
 |------|------|
-| Ollama model — `phi4-mini:3.8b` (planning + reports) | ~2.5 GB |
-| Ollama model — `qwen2.5-coder:3b-instruct` (script generation) | ~2.0 GB |
+| Ollama model — `qwen2.5-coder:3b-instruct` (all LLM tasks) | ~2.0 GB |
 | Nuclei templates | ~1.5 GB |
 | CVE offline database (built by `setup.sh`) | ~3–5 GB |
 | SecLists wordlists (snap) | ~2 GB |
 | Tool binaries + Python venv | ~1 GB |
 | Scan session outputs | Variable |
 
-> **RAM note:** Split-model architecture — `phi4-mini:3.8b` (~3 GB) handles planning, iteration decisions, and report prose; `qwen2.5-coder:3b-instruct` (~2 GB) handles all CVE script generation. Models are called sequentially so only one is loaded at a time. 8 GB RAM is sufficient; 16 GB+ recommended.
+> **RAM note:** Single-model architecture — `qwen2.5-coder:3b-instruct` (~2 GB) handles all LLM tasks (planning, iteration decisions, report prose, and CVE script generation). Using one model eliminates dual-model RAM pressure on CPU-only hosts. 8 GB RAM is sufficient; 16 GB+ recommended.
 
 ---
 
@@ -155,7 +154,7 @@ chmod +x setup.sh
 | apt packages | `nmap`, `curl`, `ffuf`, `hydra`, `ssh-audit`, `dnsenum`, `dnsrecon`, `perl`, `golang-go`, `python3-tk`, and more |
 | SecLists | Wordlists via `snap install seclists` |
 | Nuclei | Go-based template scanner (`~/go/bin/nuclei`) |
-| Ollama | Local LLM server + pulls `phi4-mini:3.8b` (planning/reports) and `qwen2.5-coder:3b-instruct` (script generation) |
+| Ollama | Local LLM server + pulls `qwen2.5-coder:3b-instruct` (all LLM tasks) |
 | Python venv | `.venv/` with `requests`, `jinja2`, `pycryptodome`, `flask`, `flask-sock` |
 | CVE database | Clones `CVE/cve-offline/` and builds `cve-summary.csv` |
 | rdpscan | Clones `rdpscan/` helper |
@@ -459,7 +458,7 @@ cve_knowledge_base.json           ← cross-engagement CVE test KB (project root
 
 | Constant | Default | Description |
 |----------|---------|-------------|
-| `MODEL` | `phi4-mini:3.8b` | Planning, iteration decisions, report prose, CVE remediation (`NOCTIS_OLLAMA_MODEL` env var to override) |
+| `MODEL` | `qwen2.5-coder:3b-instruct` | Planning, iteration decisions, report prose, CVE remediation (`NOCTIS_OLLAMA_MODEL` env var to override) |
 | `SCRIPT_MODEL` | `qwen2.5-coder:3b-instruct` | CVE exploit scripts, test scripts, verification scripts (`NOCTIS_OLLAMA_SCRIPT_MODEL` env var to override) |
 | `OLLAMA_URL` | `http://localhost:11434/api/generate` | Ollama API endpoint |
 | `MAX_ITERATIONS` | `10` | Max Phase 2 sequential loop iterations |
@@ -507,19 +506,17 @@ Manual install (if not using `setup.sh`):
 # Install Ollama:
 curl -fsSL https://ollama.com/install.sh | sh
 
-# Pull both models:
-ollama pull phi4-mini:3.8b                 # planning, iteration decisions, report prose
-ollama pull qwen2.5-coder:3b-instruct      # CVE exploit scripts, test scripts, verification scripts
+# Pull the model:
+ollama pull qwen2.5-coder:3b-instruct      # all LLM tasks: planning, iteration, scripts, reports
 ```
 
-Ollama will be started automatically by `noctis.py` on first use. The split-model architecture routes natural-language reasoning tasks to `phi4-mini:3.8b` (128K context, native function calling) and all Python script generation to `qwen2.5-coder:3b-instruct` (code-specialist training, stronger structured-output for exploit probes). Models are called sequentially — only one is loaded in RAM at a time. Inference is typically 30–90 seconds per LLM call on CPU-only hardware.
+Ollama will be started automatically by `noctis.py` on first use. A single `qwen2.5-coder:3b-instruct` model handles all tasks — tool planning, CVE script generation, report conclusion, and remediation guidance. Using one model eliminates the dual-model RAM pressure that occurs when two models compete for memory on CPU-only hardware. Inference is typically 20–90 seconds per call on CPU-only hardware after the initial warm load.
 
 ### Model
 
 | Model | Environment variable | Purpose |
 |-------|---------------------|---------|
-| `phi4-mini:3.8b` | `NOCTIS_OLLAMA_MODEL` | Agentic tool decisions, scan planning, report conclusion, CVE remediation guidance |
-| `qwen2.5-coder:3b-instruct` | `NOCTIS_OLLAMA_SCRIPT_MODEL` | CVE known-exploit scripts, CVE test scripts, verification scripts |
+| `qwen2.5-coder:3b-instruct` | `NOCTIS_OLLAMA_MODEL` / `NOCTIS_OLLAMA_SCRIPT_MODEL` | All LLM tasks: tool decisions, scan planning, CVE scripts, report conclusion, remediation guidance |
 
 ---
 
@@ -539,7 +536,7 @@ This updates (in order):
 | 2 | SecLists (snap) refreshed |
 | 3 | pip dependencies upgraded |
 | 4 | Nuclei binary + templates updated |
-| 5 | Ollama models pulled (`phi4-mini:3.8b` + `qwen2.5-coder:3b-instruct`) |
+| 5 | Ollama models pulled (`qwen2.5-coder:3b-instruct` — single model for all LLM tasks) |
 | 6 | CVE offline database pulled + CSV rebuilt |
 | 7 | Noctis Edge — `git fetch` + `git reset --hard origin/master` (always gets latest, even with local changes) |
 | 8 | Nikto submodule — `git pull` inside `nikto/` (initialises submodule if missing) |
@@ -641,6 +638,20 @@ The following are excluded from version control (see `.gitignore`):
 
 ## Version History
 
+## What's New in v0.7.1
+
+**Single-model architecture** — `phi4-mini:3.8b` has been removed. `qwen2.5-coder:3b-instruct` now handles all LLM tasks: tool planning, iteration decisions, report prose, CVE remediation guidance, and CVE script generation. Running two models simultaneously on CPU-only hardware caused both to compete for RAM, forcing swap usage and collapsing generation speed to < 0.3 tok/s. The single 2 GB model fits entirely in available RAM and generates at 1–8 tok/s on typical CPU-only hosts.
+
+**Deterministic fast-path tool selector** — a rule-based `_FAST_PATH` table maps well-known service name patterns to the correct tool without any LLM call. Covered services: `microsoft-ds` → `nxc_smb/445`, `netbios-ssn` → `nxc_smb`, `msrpc` → `curl`, `ssl/vmware-auth` / `vmware-auth` → `curl(https)`, `ssl/http` → `nikto(ssl)`, `http` → `nikto`, `ssh` → `ssh_enum`, `rdp` → `rdp_enum`, `ftp` → `curl`, `mysql` → `mysql_enum`, `mssql` → `mssql_enum`, `dns` → `dns_enum`, `ldap` → `nxc_ldap`. For targets where all services match (typical internal Windows/VMware hosts), the Phase 1 parallel scan runs entirely without LLM involvement, eliminating the main source of timeouts.
+
+**Model keep-alive** — `keep_alive="1h"` is now sent with every Ollama request, and the same value is passed as `OLLAMA_KEEP_ALIVE` to the server environment when noctis.py spawns `ollama serve`. This ensures the model stays resident in RAM for the full scan duration, eliminating the 20–90 second cold-load penalty on every call.
+
+**Inference options tightened** — `num_ctx` capped at 1024 (down from the 4096 default) for all planning calls; planning prompts are < 700 tokens so the smaller cache covers them fully while halving KV cache RAM usage. `temperature: 0` eliminates sampling overhead. `format: json` grammar-constrained decoding on all planning and CVE calls ensures the model outputs valid JSON without prose preamble.
+
+**Model warm-start** — `_warmup_models()` fires a tiny prompt at each model before the scan begins, loading weights into RAM during the nmap discovery phase so the first real LLM call is warm.
+
+---
+
 ## What's New in v0.7.0
 
 **Five-phase nmap discovery** — the single fast-port-scan call has been replaced with a structured five-phase nmap pipeline that runs before any LLM decisions are made:
@@ -741,7 +752,8 @@ The following are excluded from version control (see `.gitignore`):
 
 | Version | Date | Changes |
 |---------|------|---------|
-| **v0.6.8** | May 2026 | Docker deployment fixes: bash TCP health check (curl not in ollama image), `start_period` 45s, correct `NOCTIS_OLLAMA_MODEL` + `NOCTIS_OLLAMA_SCRIPT_MODEL` env vars, disk pre-flight checks, `exec -T` flag, Dockerfile Go cache cleanup, `.dockerignore` CVE/cve/ exclusion |
+| **v0.7.1** | May 2026 | Single-model architecture: `phi4-mini:3.8b` removed, `qwen2.5-coder:3b-instruct` handles all LLM tasks; deterministic fast-path tool selector for all well-known services (SMB, RPC, VMware, MSSQL, SSH, RDP, FTP, LDAP, DNS) eliminates LLM calls for common targets; `keep_alive=1h` per-request + server env-var prevents model eviction between scan phases; `num_ctx` capped at 1024 to reduce KV cache pressure; `format:json` grammar-constrained decoding on all planning calls; model warm-start before scan begins |
+| **v0.7.0** | May 2026 | Five-phase nmap discovery pipeline; NSE script results injected into LLM planning context |
 | **v0.6.7** | May 2026 | ffuf scoped to HTTP/HTTPS only (removed from IPP/CUPS service branch); Tool KB community pipeline added (`submit_tool_kb.py`, `merge_tool_kb.py`, Cloudflare routes `/submit-tool` + `/community-tool-kb`, `update.sh` step 9/9) |
 | **v0.6.6** | May 2026 | Split-model architecture: `qwen2.5-coder:3b-instruct` added for CVE script generation; `phi4-mini:3.8b` retained for planning/reports; `SCRIPT_MODEL` constant + `NOCTIS_OLLAMA_SCRIPT_MODEL` env var |
 | **v0.6.5** | May 2026 | Single-model architecture: removed `llama3.2:3b`, `phi4-mini:3.8b` now handles all LLM tasks; phi4-mini v1 prompt improvements (PYTHON RULES, CONTRAST RULE, BLACKLIST consolidation, primacy bias); collapsible CVE test result cards in HTML report |
