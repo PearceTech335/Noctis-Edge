@@ -30,14 +30,14 @@ What makes this more than a one-off test is the **community knowledge base**:
 
 - Every probe script and its verdict is recorded in `cve_knowledge_base.json` at the project root
 - On subsequent runs against the same CVE, **proven scripts are replayed first** — no LLM generation required — giving faster, higher-confidence results
-- Running `./update.sh` automatically submits your results to the community repository and pulls in validated scripts contributed by other users — no account, token, or cloud service required
+- Running `./update.sh` automatically submits your results to the community repository — no account, token, or cloud service required for submission. Validated scripts and tooling knowledge contributed by other users are available to those with a [Polar.sh subscription](https://buy.polar.sh/polar_cl_rEP2IebC07PDSnIal0HF4kZSBJVecdZSmkREx3Emnin)
 - The entire loop (generation → execution → verdict → submission → replay) stays on-device; nothing leaves the host without an explicit `./update.sh`
 
 The result: **the more the community runs, the sharper everyone's scans become**.
 
 ### Tooling Intelligence
 
-Alongside CVE probes, `cve_knowledge_base.json` accumulates tooling knowledge — which tool invocations produced real findings versus noise, which scan techniques work reliably against specific service fingerprints, and which scripts generated false positives. The LLM uses this history as context on each new engagement, progressively improving the quality of tool selection and script generation over time.
+Alongside CVE probes, `cve_knowledge_base.json` accumulates tooling knowledge — which tool invocations produced real findings versus noise, which scan techniques work reliably against specific service fingerprints, and which scripts generated false positives. The LLM uses this history as context on each new engagement, progressively improving the quality of tool selection and script generation over time. Your local tooling knowledge base grows continuously with every scan you run. Community-contributed tooling intelligence — aggregated across all users — is pulled down during `./update.sh` for those with a subscription token set in `noctis.conf`.
 
 > **Get the Noctis Edge on your next vulnerability scan** — because knowing a CVE *exists* is just the start; knowing it's *actually exploitable* is the edge that matters.
 
@@ -397,7 +397,7 @@ After the main scan (and after `--msf-validate` if both are set):
 4. Scripts must print one of: `VERDICT: VULNERABLE`, `VERDICT: NOT_VULNERABLE`, `VERDICT: INCONCLUSIVE`
 5. Results are tallied into an overall per-CVE verdict and written into the reports
 
-**Knowledge Base**: Results are persisted in `cve_knowledge_base.json` in the project root. On future runs, previously successful scripts for the same CVE are passed back to the LLM as context, improving quality over time. Running `./update.sh` automatically submits this file to the community repository via the Cloudflare relay — no token or account required.
+**Knowledge Base**: Results are persisted in `cve_knowledge_base.json` in the project root. On future runs, previously successful scripts for the same CVE are passed back to the LLM as context, improving quality over time. Running `./update.sh` automatically submits this file to the community repository via the Cloudflare relay — no token or account required for submission. Pulling the aggregated community knowledge base requires a subscription token.
 
 **Verdicts**:
 - `VULNERABLE` — at least 1 script returned VULNERABLE
@@ -559,7 +559,7 @@ This updates (in order):
 
 Noctis Edge accumulates CVE test results in `cve_knowledge_base.json` at the project root (created automatically on first `--cve-test` run). This file is machine-specific and anonymised — each entry is identified **only** by CVE ID; no target-specific information is recorded. This file is **not committed to the main git branch**.
 
-Each time you run `./update.sh`, the knowledge base is automatically submitted to the community repository via a Cloudflare relay — no token or account required. Your installation ID (generated once by `./setup.sh` and stored in `noctis.conf`) is used only to rate-limit submissions (4 per day) and is never linked to personal data.
+Each time you run `./update.sh`, the knowledge base is automatically submitted to the community repository via a Cloudflare relay — no token or account required for submission. Your installation ID (generated once by `./setup.sh` and stored in `noctis.conf`) is used only to rate-limit submissions (4 per day) and is never linked to personal data. Pulling the aggregated community knowledge base requires a subscription token — see [Unlocking the Community Knowledge Base](#unlocking-the-community-knowledge-base) below.
 
 ### How the relay works
 
@@ -589,7 +589,7 @@ The community KB is pulled on every subsequent `./update.sh` run as long as `PAI
 | Script | Purpose |
 |--------|---------|
 | `setup.sh` | One-shot setup for a fresh install — run once after cloning. Also generates a unique installation ID stored in `noctis.conf`. |
-| `update.sh` | Refresh of all components. On completion, automatically submits your local `cve_knowledge_base.json` and `tool_knowledge_base.json` to the community relay (no token required). |
+| `update.sh` | Refresh of all components. On completion, automatically submits your local `cve_knowledge_base.json` and `tool_knowledge_base.json` to the community relay (no token required for submission). |
 | `scripts/submit_kb.py` | POSTs the local CVE knowledge base to the Cloudflare community relay. Called automatically by `update.sh`. |
 | `scripts/merge_kb.py` | Additively merges an external CVE knowledge base JSON into the local one (no data is overwritten or removed). |
 | `scripts/submit_tool_kb.py` | POSTs the local tool performance knowledge base to the Cloudflare community relay. Called automatically by `update.sh`. |
