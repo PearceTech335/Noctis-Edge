@@ -3585,6 +3585,17 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <span style="font-size:.75em;color:#555;margin-left:auto">&#9660; expand</span>
   </summary>
 
+  {% if r.overall_verdict == "INCONCLUSIVE" %}
+  <div style="background:#1c1c14;border-left:3px solid #f9a825;padding:.65em .9em;margin-bottom:.7em;border-radius:0 4px 4px 0;font-size:.86em">
+    <strong style="color:#f9a825">&#9888; Why INCONCLUSIVE?</strong>
+    <div style="color:#ffe082;margin-top:.35em;line-height:1.5">{{ r.inconclusive_reason }}</div>
+    <div style="color:#795548;font-size:.8em;margin-top:.4em;font-style:italic">
+      INCONCLUSIVE means the probe scripts ran but could not definitively confirm or rule out the vulnerability.
+      Expand the attempts below to review raw script output, then verify manually if the CVE is relevant to your environment.
+    </div>
+  </div>
+  {% endif %}
+
   {% if r.verification_results %}
   <div style="background:#1a2a1a;border-left:3px solid {% if r.verified %}#4caf50{% else %}#ff9800{% endif %};padding:.6em .8em;margin-bottom:.6em;border-radius:0 4px 4px 0;font-size:.85em">
     <strong style="color:{% if r.verified %}#4caf50{% else %}#ff9800{% endif %}">
@@ -3667,6 +3678,13 @@ def generate_html_report(report_data):
     if os.path.isfile(logo_path):
         with open(logo_path, "rb") as fh:
             logo_b64 = base64.b64encode(fh.read()).decode()
+
+    # Back-fill inconclusive_reason for reports generated before this field existed
+    cve_results = report_data.get("cve_test_results", [])
+    for r in cve_results:
+        if r.get("overall_verdict") == "INCONCLUSIVE" and not r.get("inconclusive_reason"):
+            r["inconclusive_reason"] = _derive_inconclusive_reason(r, r.get("attempts", []))
+
     data = dict(
         report_data,
         logo_b64=logo_b64,
@@ -4457,6 +4475,89 @@ def _select_kb_scripts(scripts: list) -> list:
     return top + mid + low
 
 
+def _derive_inconclusive_reason(cve: dict, attempts: list) -> str:
+    """Analyse attempt outputs to produce a human-readable explanation of why a
+    CVE test returned INCONCLUSIVE rather than a definitive verdict.
+
+    Checks the outputs in priority order so the most actionable explanation
+    surfaces first.  Returns a single sentence suitable for display in the
+    report.
+    """
+    if not attempts:
+        return "No probe scripts were generated or executed for this CVE."
+
+    all_outputs = " ".join(a.get("output", "") for a in attempts).lower()
+    all_strategies = " ".join(a.get("strategy", "") for a in attempts).lower()
+
+    # LLM generation failures
+    llm_failures = sum(1 for a in attempts if "llm parse failure" in a.get("strategy", "").lower()
+                       or "ollama unavailable" in a.get("strategy", "").lower())
+    if llm_failures == len(attempts):
+        return "All probe scripts failed to generate — Ollama was unavailable or returned unparseable JSON."
+    if llm_failures > 0:
+        return (f"{llm_failures} of {len(attempts)} scripts failed to generate (LLM parse failure); "
+                "remaining probes ran but could not confirm the vulnerability.")
+
+    # Timeout signals
+    timed_out = sum(1 for a in attempts if "[timed out]" in a.get("output", "").lower())
+    if timed_out == len(attempts):
+        return ("All probe scripts timed out (30s limit). "
+                "The target service may be slow, filtered, or not responding on the probed port/protocol.")
+    if timed_out > 0:
+        return (f"{timed_out} of {len(attempts)} scripts timed out. "
+                "The remaining scripts ran but returned INCONCLUSIVE — "
+                "the target may be partially filtered.")
+
+    # Connection-level errors
+    if "connection refused" in all_outputs:
+        return ("Probes received 'Connection refused' — the service is not accepting connections "
+                "on the protocol the generated scripts targeted.")
+    if "connection timed out" in all_outputs or "timed out" in all_outputs:
+        return "Probes timed out at the network level — the port may be filtered or the host unreachable."
+    if "name or service not known" in all_outputs or "nodename nor servname" in all_outputs:
+        return "DNS resolution failed for the target — probes could not reach the host."
+
+    # Script runtime errors
+    error_count = sum(1 for a in attempts if "[error:" in a.get("output", "").lower())
+    if error_count == len(attempts):
+        return ("All scripts raised runtime errors during execution. "
+                "The probes likely targeted a protocol not exposed on this port "
+                "(e.g. HTTP probe against an RPC/SMB service).")
+    if error_count > 0:
+        return (f"{error_count} of {len(attempts)} scripts raised runtime errors. "
+                "The LLM generated HTTP/network probes that do not match the actual service protocol.")
+
+    # Version-banner-only strategies (common for old CVEs)
+    banner_only = sum(1 for a in attempts if "version banner" in a.get("strategy", "").lower()
+                      or "banner" in a.get("strategy", "").lower())
+    if banner_only == len(attempts):
+        vuln_type = cve.get("vulnerability_type", "")
+        return (f"All {len(attempts)} probes used version-banner checks only — "
+                f"insufficient to confirm or deny a {vuln_type or 'vulnerability'} "
+                "without an exact version string in the service response.")
+
+    # No VERDICT token found in output
+    no_verdict = sum(1 for a in attempts
+                     if "vulnerable" not in a.get("output", "").lower()
+                     and "not_vulnerable" not in a.get("output", "").lower())
+    if no_verdict == len(attempts):
+        return ("Scripts ran but produced no VERDICT token — "
+                "the target did not respond in a way the probes could interpret as vulnerable or safe.")
+
+    # Generic HTTP probes against a non-HTTP service
+    if ("http" in all_strategies or "requests.get" in all_outputs) and \
+       cve.get("service", "") and "http" not in cve.get("service", "").lower():
+        return ("The LLM generated HTTP probes for a non-HTTP service. "
+                "The scripts could not determine vulnerability status because the port "
+                "does not speak HTTP.")
+
+    # Default — mixed inconclusive
+    return ("The probe scripts ran but could not confirm or deny the vulnerability. "
+            "This typically means the target does not expose a version string or "
+            "detectable behaviour that distinguishes patched from unpatched versions. "
+            "Manual verification is recommended.")
+
+
 async def run_cve_tests(cve_matches: list, target: str,
                         session_dir: str, kb: dict) -> tuple[list, dict]:
     """
@@ -4827,6 +4928,10 @@ async def run_cve_tests(cve_matches: list, target: str,
               f"I:{verdict_counts['INCONCLUSIVE']}, KB:{kb_selected}/{kb_count} replayed)  "
               f"[CVE time: {cve_elapsed}]")
 
+        inconclusive_reason = (
+            _derive_inconclusive_reason(cve, attempts) if overall == "INCONCLUSIVE" else ""
+        )
+
         cve_test_results.append({
             "cve_id":               cve_id,
             "vulnerability_type":   cve.get("vulnerability_type", ""),
@@ -4838,6 +4943,7 @@ async def run_cve_tests(cve_matches: list, target: str,
             "kb_pool_size":         kb_count,
             "verified":             verified,
             "verification_results": verification_results,
+            "inconclusive_reason":  inconclusive_reason,
             "attempts":             attempts,
         })
 
