@@ -62,6 +62,21 @@ function githubHeaders(token) {
   };
 }
 
+/**
+ * Safe base64 encoding for large byte arrays.
+ * The spread-into-String.fromCharCode pattern (...new Uint8Array) blows the
+ * JS call stack once the array exceeds ~100K elements.  This chunked version
+ * avoids that by processing at most 8 KiB at a time.
+ */
+function bytesToBase64(bytes) {
+  let binary = "";
+  const chunkSize = 8192;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
+
 // ---------------------------------------------------------------------------
 // Rate limiting (Cloudflare KV)
 // ---------------------------------------------------------------------------
@@ -182,8 +197,9 @@ async function handleSubmit(request, env) {
 
   // ── Write to GitHub ───────────────────────────────────────────────────────
   const filename   = `${user_id}.json`;
-  // btoa only handles latin-1; handle unicode safely via TextEncoder
-  const contentB64 = btoa(String.fromCharCode(...new Uint8Array(new TextEncoder().encode(kbStr))));
+  // Use chunked base64 — btoa(String.fromCharCode(...bytes)) stack-overflows
+  // on payloads > ~100 KB; bytesToBase64() processes in 8 KiB chunks.
+  const contentB64 = bytesToBase64(new TextEncoder().encode(kbStr));
   const ts         = new Date().toISOString();
   const message    = `kb-submission: ${user_id} ${ts}`;
 
@@ -338,7 +354,7 @@ async function handleToolSubmit(request, env) {
   const { _meta: _stripped, ...cleanKb } = tool_kb;
   const kbCleanStr = JSON.stringify(cleanKb);
   const filename   = `${user_id}.json`;
-  const contentB64 = btoa(String.fromCharCode(...new Uint8Array(new TextEncoder().encode(kbCleanStr))));
+  const contentB64 = bytesToBase64(new TextEncoder().encode(kbCleanStr));
   const ts         = new Date().toISOString();
   const message    = `tool-kb-submission: ${user_id} ${ts}`;
 
