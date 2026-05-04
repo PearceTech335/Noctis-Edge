@@ -244,14 +244,12 @@ async function handleCommunityKB(request, env) {
   }
 
   // ── Validate license key with Polar.sh ────────────────────────────────────
+  // Uses the public customer-portal endpoint (no org token required)
   let polarResp;
   try {
-    polarResp = await fetch("https://api.polar.sh/v1/license-keys/validate", {
+    polarResp = await fetch("https://api.polar.sh/v1/customer-portal/license-keys/validate", {
       method: "POST",
-      headers: {
-        Authorization:  `Bearer ${env.POLAR_ORG_ACCESS_TOKEN}`,
-        "Content-Type": "application/json",
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         key:             licenseKey.trim(),
         organization_id: env.POLAR_ORGANIZATION_ID,
@@ -266,7 +264,7 @@ async function handleCommunityKB(request, env) {
     // 404 = key not found, 403 = revoked/expired — either way, deny
     return jsonResp({
       error:   "invalid_key",
-      message: "License key not recognised or inactive. Subscribe at https://buy.polar.sh/polar_cl_rEP2IebC07PDSnIal0HF4kZSBJVecdZSmkREx3Emnin",
+      message: "License key not recognised or inactive. Subscribe at https://buy.polar.sh/polar_cl_T4wa778zbXlNN4KW0vgJPeanMDmlTbOra2rny49wogi",
     }, 403);
   }
 
@@ -396,14 +394,12 @@ async function handleCommunityToolKB(request, env) {
   }
 
   // ── Validate license key with Polar.sh ────────────────────────────────────
+  // Uses the public customer-portal endpoint (no org token required)
   let polarResp;
   try {
-    polarResp = await fetch("https://api.polar.sh/v1/license-keys/validate", {
+    polarResp = await fetch("https://api.polar.sh/v1/customer-portal/license-keys/validate", {
       method: "POST",
-      headers: {
-        Authorization:  `Bearer ${env.POLAR_ORG_ACCESS_TOKEN}`,
-        "Content-Type": "application/json",
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         key:             licenseKey.trim(),
         organization_id: env.POLAR_ORGANIZATION_ID,
@@ -417,7 +413,7 @@ async function handleCommunityToolKB(request, env) {
   if (!polarResp.ok) {
     return jsonResp({
       error:   "invalid_key",
-      message: "License key not recognised or inactive. Subscribe at https://buy.polar.sh/polar_cl_rEP2IebC07PDSnIal0HF4kZSBJVecdZSmkREx3Emnin",
+      message: "License key not recognised or inactive. Subscribe at https://buy.polar.sh/polar_cl_T4wa778zbXlNN4KW0vgJPeanMDmlTbOra2rny49wogi",
     }, 403);
   }
 
