@@ -39,7 +39,23 @@ from flask_sock import Sock
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 NOCTIS   = os.path.join(BASE_DIR, "noctis.py")
 PYTHON   = sys.executable
-VERSION  = "v0.6.7"
+
+
+def _read_noctis_version() -> str:
+    """Read VERSION from noctis.py without importing it."""
+    import re as _re
+    try:
+        with open(NOCTIS, "r", encoding="utf-8") as _f:
+            for _line in _f:
+                _m = _re.match(r'^VERSION\s*=\s*["\']([^"\']+)["\']', _line)
+                if _m:
+                    return _m.group(1)
+    except Exception:
+        pass
+    return "unknown"
+
+
+VERSION  = _read_noctis_version()
 
 PROFILES = ["web", "external", "internal_ad", "api", "cloud"]
 
@@ -134,7 +150,8 @@ def _pty_reader_thread(proc: subprocess.Popen, master_fd: int):
         if line:
             _broadcast({"type": "line", "text": line})
     proc.wait()
-    _broadcast({"type": "exit", "code": proc.returncode})
+    exit_code = proc.returncode
+    _broadcast({"type": "exit", "code": exit_code})
     try:
         os.close(master_fd)
     except OSError:
@@ -142,6 +159,10 @@ def _pty_reader_thread(proc: subprocess.Popen, master_fd: int):
     with _lock:
         _running = False
         _pty_master_fd = None
+    # Schedule a self-restart so the freshly pulled noctis_web.py is loaded
+    if exit_code == 0:
+        _broadcast({"type": "restart_pending", "delay": 4})
+        threading.Timer(4.0, _self_restart).start()
 
 
 def _reader_thread(proc: subprocess.Popen):
@@ -177,6 +198,11 @@ def _reader_thread(proc: subprocess.Popen):
     _broadcast({"type": "exit", "code": proc.returncode})
     with _lock:
         _running = False
+
+
+def _self_restart():
+    """Replace the current process with a fresh instance after an update."""
+    os.execv(sys.executable, [sys.executable, __file__] + sys.argv[1:])
 
 
 # ── Routes ───────────────────────────────────────────────────────────────────
@@ -852,6 +878,22 @@ function handleMsg(msg) {
     const code = msg.code;
     appendLine('\n[*] Process exited — exit code ' + code);
     status.textContent = code === 0 ? 'Finished (exit 0)' : 'Finished with errors (exit ' + code + ')';
+  } else if (msg.type === 'restart_pending') {
+    const delay = msg.delay || 4;
+    appendLine('\n[*] Update complete — restarting server in ' + delay + 's…');
+    status.textContent = 'Restarting in ' + delay + 's…';
+    let countdown = delay;
+    const iv = setInterval(() => {
+      countdown--;
+      if (countdown <= 0) {
+        clearInterval(iv);
+        status.textContent = 'Reconnecting…';
+        appendLine('[*] Reconnecting to new server…');
+        _pollForRestart();
+      } else {
+        status.textContent = 'Restarting in ' + countdown + 's…';
+      }
+    }, 1000);
   }
 }
 
@@ -950,6 +992,20 @@ function runUpdate() {
     .then(r => r.json()).then(d => {
       if (!d.ok) { status.textContent = 'Error: ' + d.error; alert(d.error); }
     });
+}
+
+function _pollForRestart() {
+  fetch('/', { method: 'GET', cache: 'no-store' })
+    .then(r => {
+      if (r.ok) {
+        appendLine('[+] Server restarted — reloading page…');
+        status.textContent = 'Reloading…';
+        setTimeout(() => location.reload(), 500);
+      } else {
+        setTimeout(_pollForRestart, 1000);
+      }
+    })
+    .catch(() => setTimeout(_pollForRestart, 1000));
 }
 
 /* ── Input ───────────────────────────────────────────────────────────── */
