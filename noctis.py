@@ -3344,22 +3344,30 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
 {% if nmap_discovery and nmap_discovery.nse_summary %}
 <h2>Nmap NSE Script Results</h2>
-<details style="margin-bottom:1em">
-  <summary style="cursor:pointer;color:#aaa;font-size:.9em;padding:.4em 0 .8em;user-select:none">
-    {{ nmap_discovery.nse_summary | length }} port(s) scanned &mdash; click to expand script results
+<details style="margin-bottom:1em;border:1px solid #1e4a6e;border-radius:6px;background:#0d1b2a">
+  <summary style="cursor:pointer;color:#29b6f6;font-size:.92em;font-weight:600;padding:.65em 1em;user-select:none;display:flex;align-items:center;gap:.6em">
+    <span>&#9654;</span>
+    <span>{{ nmap_discovery.nse_summary | length }} port(s) scanned &mdash; click to expand NSE script results</span>
   </summary>
+  <div style="padding:0 .5em .5em">
   <table>
     <tr><th>Port</th><th>Scripts Executed</th></tr>
     {% for port, scripts in nmap_discovery.nse_summary.items() %}
     <tr><td>{{ port }}</td><td>{{ scripts|join(', ') }}</td></tr>
     {% endfor %}
   </table>
+  </div>
 </details>
 {% endif %}
 
 <h2>Findings ({{ findings|length }})</h2>
 {% if findings %}
-<div>
+<details style="margin-bottom:1.2em;border:1px solid #1e4a6e;border-radius:6px;background:#0d1b2a">
+  <summary style="cursor:pointer;color:#29b6f6;font-size:.92em;font-weight:600;padding:.65em 1em;user-select:none;display:flex;align-items:center;gap:.6em">
+    <span>&#9654;</span>
+    <span>{{ findings|length }} finding(s) &mdash; click to expand</span>
+  </summary>
+  <div style="padding:.5em">
   {% for f in findings %}
   <details style="margin-bottom:.8em;border:1px solid {% if f.severity == 'critical' %}#ff4757{% elif f.severity == 'high' %}#ff6b35{% elif f.severity == 'medium' %}#ffa502{% elif f.severity == 'low' %}#2ed573{% else %}#70a1ff{% endif %};border-radius:6px;background:#16213e">
     <summary style="padding:10px 14px;cursor:pointer;display:flex;flex-wrap:wrap;align-items:center;gap:8px;list-style:none">
@@ -3431,12 +3439,18 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     </div>
   </details>
   {% endfor %}
-</div>
+  </div>
+</details>
 {% else %}<p>No findings detected.</p>{% endif %}
 
 <h2>CVE Matches ({{ cve_matches|length }})</h2>
 {% if cve_matches %}
-<div style="margin-bottom:2em">
+<details style="margin-bottom:1.2em;border:1px solid #1e4a6e;border-radius:6px;background:#0d1b2a">
+  <summary style="cursor:pointer;color:#29b6f6;font-size:.92em;font-weight:600;padding:.65em 1em;user-select:none;display:flex;align-items:center;gap:.6em">
+    <span>&#9654;</span>
+    <span>{{ cve_matches|length }} CVE match(es) ranked by CVSS score &mdash; click to expand</span>
+  </summary>
+  <div style="padding:.5em;margin-bottom:2em">
   {% for c in cve_matches | sort(attribute='cvss_score', reverse=True) %}
   <details style="margin-bottom:1.5em;border:1px solid #333;border-radius:6px;padding:1em;background:#16213e">
     <summary style="cursor:pointer;font-weight:600;color:#00d4ff;font-size:1.05em;display:flex;align-items:center;flex-wrap:wrap;gap:.5em">
@@ -3526,7 +3540,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     </div>
   </details>
   {% endfor %}
-</div>
+  </div>
+</details>
 {% else %}<p>No CVE matches found.</p>{% endif %}
 
 <h2>Exploitation Validation</h2>
