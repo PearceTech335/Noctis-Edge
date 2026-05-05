@@ -76,7 +76,6 @@ FLAGS = [
     ("--msf-validate", "Run safe Metasploit 'check' probes for each matched CVE"),
     ("--cve-test",     "Ask the LLM to generate & execute probe scripts per CVE"),
     ("--unattended",   "Auto-approve all prompts — run to completion without user input"),
-    ("--resume",       "Resume the most recent interrupted scan for this target"),
 ]
 
 app  = Flask(__name__)
@@ -622,6 +621,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 #btn-stop { background: var(--btn-stop); color: var(--btn-fg); }
 #btn-clear   { background: var(--bg-panel); color: var(--fg-dim); border: 1px solid #444; }
 #btn-report  { background: #7d3c98; color: var(--btn-fg); }
+#btn-resume  { background: #e65100; color: var(--btn-fg); }
 #cmd-label   { font-size: 9px; color: var(--fg-dim); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #btn-update  { background: #1a6b8a; color: var(--btn-fg); margin-left: auto; }
 
@@ -843,6 +843,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   <div id="toolbar">
     <button id="btn-run"  onclick="startScan()">&#9654;  Start Scan</button>
     <button id="btn-stop" onclick="stopScan()" disabled>&#9632;  Stop</button>
+    <button id="btn-resume" onclick="openResumeModal()">&#9166; Resume</button>
     <button id="btn-clear" onclick="clearTerm()">Clear</button>
     <button id="btn-report" onclick="openReportModal()">Report</button>
     <span id="cmd-label"></span>
@@ -911,6 +912,7 @@ const cmdLbl  = document.getElementById('cmd-label');
 const btnRun  = document.getElementById('btn-run');
 const btnStop = document.getElementById('btn-stop');
 const btnUpdate = document.getElementById('btn-update');
+const btnResume = document.getElementById('btn-resume');
 let   running = false;
 let   spinnerEl = null;   // current spinner <div> element
 
@@ -1052,6 +1054,7 @@ function setRunning(on) {
   btnRun.disabled    = on;
   btnStop.disabled   = !on;
   btnUpdate.disabled = on;
+  btnResume.disabled = on;
 }
 
 /* ── Scan control ────────────────────────────────────────────────────── */
@@ -1061,12 +1064,6 @@ function startScan() {
 
   const profiles = [...document.querySelectorAll('.profile-cb:checked')].map(cb => cb.value);
   const flags    = [...document.querySelectorAll('.flag-cb:checked')].map(cb => cb.value);
-
-  // If --resume is checked, open the session picker first
-  if (flags.includes('--resume')) {
-    openResumeModal();
-    return;
-  }
 
   fetch('/api/start', {
     method: 'POST',
@@ -1161,10 +1158,12 @@ function submitResume() {
   const target   = document.getElementById('target-input').value.trim();
   const profiles = [...document.querySelectorAll('.profile-cb:checked')].map(cb => cb.value);
   const flags    = [...document.querySelectorAll('.flag-cb:checked')].map(cb => cb.value);
+  // Always inject --resume since the checkbox no longer exists
+  const allFlags = flags.includes('--resume') ? flags : ['--resume', ...flags];
   fetch('/api/start', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ target, profiles, flags, session_dir: path }),
+    body: JSON.stringify({ target, profiles, flags: allFlags, session_dir: path }),
   }).then(r => r.json()).then(d => {
     if (!d.ok) { status.textContent = 'Error: ' + d.error; alert(d.error); }
   });
