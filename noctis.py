@@ -4764,66 +4764,68 @@ async def run_cve_tests(cve_matches: list, target: str,
             })
 
         # ------------------------------------------------------------------
-        # Phase 2: Generate CVE_FRESH_ATTEMPTS new LLM scripts
+        # Phase 2: Generate CVE_FRESH_ATTEMPTS new LLM scripts, then run
+        #          all of them concurrently to eliminate sequential wait time.
         # ------------------------------------------------------------------
         if vulnerable_found:
             print(f"  [Phase 2] VULNERABLE already confirmed — skipping fresh script generation.")
         new_slots   = CVE_FRESH_ATTEMPTS if not vulnerable_found else 0
         done_new    = 0
 
-        # Check Ollama once before the loop to avoid burning all slots on
+        # Check Ollama once before generation to avoid burning all slots on
         # connection errors and to surface the real failure reason.
         _p2_ollama_up = _ollama_is_up() if new_slots > 0 else True
         if new_slots > 0 and not _p2_ollama_up:
             print(f"  [Phase 2] Ollama is not reachable — skipping LLM script generation.")
 
+        # ------------------------------------------------------------------
+        # Phase 2a: Generate all scripts sequentially.
+        #   Each call receives the already-planned strategies as PENDING
+        #   attempts so the LLM naturally picks diverse approaches.
+        # ------------------------------------------------------------------
+        staged = []   # list of {language, strategy, script} or None per slot
         for i in range(1, new_slots + 1):
-            attempt_num = len(attempts) + 1
             if not _p2_ollama_up:
-                attempts.append({
-                    "attempt_num": attempt_num,
-                    "source":      "llm_generated",
-                    "strategy":    "Ollama unavailable",
-                    "language":    "", "script": "", "script_path": "",
-                    "output":      "", "verdict": "INCONCLUSIVE",
-                })
-                verdict_counts["INCONCLUSIVE"] += 1
-                done_new += 1
+                staged.append(None)
                 continue
-
+            # Build a synthetic view of already-planned (not yet run) scripts
+            # so the LLM avoids duplicating strategies across slots.
+            planned = [
+                {"strategy": p["strategy"], "verdict": "PENDING"}
+                for p in staged if p is not None
+            ]
+            attempt_num = len(attempts) + 1 + len(staged)
             sp = _Spinner(f"[{i:02d}/{new_slots:02d}] Generating script ...").start()
-            generated = _generate_cve_test_script(cve, target, attempts, kb_entry, attempt_num)
-            if not generated:
-                sp.stop(" SKIPPED (LLM parse failure)")
-                done_new += 1
-                attempts.append({
-                    "attempt_num": attempt_num,
-                    "source":      "llm_generated",
-                    "strategy":    "LLM parse failure",
-                    "language":    "", "script": "", "script_path": "",
-                    "output":      "", "verdict": "INCONCLUSIVE",
-                })
-                verdict_counts["INCONCLUSIVE"] += 1
-                continue
-            sp.stop()
+            generated = _generate_cve_test_script(
+                cve, target, attempts + planned, kb_entry, attempt_num
+            )
+            sp.stop(" OK" if generated else " SKIPPED (parse failure)")
+            staged.append(generated)
 
-            language = generated["language"]
-            strategy = generated["strategy"]
-            script   = generated["script"]
-            ext      = ".py" if language == "python" else ".sh"
-            safe_cve = re.sub(r"[^a-zA-Z0-9_-]", "_", cve_id)
-            script_fname = f"{safe_cve}_attempt_{attempt_num:02d}{ext}"
-            script_path  = os.path.join(cve_tests_dir, script_fname)
+        # ------------------------------------------------------------------
+        # Phase 2b: Write scripts to disk, then execute all concurrently.
+        # ------------------------------------------------------------------
+        async def _run_staged_script(slot_idx: int, gen: dict | None) -> dict:
+            """Execute one generated script and return a fully-formed attempt record."""
+            attempt_num = len(attempts) + 1 + slot_idx
+            if gen is None:
+                label = "Ollama unavailable" if not _p2_ollama_up else "LLM parse failure"
+                return {
+                    "attempt_num": attempt_num, "source": "llm_generated",
+                    "strategy": label, "language": "", "script": "",
+                    "script_path": "", "output": "", "verdict": "INCONCLUSIVE",
+                    "_gen": None,
+                }
+            language    = gen["language"]
+            strategy    = gen["strategy"]
+            script      = gen["script"]
+            ext         = ".py" if language == "python" else ".sh"
+            safe_cve    = re.sub(r"[^a-zA-Z0-9_-]", "_", cve_id)
+            script_path = os.path.join(
+                cve_tests_dir, f"{safe_cve}_attempt_{attempt_num:02d}{ext}"
+            )
             with open(script_path, "w", encoding="utf-8") as fh:
                 fh.write(script)
-
-            print(f"  Strategy: {strategy}")
-            print(f"  ---- script ({language}) ----")
-            for line in script.splitlines():
-                print(f"  {line}")
-            print(f"  ---- end script ----")
-
-            sp2 = _Spinner(f"[{i:02d}/{new_slots:02d}] Running ({language}) ...").start()
             run_result = await asyncio.get_event_loop().run_in_executor(
                 None, lambda s=script, l=language: _run_script(s, l, cve_tests_dir, timeout=30)
             )
@@ -4834,25 +4836,44 @@ async def run_cve_tests(cve_matches: list, target: str,
                 output = f"[ERROR: {run_result['error']}]\n{output}"
             m       = re.search(r"VERDICT:\s*(VULNERABLE|NOT_VULNERABLE|INCONCLUSIVE)", output)
             verdict = m.group(1) if m else "INCONCLUSIVE"
+            return {
+                "attempt_num": attempt_num, "source": "llm_generated",
+                "strategy": strategy, "language": language, "script": script,
+                "script_path": script_path, "output": output[:600],
+                "verdict": verdict, "_gen": gen,
+            }
+
+        if staged:
+            print(f"  [Phase 2] Running {len(staged)} script(s) concurrently ...")
+            run_records = await asyncio.gather(
+                *[_run_staged_script(slot_idx, gen)
+                  for slot_idx, gen in enumerate(staged)]
+            )
+        else:
+            run_records = []
+
+        # ------------------------------------------------------------------
+        # Phase 2c: Process results in order — update attempts, flags, KB.
+        # ------------------------------------------------------------------
+        for rec in run_records:
+            verdict  = rec["verdict"]
+            strategy = rec["strategy"]
+            language = rec["language"]
+            script   = rec.get("script", "")
+            output   = rec.get("output", "")
+            gen      = rec.pop("_gen", None)  # internal key — strip before storing
+
             verdict_counts[verdict] = verdict_counts.get(verdict, 0) + 1
             if verdict == "VULNERABLE":
                 vulnerable_found = True
-            sp2.stop(f" {verdict}")
+            print(f"  [{rec['attempt_num']:02d}] {strategy[:80]} → {verdict}")
+            attempts.append(rec)
             done_new += 1
 
-            attempt_record = {
-                "attempt_num": attempt_num,
-                "source":      "llm_generated",
-                "strategy":    strategy,
-                "language":    language,
-                "script":      script,
-                "script_path": script_path,
-                "output":      output[:600],
-                "verdict":     verdict,
-            }
-            attempts.append(attempt_record)
+            # Only update KB for scripts that were actually generated
+            if gen is None or not script:
+                continue
 
-            # Update KB
             script_hash = hashlib.sha256(script.encode()).hexdigest()[:16]
             if cve_id not in kb:
                 kb[cve_id] = {
