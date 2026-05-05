@@ -536,8 +536,9 @@ cve_knowledge_base.json           ← cross-engagement CVE test KB (project root
 
 | Constant | Default | Description |
 |----------|---------|-------------|
-| `MODEL` | `qwen2.5-coder:3b-instruct` | Planning, iteration decisions, report prose, CVE remediation (`NOCTIS_OLLAMA_MODEL` env var to override) |
+| `MODEL` | `qwen2.5-coder:3b-instruct` | Planning, iteration decisions, structured JSON tool selection (`NOCTIS_OLLAMA_MODEL` env var to override) |
 | `SCRIPT_MODEL` | `qwen2.5-coder:3b-instruct` | CVE exploit scripts, test scripts, verification scripts (`NOCTIS_OLLAMA_SCRIPT_MODEL` env var to override) |
+| `REPORT_MODEL` | `qwen2.5:3b` | Report conclusion, attacker perspective narratives, remediation guidance (`NOCTIS_OLLAMA_REPORT_MODEL` env var to override) |
 | `OLLAMA_URL` | `http://localhost:11434/api/generate` | Ollama API endpoint |
 | `MAX_ITERATIONS` | `10` | Max Phase 2 sequential loop iterations |
 | `MAX_PARALLEL_ACTIONS` | `4` | Max concurrent tools in the Phase 1 parallel wave |
@@ -588,13 +589,17 @@ curl -fsSL https://ollama.com/install.sh | sh
 ollama pull qwen2.5-coder:3b-instruct      # all LLM tasks: planning, iteration, scripts, reports
 ```
 
-Ollama will be started automatically by `noctis.py` on first use. A single `qwen2.5-coder:3b-instruct` model handles all tasks — tool planning, CVE script generation, report conclusion, and remediation guidance. Using one model eliminates the dual-model RAM pressure that occurs when two models compete for memory on CPU-only hardware. Inference is typically 20–90 seconds per call on CPU-only hardware after the initial warm load.
+Ollama will be started automatically by `noctis.py` on first use. Three models handle distinct roles — keeping each model in its area of strength:
 
-### Model
+### Models
 
 | Model | Environment variable | Purpose |
 |-------|---------------------|---------|
-| `qwen2.5-coder:3b-instruct` | `NOCTIS_OLLAMA_MODEL` / `NOCTIS_OLLAMA_SCRIPT_MODEL` | All LLM tasks: tool decisions, scan planning, CVE scripts, report conclusion, remediation guidance |
+| `qwen2.5-coder:3b-instruct` | `NOCTIS_OLLAMA_MODEL` | Tool selection, scan planning, structured JSON decisions |
+| `qwen2.5-coder:3b-instruct` | `NOCTIS_OLLAMA_SCRIPT_MODEL` | CVE exploit scripts, verification scripts |
+| `qwen2.5:3b` | `NOCTIS_OLLAMA_REPORT_MODEL` | Report conclusion, attacker perspective, remediation guidance |
+
+All three models are ~2 GB each. They are called sequentially (never concurrently), so RAM peaks at one loaded model at a time. Inference is typically 20–90 seconds per call on CPU-only hardware after the initial warm load.
 
 ---
 

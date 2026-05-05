@@ -31,6 +31,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OLLAMA_MODEL="qwen2.5-coder:3b-instruct"
 OLLAMA_SCRIPT_MODEL="qwen2.5-coder:3b-instruct"
+OLLAMA_REPORT_MODEL="qwen2.5:3b"
 
 CVE_REPO="https://github.com/trickest/cve.git"
 CVE_OFFLINE_REPO="https://github.com/trickest/cve-offline.git"
@@ -200,6 +201,11 @@ info "Pulling model: $OLLAMA_SCRIPT_MODEL (code-specialist — script generation
 ollama pull "$OLLAMA_SCRIPT_MODEL" \
     && ok "Model $OLLAMA_SCRIPT_MODEL ready" \
     || err "Model pull failed — run 'ollama pull $OLLAMA_SCRIPT_MODEL' manually after setup"
+
+info "Pulling model: $OLLAMA_REPORT_MODEL (general language — report narrative) ..."
+ollama pull "$OLLAMA_REPORT_MODEL" \
+    && ok "Model $OLLAMA_REPORT_MODEL ready" \
+    || err "Model pull failed — run 'ollama pull $OLLAMA_REPORT_MODEL' manually after setup"
 
 if [[ "${STARTED_OLLAMA:-0}" == "1" ]]; then
     kill "$OLLAMA_PID" 2>/dev/null || true

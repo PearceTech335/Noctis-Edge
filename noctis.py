@@ -65,13 +65,21 @@ CVE_CSV      = os.path.join(BASE_DIR, "CVE", "cve-offline", "cve-summary.csv")
 SESSION_FILE = os.path.join(BASE_DIR, "session.json")
 
 OLLAMA_URL     = os.getenv("NOCTIS_OLLAMA_URL", "http://localhost:11434/api/generate")
-# Single-model architecture: use qwen2.5-coder:3b-instruct for ALL LLM tasks.
-# Running two models simultaneously (planning + scripting) consumed 4GB RAM on an 11GB system,
-# forcing swap usage and collapsing generation speed to ~0.2 tok/s.  A single 2GB model stays
-# fully in RAM (5GB+ available after OS), achieving 5-8 tok/s on CPU-only hardware.
-# qwen2.5-coder:3b-instruct handles JSON planning AND Python script generation equally well.
+# Three-role model split — tasks are always sequential, never concurrent, so RAM peaks at
+# one loaded model at a time (~2 GB).  Two models can coexist in Ollama's model cache on
+# systems with ≥6 GB free RAM without any swap pressure.
+#
+#   MODEL        — structured JSON decisions (tool selection, scan planning)
+#                  qwen2.5-coder is ideal: trained on code/JSON, deterministic at temp=0
+#   SCRIPT_MODEL — Python exploit / verification script generation
+#                  same coder model; keeps code quality high
+#   REPORT_MODEL — narrative prose: conclusion, attacker perspective, remediation
+#                  qwen2.5 (base) is better here: general language model produces coherent,
+#                  factually grounded prose without the coder model's tendency to hallucinate
+#                  contradictory natural-language statements
 MODEL          = os.getenv("NOCTIS_OLLAMA_MODEL",        "qwen2.5-coder:3b-instruct")
 SCRIPT_MODEL   = os.getenv("NOCTIS_OLLAMA_SCRIPT_MODEL", "qwen2.5-coder:3b-instruct")
+REPORT_MODEL   = os.getenv("NOCTIS_OLLAMA_REPORT_MODEL", "qwen2.5:3b")
 OLLAMA_TIMEOUT = int(os.getenv("NOCTIS_OLLAMA_TIMEOUT", "180"))   # seconds — generous for cold start; warm calls are fast
 
 # Ollama inference options applied to all planning/decision calls.
@@ -3804,7 +3812,37 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
         "cves":           [f"{c['cve_id']} ({c['severity']}) on {c['service']}" for c in cve_matches[:5]],
     }
 
-    conclusion = "No conclusion generated."
+    # ── Deterministic anchor sentence ────────────────────────────────────────
+    # Build a factually accurate first sentence from the real counts so the
+    # LLM cannot hallucinate a risk level that contradicts the data.
+    _c, _h, _m, _l = (counts.get(k, 0) for k in ("critical", "high", "medium", "low"))
+    _total = _c + _h + _m + _l
+    if _c > 0:
+        _posture = "critical"
+    elif _h > 0:
+        _posture = "high"
+    elif _m > 0:
+        _posture = "medium"
+    elif _l > 0:
+        _posture = "low"
+    else:
+        _posture = "minimal"
+
+    _finding_parts = []
+    if _c: _finding_parts.append(f"{_c} critical")
+    if _h: _finding_parts.append(f"{_h} high")
+    if _m: _finding_parts.append(f"{_m} medium")
+    if _l: _finding_parts.append(f"{_l} low")
+    _finding_str = (", ".join(_finding_parts) + f" (total {_total})") if _finding_parts else "no exploitable"
+
+    _anchor = (
+        f"The assessment of {target} identified {_finding_str} severity findings, "
+        f"indicating a {_posture}-risk security posture that requires immediate attention."
+        if _posture not in ("minimal",) else
+        f"The assessment of {target} identified no exploitable findings, indicating a low-risk security posture."
+    )
+
+    conclusion = _anchor
     _t0 = time.monotonic()
     _sp = _Spinner("[ LLM ]  Writing conclusion ...").start()
     try:
@@ -3812,33 +3850,39 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
             try:
                 resp    = requests.post(
                     OLLAMA_URL,
-                    json={"model": MODEL, "stream": False,
+                    json={"model": REPORT_MODEL, "stream": False,
                           "keep_alive": _OLLAMA_KEEP_ALIVE,
-                          "options":    {"num_ctx": 1024, "temperature": 0},
+                          "options":    {"num_ctx": 2048, "temperature": 0},
                           "prompt": (
                               "You are a professional penetration tester writing a client-facing report. "
-                              "Write exactly two sentences summarising the security posture of the target based on the data below. "
-                              "Output only the two sentences. Do not add questions, headings, bullet points, or any other text. "
-                              f"Data: {json.dumps(mini_summary, separators=(',', ':'))}"
+                              "Continue the following sentence with exactly one more sentence recommending the most critical remediation action. "
+                              "Output only the single continuation sentence. Do not repeat the opening sentence. "
+                              "Do not add questions, headings, bullet points, or any other text. "
+                              f"Opening sentence: {_anchor} "
+                              f"Context: {json.dumps(mini_summary, separators=(',', ':'))}"
                           )},
                     timeout=OLLAMA_TIMEOUT,
                 )
                 payload = resp.json()
                 if "response" in payload:
                     raw = payload["response"].strip()
-                    # Strip any LLM prompt-leak artefacts: lines starting with
-                    # question-like patterns, markdown headings, or blank padding.
+                    # Strip any LLM prompt-leak artefacts or repetition of the
+                    # anchor sentence, markdown headings, and blank padding.
                     clean_lines = []
                     for line in raw.splitlines():
                         stripped = line.strip()
                         if not stripped:
                             continue
                         lower = stripped.lower()
-                        # Drop lines that look like leaked prompt artefacts
                         if lower.startswith(("**", "##", "question", "note:", "follow")):
                             break
+                        # Drop any line that merely echoes the anchor
+                        if lower.startswith("the assessment of"):
+                            continue
                         clean_lines.append(stripped)
-                    conclusion = " ".join(clean_lines) if clean_lines else raw
+                    continuation = " ".join(clean_lines).strip() if clean_lines else ""
+                    if continuation:
+                        conclusion = f"{_anchor} {continuation}"
                     break
             except Exception as e:
                 print(f"[!] Conclusion LLM error: {e}")
@@ -5073,11 +5117,11 @@ def _generate_attacker_perspective(cve: dict) -> str:
         resp = requests.post(
             OLLAMA_URL,
             json={
-                "model":      MODEL,
+                "model":      REPORT_MODEL,
                 "prompt":     prompt,
                 "stream":     False,
                 "keep_alive": _OLLAMA_KEEP_ALIVE,
-                "options":    {"num_ctx": 1536, "temperature": 0.2},
+                "options":    {"num_ctx": 2048, "temperature": 0.2},
             },
             timeout=OLLAMA_TIMEOUT,
         )
@@ -5114,11 +5158,11 @@ def _generate_remediation(cve: dict) -> str:
         resp = requests.post(
             OLLAMA_URL,
             json={
-                "model":      MODEL,
+                "model":      REPORT_MODEL,
                 "prompt":     prompt,
                 "stream":     False,
                 "keep_alive": _OLLAMA_KEEP_ALIVE,
-                "options":    {"num_ctx": 1024, "temperature": 0},
+                "options":    {"num_ctx": 2048, "temperature": 0},
             },
             timeout=OLLAMA_TIMEOUT,
         )

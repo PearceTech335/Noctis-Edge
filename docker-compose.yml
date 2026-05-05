@@ -70,10 +70,12 @@ services:
     environment:
       # Point Noctis at the Ollama sidecar (service name resolves inside compose network)
       - NOCTIS_OLLAMA_URL=http://ollama:11434/api/generate
-      # Planning model — tool decisions, iteration, report prose, remediation guidance
+      # Planning model — tool decisions, iteration, JSON structured outputs
       - NOCTIS_OLLAMA_MODEL=qwen2.5-coder:3b-instruct
       # Script model — CVE exploit scripts, test scripts, verification scripts
       - NOCTIS_OLLAMA_SCRIPT_MODEL=qwen2.5-coder:3b-instruct
+      # Report model — conclusion, attacker perspective, remediation prose
+      - NOCTIS_OLLAMA_REPORT_MODEL=qwen2.5:3b
       # Bind to all interfaces so the host browser can reach port 5000
       - NOCTIS_BIND_HOST=0.0.0.0
     ports:

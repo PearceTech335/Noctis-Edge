@@ -14,6 +14,7 @@ export GIT_TERMINAL_PROMPT=0
 
 OLLAMA_MODEL="qwen2.5-coder:3b-instruct"
 OLLAMA_SCRIPT_MODEL="qwen2.5-coder:3b-instruct"
+OLLAMA_REPORT_MODEL="qwen2.5:3b"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Load per-user configuration (tokens, UUID, paid-tier flag)
@@ -131,6 +132,9 @@ if command -v ollama &>/dev/null; then
         ollama pull "$OLLAMA_SCRIPT_MODEL" \
             && ok "$OLLAMA_SCRIPT_MODEL up to date" \
             || err "$OLLAMA_SCRIPT_MODEL pull failed"
+        ollama pull "$OLLAMA_REPORT_MODEL" \
+            && ok "$OLLAMA_REPORT_MODEL up to date" \
+            || err "$OLLAMA_REPORT_MODEL pull failed"
     else
         info "Ollama server not running — starting temporarily ..."
         ollama serve &>/dev/null &
@@ -152,6 +156,9 @@ if command -v ollama &>/dev/null; then
         ollama pull "$OLLAMA_SCRIPT_MODEL" \
             && ok "$OLLAMA_SCRIPT_MODEL up to date" \
             || err "$OLLAMA_SCRIPT_MODEL pull failed"
+        ollama pull "$OLLAMA_REPORT_MODEL" \
+            && ok "$OLLAMA_REPORT_MODEL up to date" \
+            || err "$OLLAMA_REPORT_MODEL pull failed"
         kill "$OLLAMA_PID" 2>/dev/null || true
     fi
 else
