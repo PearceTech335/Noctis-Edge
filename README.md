@@ -712,6 +712,16 @@ The following are excluded from version control (see `.gitignore`):
 
 ## Version History
 
+## What's New in v0.7.2
+
+**Attacker perspective in CVE test results** — for every confirmed or likely vulnerable CVE, the HTML report now includes an *Attacker Perspective* block directly above the remediation guidance. Written by the LLM, it covers how a real threat actor would discover and exploit the vulnerability (access method, likely tooling, skill level required) and what they could gain from a successful exploit (exposed data, credential risk, lateral movement potential, business impact). The block is styled in amber/orange to visually distinguish threat context from the blue remediation guidance below it.
+
+**Collapsible report sections** — the *Findings*, *CVE Matches*, and *Nmap NSE Script Results* sections in the HTML report are now collapsible. All three use a bright cyan expand header so they are clearly visible. CVE Matches defaults to collapsed (reduces scroll length on large-match reports); Findings and NSE results default to open. CVE Matches are sorted by CVSS score descending and each row includes a score badge.
+
+**Phase 2 script execution parallelised** — LLM-generated CVE test scripts are still generated sequentially (each generation pass receives the strategies already planned, keeping probe diversity high), but all scripts are now executed concurrently via `asyncio.gather` rather than run one-at-a-time. Each probe has a 30-second execution timeout; under the old design, five probes could take up to 150 seconds of wall time in the worst case. Under the new design, all five run in parallel and complete within a single 30-second window — a worst-case reduction of approximately 60%.
+
+---
+
 ## What's New in v0.7.1
 
 **Automatic Ollama startup and model pull** — `noctis.py` now starts `ollama serve` automatically if it is not running and waits up to 30 seconds (up from 15 s) for it to become ready. If the configured model (`qwen2.5-coder:3b-instruct`) is not present locally, it is pulled automatically via `ollama pull` before the scan begins — no manual setup step required after a fresh install.
