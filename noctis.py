@@ -3343,13 +3343,18 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 </table>
 
 {% if nmap_discovery and nmap_discovery.nse_summary %}
-<h2>Nmap NSE Script Results (Phase 3)</h2>
-<table>
-  <tr><th>Port</th><th>Scripts Executed</th></tr>
-  {% for port, scripts in nmap_discovery.nse_summary.items() %}
-  <tr><td>{{ port }}</td><td>{{ scripts|join(', ') }}</td></tr>
-  {% endfor %}
-</table>
+<h2>Nmap NSE Script Results</h2>
+<details style="margin-bottom:1em">
+  <summary style="cursor:pointer;color:#aaa;font-size:.9em;padding:.4em 0 .8em;user-select:none">
+    {{ nmap_discovery.nse_summary | length }} port(s) scanned &mdash; click to expand script results
+  </summary>
+  <table>
+    <tr><th>Port</th><th>Scripts Executed</th></tr>
+    {% for port, scripts in nmap_discovery.nse_summary.items() %}
+    <tr><td>{{ port }}</td><td>{{ scripts|join(', ') }}</td></tr>
+    {% endfor %}
+  </table>
+</details>
 {% endif %}
 
 <h2>Findings ({{ findings|length }})</h2>
@@ -3432,11 +3437,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <h2>CVE Matches ({{ cve_matches|length }})</h2>
 {% if cve_matches %}
 <div style="margin-bottom:2em">
-  {% for c in cve_matches %}
+  {% for c in cve_matches | sort(attribute='cvss_score', reverse=True) %}
   <details style="margin-bottom:1.5em;border:1px solid #333;border-radius:6px;padding:1em;background:#16213e">
-    <summary style="cursor:pointer;font-weight:600;color:#00d4ff;font-size:1.05em">
-      {{ c.cve_id }} — {{ c.vulnerability_type }} on {{ c.service }}
-      <span class="badge badge-{{ c.severity|lower }}" style="margin-left:.5em">{{ c.severity|upper }}</span>
+    <summary style="cursor:pointer;font-weight:600;color:#00d4ff;font-size:1.05em;display:flex;align-items:center;flex-wrap:wrap;gap:.5em">
+      <span style="flex:1;min-width:180px">{{ c.cve_id }} — {{ c.vulnerability_type }} on {{ c.service }}</span>
+      <span class="badge badge-{{ c.severity|lower }}">{{ c.severity|upper }}</span>
+      <span style="background:#0f3460;color:#00d4ff;padding:3px 10px;border-radius:4px;font-size:.9em;font-weight:700;border:1px solid #00d4ff;min-width:2.5em;text-align:center" title="CVSS Score">{{ c.cvss_score }}</span>
     </summary>
     
     <div style="margin-top:1em;padding-top:1em;border-top:1px solid #333">
@@ -3526,10 +3532,13 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <h2>Exploitation Validation</h2>
 {% set msf_run = cve_matches | selectattr("msf_validation", "defined") | list %}
 {% if msf_run %}
+{% set ns = namespace(any_module=false) %}
+{% for c in msf_run %}{% if c.msf_validation.module %}{% set ns.any_module = true %}{% endif %}{% endfor %}
+{% if ns.any_module %}
 <p style="color:#aaa;font-size:.9em;margin-bottom:14px">
-  Each CVE was probed using Metasploit's <code>check</code> command — a non-destructive test that
+  Each CVE below was probed using Metasploit's <code>check</code> command — a non-destructive test that
   confirms exploitability without executing a payload. This demonstrates how a malicious actor
-  would verify the vulnerability before launching an attack.
+  would verify the vulnerability before launching an attack. Only CVEs with a mapped Metasploit module are shown.
 </p>
 <table>
   <tr>
@@ -3537,6 +3546,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <th>Test Method</th><th>Proof of Impact</th><th>Business Impact</th>
   </tr>
   {% for c in msf_run %}
+  {% if c.msf_validation.module %}
   {% set v = c.msf_validation %}
   <tr>
     <td><strong>{{ c.cve_id }}</strong><br><span style="color:#888;font-size:.8em">{{ c.service }}</span></td>
@@ -3545,42 +3555,53 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         <span class="badge badge-critical">VULNERABLE</span>
       {% elif v.vulnerable is sameas false %}
         <span class="badge badge-low">NOT EXPLOITABLE</span>
-      {% elif v.module %}
-        <span class="badge badge-info">UNCONFIRMED</span>
       {% else %}
-        <span class="badge badge-info">NO MODULE</span>
+        <span class="badge badge-info">UNCONFIRMED</span>
       {% endif %}
       <div style="font-size:.78em;color:#aaa;margin-top:4px">{{ v.result[:120] }}</div>
     </td>
     <td>{{ c.vulnerability_type }}</td>
-    <td style="font-family:monospace;font-size:.82em;word-break:break-all">{{ v.module or "—" }}</td>
+    <td style="font-family:monospace;font-size:.82em;word-break:break-all">{{ v.module }}</td>
     <td>{{ v.method }}</td>
     <td>{{ c.proof_of_impact }}</td>
     <td>{{ c.business_impact }}</td>
   </tr>
+  {% endif %}
   {% endfor %}
 </table>
+{% else %}
+<p style="color:#aaa;font-size:.9em;background:#16213e;border-left:3px solid #546e7a;padding:1em 1.2em;border-radius:0 6px 6px 0;line-height:1.6">
+  <strong style="color:#90a4ae">No Metasploit modules were mapped to the discovered CVEs.</strong><br>
+  Metasploit validation was run with <code>--msf-validate</code>, however none of the CVEs identified in this scan have a corresponding exploit or auxiliary check module in the Metasploit Framework database. This is common for newer CVEs, niche software vulnerabilities, and CVEs that are exploitable only through manual interaction. Manual validation is recommended for any <em>Critical</em> or <em>High</em> severity CVEs listed in the CVE Matches section above.
+</p>
+{% endif %}
 {% else %}
 <p style="color:#aaa;font-size:.9em">MSF validation was not run. Re-scan with <code>--msf-validate</code> to enable.</p>
 {% endif %}
 
 <h2>CVE Test Results</h2>
 {% if cve_test_results %}
-{% for r in cve_test_results %}
-<details style="margin-bottom:1.5em;border:1px solid #333;border-radius:6px;padding:.6em 1em">
+{% set verdict_order = ["CONFIRMED_VULNERABLE", "VULNERABLE", "NOT_VULNERABLE", "INCONCLUSIVE"] %}
+{% for verdict in verdict_order %}
+{% set group = cve_test_results | selectattr("overall_verdict", "equalto", verdict) | list %}
+{% if group %}
+{% if verdict == "CONFIRMED_VULNERABLE" %}{% set vbg = "#7f0000" %}{% set vborder = "#ff1744" %}{% set vlabel = "CONFIRMED VULNERABLE" %}
+{% elif verdict == "VULNERABLE" %}{% set vbg = "#7a2f00" %}{% set vborder = "#ff9800" %}{% set vlabel = "VULNERABLE (unverified)" %}
+{% elif verdict == "NOT_VULNERABLE" %}{% set vbg = "#0a3d12" %}{% set vborder = "#4caf50" %}{% set vlabel = "NOT VULNERABLE" %}
+{% else %}{% set vbg = "#2a2a2a" %}{% set vborder = "#757575" %}{% set vlabel = "INCONCLUSIVE" %}{% endif %}
+<details {% if verdict in ["CONFIRMED_VULNERABLE", "VULNERABLE"] %}open{% endif %} style="margin-bottom:1.2em;border:2px solid {{ vborder }};border-radius:8px;overflow:hidden">
+  <summary style="cursor:pointer;background:{{ vbg }};padding:.75em 1.2em;display:flex;align-items:center;gap:.8em;user-select:none;list-style:none">
+    <span style="font-weight:700;color:#fff;font-size:.98em">{{ vlabel }}</span>
+    <span style="background:rgba(0,0,0,.35);color:#fff;border-radius:12px;padding:.1em .75em;font-size:.85em;font-weight:600">{{ group | length }}</span>
+    <span style="color:rgba(255,255,255,.5);font-size:.78em;margin-left:auto">&#9660;</span>
+  </summary>
+  <div style="padding:.5em .4em">
+  {% for r in group %}
+  <details style="margin:.4em;border:1px solid #333;border-radius:6px;padding:.6em 1em;background:#16213e">
   <summary style="cursor:pointer;list-style:none;display:flex;align-items:center;gap:1em;flex-wrap:wrap;padding:.4em 0;user-select:none">
     <span style="font-size:1.05em;font-weight:600;color:#e0e0e0">{{ r.cve_id }}</span>
     <span style="font-size:.8em;color:#aaa">{{ r.vulnerability_type }}</span>
     <span style="font-size:.8em;color:#aaa">{{ r.service }}</span>
-    {% if r.overall_verdict == "CONFIRMED_VULNERABLE" %}
-    <span style="background:#b71c1c;color:#fff;padding:2px 10px;border-radius:4px;font-size:.82em;font-weight:700;border:2px solid #ff1744">&#10003; CONFIRMED VULNERABLE</span>
-    {% elif r.overall_verdict == "VULNERABLE" %}
-    <span style="background:#e65100;color:#fff;padding:2px 8px;border-radius:4px;font-size:.82em;font-weight:700">VULNERABLE (unverified)</span>
-    {% elif r.overall_verdict == "NOT_VULNERABLE" %}
-    <span style="background:#1b5e20;color:#fff;padding:2px 8px;border-radius:4px;font-size:.82em;font-weight:700">NOT VULNERABLE</span>
-    {% else %}
-    <span style="background:#4a4a4a;color:#fff;padding:2px 8px;border-radius:4px;font-size:.82em;font-weight:700">INCONCLUSIVE</span>
-    {% endif %}
     <span style="font-size:.78em;color:#777">{{ r.attempts_run }} attempts &mdash; V:{{ r.verdict_counts.VULNERABLE }} N:{{ r.verdict_counts.NOT_VULNERABLE }} I:{{ r.verdict_counts.INCONCLUSIVE }} &mdash; KB replayed:{{ r.kb_replayed }}</span>
     <span style="font-size:.75em;color:#555;margin-left:auto">&#9660; expand</span>
   </summary>
@@ -3639,7 +3660,11 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <div style="color:#546e7a;font-size:.78em;margin-top:.4em;font-style:italic">AI-generated guidance — verify against vendor advisories before applying.</div>
   </div>
   {% endif %}
+  </details>
+  {% endfor %}
+  </div>
 </details>
+{% endif %}
 {% endfor %}
 {% else %}
 <p style="color:#aaa;font-size:.9em">CVE testing was not run. Re-scan with <code>--cve-test</code> to enable.</p>
