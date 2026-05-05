@@ -3668,6 +3668,14 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   </details>
   {% endfor %}
 
+  {% if r.attacker_perspective %}
+  <div style="background:#1a0a00;border-left:3px solid #ff6d00;padding:.7em .9em;margin-top:.6em;border-radius:0 4px 4px 0;font-size:.87em">
+    <strong style="color:#ff9800">&#9760; Attacker Perspective</strong>
+    <div style="color:#ffe0b2;margin-top:.45em;white-space:pre-wrap;line-height:1.55">{{ r.attacker_perspective }}</div>
+    <div style="color:#6d4c41;font-size:.78em;margin-top:.4em;font-style:italic">AI-generated threat narrative — review against current threat intelligence.</div>
+  </div>
+  {% endif %}
+
   {% if r.remediation %}
   <div style="background:#0d2137;border-left:3px solid #29b6f6;padding:.7em .9em;margin-top:.6em;border-radius:0 4px 4px 0;font-size:.87em">
     <strong style="color:#29b6f6">&#128295; Suggested Remediation</strong>
@@ -5016,6 +5024,51 @@ async def run_cve_tests(cve_matches: list, target: str,
 # CVE REMEDIATION SUGGESTIONS
 # ---------------------------------------------------------------------------
 
+def _generate_attacker_perspective(cve: dict) -> str:
+    """
+    Ask the LLM for a brief threat-actor narrative: how would an attacker exploit
+    this CVE and what could they gain?  Returns plain text or a short fallback.
+    """
+    prompt = (
+        f"You are a senior penetration tester writing the threat narrative section of a "
+        f"client report.\n\n"
+        f"CVE ID:        {cve.get('cve_id', 'Unknown')}\n"
+        f"Description:   {cve.get('summary', '')[:400]}\n"
+        f"Affected:      {cve.get('product', '')} {cve.get('version_range', '')}\n"
+        f"Service:       {cve.get('service', '')}\n"
+        f"Vuln type:     {cve.get('vulnerability_type', '')}\n\n"
+        "In plain text (no markdown, no bullet symbols), write two short paragraphs:\n"
+        "1. How a real attacker would discover and exploit this vulnerability — initial "
+        "access method, tools or techniques likely used, and what level of skill is required.\n"
+        "2. What an attacker could gain once exploitation succeeds — data exposed, "
+        "credentials or tokens at risk, potential for lateral movement or privilege "
+        "escalation, and the realistic business impact if this is left unpatched.\n\n"
+        "Be specific to the vulnerability type. Keep each paragraph to 2-4 sentences. "
+        "Plain text only."
+    )
+    _t0 = time.monotonic()
+    _sp = _Spinner(f"[ LLM ]  Generating attacker perspective for {cve.get('cve_id', 'CVE')} ...").start()
+    try:
+        resp = requests.post(
+            OLLAMA_URL,
+            json={
+                "model":      MODEL,
+                "prompt":     prompt,
+                "stream":     False,
+                "keep_alive": _OLLAMA_KEEP_ALIVE,
+                "options":    {"num_ctx": 1536, "temperature": 0.2},
+            },
+            timeout=OLLAMA_TIMEOUT,
+        )
+        payload = resp.json()
+        text = payload.get("response", "").strip()
+        return text if text else "Attacker perspective unavailable."
+    except Exception as e:
+        return f"Attacker perspective unavailable ({e})."
+    finally:
+        _sp.stop(f" done ({_fmt_dur(time.monotonic() - _t0)})")
+
+
 def _generate_remediation(cve: dict) -> str:
     """
     Ask the LLM for a concise remediation path for a single confirmed-vulnerable CVE.
@@ -5071,13 +5124,14 @@ def generate_cve_remediations(cve_test_results: list, cve_matches: list) -> None
     if not targets:
         return
 
-    print(f"\n[REMEDIATION] Generating LLM remediation suggestions for "
+    print(f"\n[REMEDIATION] Generating LLM attacker perspective + remediation for "
           f"{len(targets)} vulnerable CVE(s) ...")
     for result in targets:
         cve_id  = result["cve_id"]
         cve_rec = cve_meta.get(cve_id, {"cve_id": cve_id})
+        result["attacker_perspective"] = _generate_attacker_perspective(cve_rec)
         result["remediation"] = _generate_remediation(cve_rec)
-        print(f"  [+] Remediation written for {cve_id}")
+        print(f"  [+] Attacker perspective + remediation written for {cve_id}")
 
 
 async def _run_cve_test_phase(report: dict, target: str, session_dir: str) -> dict:
