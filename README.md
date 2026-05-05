@@ -648,17 +648,13 @@ The Cloudflare Worker (`cloudflare/worker.js`) acts as a server-side relay: it h
 Subscribers receive access to the aggregated community CVE knowledge base — a curated collection of validated test scripts contributed by all Noctis Edge users. Once you have subscribed at [polar.sh/checkout](https://buy.polar.sh/polar_cl_rEP2IebC07PDSnIal0HF4kZSBJVecdZSmkREx3Emnin) and received your license key:
 
 1. Open `noctis.conf` in your Noctis Edge install directory.
-2. Set `PAID_TIER` to `true`:
-   ```ini
-   PAID_TIER=true
-   ```
-3. Paste your license key:
+2. Paste your license key:
    ```ini
    KB_LICENSE_KEY=XXXX-XXXX-XXXX-XXXX
    ```
-4. Run `./update.sh` — the community KB will be downloaded and merged into your local knowledge base automatically.
+3. Run `./update.sh` — the community KB will be downloaded and merged into your local knowledge base automatically.
 
-The community KB is pulled on every subsequent `./update.sh` run as long as `PAID_TIER=true` and a valid license key are present. No GitHub account or PAT is required — the Cloudflare relay handles authentication server-side.
+The community KB is pulled on every subsequent `./update.sh` run as long as a valid license key is present. No GitHub account or PAT is required — the Cloudflare relay handles authentication server-side.
 
 ---
 

@@ -83,6 +83,8 @@ services:
       - ./sessions:/app/sessions
       # Persist CVE knowledge base (accumulates test results over time)
       - noctis_kb:/app/cve_knowledge_base.json
+      # Persist tool knowledge base (accumulates tool usage data over time)
+      - noctis_tool_kb:/app/tool_knowledge_base.json
       # Persist per-user config (installation UUID, license key, etc.)
       - noctis_config:/app/noctis.conf
     # nmap SYN scans need raw socket capabilities
@@ -100,6 +102,8 @@ volumes:
   ollama_models:
     driver: local
   noctis_kb:
+    driver: local
+  noctis_tool_kb:
     driver: local
   noctis_config:
     driver: local

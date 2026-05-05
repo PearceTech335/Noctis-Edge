@@ -52,7 +52,7 @@ ENV GOROOT=/usr/local/go
 ENV GOPATH=/root/go
 ENV PATH=$PATH:/usr/local/go/bin:/root/go/bin
 
-ARG GO_VERSION=1.22.5
+ARG GO_VERSION=1.26.2
 RUN ARCH=$(dpkg --print-architecture) && \
     wget -q "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" \
         -O /tmp/go.tar.gz && \
@@ -90,7 +90,7 @@ RUN git clone --depth=1 https://github.com/sullo/nikto.git nikto
 #    negation: CVE/cve-offline/ is excluded but !CVE/cve-offline/cve-summary.csv
 #    is re-included.
 # ---------------------------------------------------------------------------
-RUN if [[ -f CVE/cve-offline/cve-summary.csv ]]; then \
+RUN if [ -f CVE/cve-offline/cve-summary.csv ]; then \
         echo "[OK] CVE database present ($(wc -l < CVE/cve-offline/cve-summary.csv) records)"; \
     else \
         echo "[!] CVE CSV not found in build context — CVE matching will be unavailable"; \

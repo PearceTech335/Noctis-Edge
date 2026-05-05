@@ -36,12 +36,9 @@ KB_RELAY_URL=""
 # PAID TIER
 # =============================================================================
 
-# Set to true once you have subscribed for community KB access.
-# Access: https://buy.polar.sh/polar_cl_rEP2IebC07PDSnIal0HF4kZSBJVecdZSmkREx3Emnin
-PAID_TIER=false
-
-KB_COMMUNITY_TOKEN=""
 KB_LICENSE_KEY=""
+# ↑ Paste your Polar.sh license key here to enable the community CVE KB download.
+#   Subscribe at: https://buy.polar.sh/polar_cl_rEP2IebC07PDSnIal0HF4kZSBJVecdZSmkREx3Emnin
 EOF
     echo "[*] Generated new installation ID: ${UUID}"
     echo "[*] Config written to ${CONF_FILE}"

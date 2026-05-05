@@ -56,7 +56,7 @@ ok "sudo credentials cached"
 # =============================================================================
 # 1. apt — system packages
 # =============================================================================
-header "1/9  System packages (apt)"
+header "1/10  System packages (apt)"
 info "Running apt update + upgrade ..."
 sudo apt update -qq      || err "apt update failed — continuing"
 sudo apt upgrade -y      || err "apt upgrade failed — continuing"
@@ -68,7 +68,7 @@ ok "apt done"
 # =============================================================================
 # 2. snap — SecLists
 # =============================================================================
-header "2/9  Snap packages (seclists)"
+header "2/10  Snap packages (seclists)"
 if command -v snap &>/dev/null; then
     info "Refreshing snap packages ..."
     sudo snap refresh || err "snap refresh failed — continuing"
@@ -80,7 +80,7 @@ fi
 # =============================================================================
 # 3. pip — Python dependencies
 # =============================================================================
-header "3/9  Python dependencies (pip)"
+header "3/10  Python dependencies (pip)"
 VENV="$SCRIPT_DIR/.venv"
 if [[ -f "$VENV/bin/activate" ]]; then
     info "Updating packages in venv at $VENV ..."
@@ -102,7 +102,7 @@ fi
 # =============================================================================
 # 4. Nuclei — binary + templates
 # =============================================================================
-header "4/9  Nuclei (Go binary + templates)"
+header "4/10  Nuclei (Go binary + templates)"
 if command -v nuclei &>/dev/null; then
     info "Updating nuclei binary ..."
     go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest 2>/dev/null \
@@ -120,7 +120,7 @@ fi
 # =============================================================================
 # 5. Ollama — model refresh
 # =============================================================================
-header "5/9  Ollama models"
+header "5/10  Ollama models"
 if command -v ollama &>/dev/null; then
     # Check if server is running; if not, start it temporarily
     if curl -s --max-time 3 http://localhost:11434/api/tags &>/dev/null; then
@@ -161,7 +161,7 @@ fi
 # =============================================================================
 # 6. CVE offline database
 # =============================================================================
-header "6/9  CVE offline database"
+header "6/10  CVE offline database"
 CVE_DIR="$SCRIPT_DIR/CVE/cve-offline"
 if [[ -d "$CVE_DIR/.git" ]]; then
     info "Pulling latest CVE repo ..."
