@@ -7,7 +7,7 @@ service-specific enumerations, risk scoring, and
 5-phase nmap discovery with LLM-informed NSE scripting.
 """
 
-VERSION = "v0.7.1"
+VERSION = "v0.7.2"
 
 import asyncio
 import dataclasses

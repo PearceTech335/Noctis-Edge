@@ -832,6 +832,7 @@ The following are excluded from version control (see `.gitignore`):
 
 | Version | Date | Changes |
 |---------|------|---------|
+| **v0.7.2** | May 2026 | HTML report: collapsible Findings and CVE Matches sections with styled expand headers; attacker perspective narrative (LLM-generated threat context) added above remediation in CVE test result cards; Phase 2 script execution parallelised — all LLM-generated probes now run concurrently instead of sequentially, cutting worst-case CVE test time by ~60% |
 | **v0.7.1** | May 2026 | Single-model architecture: `phi4-mini:3.8b` removed, `qwen2.5-coder:3b-instruct` handles all LLM tasks; deterministic fast-path tool selector for all well-known services (SMB, RPC, VMware, MSSQL, SSH, RDP, FTP, LDAP, DNS) eliminates LLM calls for common targets; `keep_alive=1h` per-request + server env-var prevents model eviction between scan phases; `num_ctx` capped at 1024 to reduce KV cache pressure; `format:json` grammar-constrained decoding on all planning calls; model warm-start before scan begins |
 | **v0.7.0** | May 2026 | Five-phase nmap discovery pipeline; NSE script results injected into LLM planning context |
 | **v0.6.7** | May 2026 | ffuf scoped to HTTP/HTTPS only (removed from IPP/CUPS service branch); Tool KB community pipeline added (`submit_tool_kb.py`, `merge_tool_kb.py`, Cloudflare routes `/submit-tool` + `/community-tool-kb`, `update.sh` step 9/9) |
