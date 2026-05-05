@@ -9,15 +9,13 @@
  * Environment bindings required (set before deploying):
  *   GITHUB_TOKEN           (Secret)  PAT with contents:write on Noctis-Edge-Submissions
  *   GITHUB_KB_TOKEN        (Secret)  PAT with contents:read on Noctis-Edge-KB (private)
- *   POLAR_ORG_ACCESS_TOKEN (Secret)  Polar.sh API token (license_keys:write scope)
- *   POLAR_ORGANIZATION_ID  (Secret)  Polar.sh organisation UUID
  *   RATE_LIMIT_KV          (KV)      Namespace for per-UUID rate-limit tracking
  *
  * Routes:
  *   POST /submit        Accept a CVE KB submission
  *   POST /submit-tool   Accept a tool performance KB submission
- *   POST /community-kb       Validate Polar license key and serve community_kb.json
- *   POST /community-tool-kb  Validate Polar license key and serve community_tool_kb.json
+ *   POST /community-kb       Validate Lemon Squeezy license key and serve community_kb.json
+ *   POST /community-tool-kb  Validate Lemon Squeezy license key and serve community_tool_kb.json
  *   GET  /health        Liveness probe
  */
 
@@ -243,36 +241,29 @@ async function handleCommunityKB(request, env) {
     return jsonResp({ error: "license_key is required" }, 400);
   }
 
-  // ── Validate license key with Polar.sh ────────────────────────────────────
-  // Uses the public customer-portal endpoint (no org token required)
-  let polarResp;
+  // ── Validate license key with Lemon Squeezy ────────────────────────────────
+  // Public License API — no server-side auth token required
+  let lsResp;
   try {
-    polarResp = await fetch("https://api.polar.sh/v1/customer-portal/license-keys/validate", {
+    lsResp = await fetch("https://api.lemonsqueezy.com/v1/licenses/validate", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        key:             licenseKey.trim(),
-        organization_id: env.POLAR_ORGANIZATION_ID,
-      }),
+      headers: {
+        "Accept":       "application/json",
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: `license_key=${encodeURIComponent(licenseKey.trim())}`,
     });
   } catch (err) {
-    console.error("[community-kb] Polar validate network error:", err);
+    console.error("[community-kb] Lemon Squeezy validate network error:", err);
     return jsonResp({ error: "License validation temporarily unavailable — try again later" }, 503);
   }
 
-  if (!polarResp.ok) {
-    // 404 = key not found, 403 = revoked/expired — either way, deny
+  const lsData = await lsResp.json();
+
+  if (!lsResp.ok || !lsData?.valid || lsData?.license_key?.status !== "active") {
     return jsonResp({
       error:   "invalid_key",
-      message: "License key not recognised or inactive. Subscribe at https://buy.polar.sh/polar_cl_T4wa778zbXlNN4KW0vgJPeanMDmlTbOra2rny49wogi",
-    }, 403);
-  }
-
-  const polarData = await polarResp.json();
-  if (polarData?.status !== "granted") {
-    return jsonResp({
-      error:   "key_not_granted",
-      message: "License key is not active for this product. Subscribe at https://buy.polar.sh/polar_cl_rEP2IebC07PDSnIal0HF4kZSBJVecdZSmkREx3Emnin",
+      message: "License key not recognised or inactive. Subscribe at https://noctisedge.lemonsqueezy.com",
     }, 403);
   }
 
@@ -393,35 +384,29 @@ async function handleCommunityToolKB(request, env) {
     return jsonResp({ error: "license_key is required" }, 400);
   }
 
-  // ── Validate license key with Polar.sh ────────────────────────────────────
-  // Uses the public customer-portal endpoint (no org token required)
-  let polarResp;
+  // ── Validate license key with Lemon Squeezy ────────────────────────────────
+  // Public License API — no server-side auth token required
+  let lsResp;
   try {
-    polarResp = await fetch("https://api.polar.sh/v1/customer-portal/license-keys/validate", {
+    lsResp = await fetch("https://api.lemonsqueezy.com/v1/licenses/validate", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        key:             licenseKey.trim(),
-        organization_id: env.POLAR_ORGANIZATION_ID,
-      }),
+      headers: {
+        "Accept":       "application/json",
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: `license_key=${encodeURIComponent(licenseKey.trim())}`,
     });
   } catch (err) {
-    console.error("[community-tool-kb] Polar validate network error:", err);
+    console.error("[community-tool-kb] Lemon Squeezy validate network error:", err);
     return jsonResp({ error: "License validation temporarily unavailable — try again later" }, 503);
   }
 
-  if (!polarResp.ok) {
+  const lsData = await lsResp.json();
+
+  if (!lsResp.ok || !lsData?.valid || lsData?.license_key?.status !== "active") {
     return jsonResp({
       error:   "invalid_key",
-      message: "License key not recognised or inactive. Subscribe at https://buy.polar.sh/polar_cl_T4wa778zbXlNN4KW0vgJPeanMDmlTbOra2rny49wogi",
-    }, 403);
-  }
-
-  const polarData = await polarResp.json();
-  if (polarData?.status !== "granted") {
-    return jsonResp({
-      error:   "key_not_granted",
-      message: "License key is not active for this product.",
+      message: "License key not recognised or inactive. Subscribe at https://noctisedge.lemonsqueezy.com",
     }, 403);
   }
 

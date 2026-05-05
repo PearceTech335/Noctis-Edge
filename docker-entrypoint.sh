@@ -37,8 +37,8 @@ KB_RELAY_URL=""
 # =============================================================================
 
 KB_LICENSE_KEY=""
-# ↑ Paste your Polar.sh license key here to enable the community CVE KB download.
-#   Subscribe at: https://buy.polar.sh/polar_cl_rEP2IebC07PDSnIal0HF4kZSBJVecdZSmkREx3Emnin
+# ↑ Paste your Lemon Squeezy license key here to enable the community CVE KB download.
+#   Subscribe at: https://noctisedge.lemonsqueezy.com
 EOF
     echo "[*] Generated new installation ID: ${UUID}"
     echo "[*] Config written to ${CONF_FILE}"

@@ -30,14 +30,14 @@ What makes this platform more than a one-shot testing tool is the **community in
 
 - Every probe script and its verdict is recorded in `cve_knowledge_base.json` at the project root
 - On subsequent runs against the same CVE, **proven scripts are replayed first** — no LLM generation required — giving faster, higher-confidence results
-- Running `./update.sh` automatically submits your local CVE and Tooling knowledge base to the community repository — no account, token, or cloud service required for submission. **No Target data or Environment variables leave your local machine** (See Community Knowledge Base section below). Submitted scripts are then vetted and validated to ensure no malicious code or potentially harmful actions can result from execution. Validated scripts and tooling knowledge contributed by other users are available to those with a [Noctis Edge Intelligence subscription](https://buy.polar.sh/polar_cl_rEP2IebC07PDSnIal0HF4kZSBJVecdZSmkREx3Emnin)
+- Running `./update.sh` automatically submits your local CVE and Tooling knowledge base to the community repository — no account, token, or cloud service required for submission. **No Target data or Environment variables leave your local machine** (See Community Knowledge Base section below). Submitted scripts are then vetted and validated to ensure no malicious code or potentially harmful actions can result from execution. Validated scripts and tooling knowledge contributed by other users are available to those with a [Noctis Edge Intelligence subscription](https://noctisedge.lemonsqueezy.com)
 - The entire loop (generation → execution → verdict → submission → replay) stays on-device; nothing leaves the host without an explicit `./update.sh`. All CVE and Tooling knowledge are anonymised and identified only by either the CVE identifier or the service the tool ran against. **NO TARGET** data, information or identifiers ever leaves your device.
 
 The result: **the more the community runs, the sharper the community becomes**.
 
 ### Tooling Intelligence
 
-Alongside CVE probes, `tooling_knowledge_base.json` accumulates tooling knowledge — which tool invocations produced real findings versus noise, which scan techniques work reliably against specific service fingerprints, and which scripts generated false positives. The LLM uses this history as context on each new engagement, progressively improving the quality of tool selection and script generation over time. Your local tooling knowledge base grows continuously with every scan you run. Community-contributed tooling intelligence — aggregated across all users — is pulled down during `./update.sh` for those with a [subscription](https://buy.polar.sh/polar_cl_rEP2IebC07PDSnIal0HF4kZSBJVecdZSmkREx3Emnin) token set in `noctis.conf`.
+Alongside CVE probes, `tooling_knowledge_base.json` accumulates tooling knowledge — which tool invocations produced real findings versus noise, which scan techniques work reliably against specific service fingerprints, and which scripts generated false positives. The LLM uses this history as context on each new engagement, progressively improving the quality of tool selection and script generation over time. Your local tooling knowledge base grows continuously with every scan you run. Community-contributed tooling intelligence — aggregated across all users — is pulled down during `./update.sh` for those with a [subscription](https://noctisedge.lemonsqueezy.com) token set in `noctis.conf`.
 
 ---
 
@@ -645,7 +645,7 @@ The Cloudflare Worker (`cloudflare/worker.js`) acts as a server-side relay: it h
 
 ### Unlocking the Community Knowledge Base
 
-Subscribers receive access to the aggregated community CVE knowledge base — a curated collection of validated test scripts contributed by all Noctis Edge users. Once you have subscribed at [polar.sh/checkout](https://buy.polar.sh/polar_cl_rEP2IebC07PDSnIal0HF4kZSBJVecdZSmkREx3Emnin) and received your license key:
+Subscribers receive access to the aggregated community CVE knowledge base — a curated collection of validated test scripts contributed by all Noctis Edge users. Once you have subscribed at [noctisedge.lemonsqueezy.com](https://noctisedge.lemonsqueezy.com) and received your license key:
 
 1. Open `noctis.conf` in your Noctis Edge install directory.
 2. Paste your license key:
