@@ -14,6 +14,7 @@ relay_url defaults to RELAY_URL below.  Override via the optional 3rd argument
 Exit codes: 0 = success or skipped, 1 = error
 """
 import json
+import re
 import ssl
 import sys
 import urllib.request
@@ -22,6 +23,26 @@ import urllib.error
 # ── Update this after deploying the updated Cloudflare Worker ─────────────────
 RELAY_URL = "https://noctis-kb-relay.pearcetechnologies1.workers.dev/submit-tool"
 # ─────────────────────────────────────────────────────────────────────────────
+
+_RE_IPV4 = re.compile(r'\b(?:\d{1,3}\.){3}\d{1,3}\b')
+
+
+def _sanitize_tool_kb(kb: dict) -> dict:
+    """Return a copy of the tool KB with target IPv4 addresses scrubbed from
+    slot keys and any string values."""
+    import copy
+    kb = copy.deepcopy(kb)
+    sanitized: dict = {}
+    for tool, slots in kb.items():
+        if tool == "_meta" or not isinstance(slots, dict):
+            sanitized[tool] = slots
+            continue
+        clean_slots: dict = {}
+        for slot_key, stats in slots.items():
+            clean_key = _RE_IPV4.sub("<TARGET>", slot_key)
+            clean_slots[clean_key] = stats
+        sanitized[tool] = clean_slots
+    return sanitized
 
 
 def main() -> None:
@@ -56,6 +77,9 @@ def main() -> None:
     if not tool_entries:
         print("[submit_tool_kb] Local tool knowledge base has no tool entries — skipping.")
         sys.exit(0)
+
+    # ── Sanitize before transmission ─────────────────────────────────────────
+    kb_data = _sanitize_tool_kb(kb_data)
 
     # ── POST to relay ─────────────────────────────────────────────────────────
     payload = json.dumps({"user_id": user_id, "tool_kb": kb_data}).encode()

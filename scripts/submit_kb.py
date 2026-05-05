@@ -14,6 +14,7 @@ relay_url defaults to RELAY_URL below.  Override via the optional 3rd argument
 Exit codes: 0 = success or skipped, 1 = error
 """
 import json
+import re
 import ssl
 import sys
 import urllib.request
@@ -24,6 +25,35 @@ import urllib.error
 # Format: https://noctis-kb-relay.<your-subdomain>.workers.dev/submit
 RELAY_URL = "https://noctis-kb-relay.pearcetechnologies1.workers.dev/submit"
 # ─────────────────────────────────────────────────────────────────────────────
+
+# Regex patterns used by the sanitizer
+_RE_IPV4        = re.compile(r'\b(?:\d{1,3}\.){3}\d{1,3}\b')
+_RE_LOCAL_PATH  = re.compile(r'(?:/[\w.\-]+){3,}/(?:sessions|cve_tests)/[\w/._\-]+')
+
+
+def _sanitize_cve_kb(kb: dict) -> dict:
+    """Return a deep copy of the CVE KB with target IPs and local paths removed.
+
+    Specifically:
+    - script fields: IPv4 addresses replaced with <TARGET>
+    - output_sample fields: absolute filesystem paths replaced with <path>
+    Both replacements apply recursively through nested lists/dicts.
+    """
+    import copy
+    kb = copy.deepcopy(kb)
+    for cve_entry in kb.values():
+        if not isinstance(cve_entry, dict):
+            continue
+        for script in cve_entry.get("scripts", []):
+            if not isinstance(script, dict):
+                continue
+            if isinstance(script.get("script"), str):
+                script["script"] = _RE_IPV4.sub("<TARGET>", script["script"])
+            if isinstance(script.get("output_sample"), str):
+                script["output_sample"] = _RE_LOCAL_PATH.sub(
+                    "<path>", script["output_sample"]
+                )
+    return kb
 
 
 def main() -> None:
@@ -56,6 +86,9 @@ def main() -> None:
     if not kb_data:
         print("[submit_kb] Local knowledge base is empty — skipping submission.")
         sys.exit(0)
+
+    # ── Sanitize before transmission ──────────────────────────────────────────
+    kb_data = _sanitize_cve_kb(kb_data)
 
     # ── POST to relay ─────────────────────────────────────────────────────────
     payload = json.dumps({"user_id": user_id, "kb": kb_data}).encode()
