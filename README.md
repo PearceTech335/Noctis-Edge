@@ -218,57 +218,6 @@ docker compose run --rm noctis scan 192.168.0.1 --resume
 
 ![Command Line Usage](https://github.com/user-attachments/assets/5c27d403-60bb-4608-93ce-0332c1a5a2f4)
 
-### Web UI
-
-A browser-based front-end is available for users who prefer to interact via a web browser. It features a VS Code dark colour scheme, profile and flag controls, and live terminal output streamed in real time via WebSocket.
-
-**Docker:**
-```bash
-# Start the Web UI (runs in background, Web UI starts automatically):
-./docker-run.sh          # Linux / macOS
-.\docker-run.ps1         # Windows (PowerShell)
-
-# Then open in your browser:
-#   http://localhost:5000
-```
-
-> The `docker-run` script starts both Ollama and the Web UI automatically. Just wait for the terminal to settle and open your browser — no extra steps needed.
-
-**Native Linux:**
-```bash
-./noctis_web.py
-# Then open: http://127.0.0.1:5000
-
-# Custom port:
-./noctis_web.py --port 8080
-```
-
-The server binds to `127.0.0.1` only — it is not accessible from other machines on the network.
-
-The Web UI provides:
-
-- **Target** field with Enter-to-start support
-- **Profiles** and **Flags** checkboxes
-- Live colour-coded terminal output streamed via WebSocket (green `[+]`, amber `[!]`, red `[-]`, blue `[*]`)
-- Spinner line updates for real-time progress
-- **Prompt reply** bar with quick **Y** / **N** buttons for approval gates
-- **Report** button to regenerate HTML from any existing JSON session file
-- Logo watermark in the terminal area
-
-![Noctis Edge Web UI](https://github.com/user-attachments/assets/0c3072c5-5198-4714-aa11-d6b2ee22096e)
-
-![Noctis Edge Web UI - Running](https://github.com/user-attachments/assets/e8531796-0264-4733-a7c2-6ef7a88daa33)
-
-| Feature | CLI | Web UI |
-|---------|-----|--------|
-| Profile selection | ✓ | ✓ |
-| Flag checkboxes | ✓ | ✓ |
-| Live terminal output | ✓ | ✓ (WebSocket) |
-| y/n prompt replies | ✓ | ✓ |
-| Regenerate report | ✓ | ✓ |
-
-**Dependencies:** `flask` and `flask-sock` — installed automatically by `setup.sh` and kept up to date by `update.sh`.
-
 ---
 
 ## Command-Line Flags
