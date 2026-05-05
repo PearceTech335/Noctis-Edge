@@ -3674,7 +3674,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         </div>
         <div>
           <strong style="color:#00d4ff">CWE</strong><br>
-          {% set cwe_num = c.cwe_id | regex_search('\\d+') if c.cwe_id else '' %}
           {% if c.cwe_id and c.cwe_id.startswith('CWE-') %}
           <a href="https://cwe.mitre.org/data/definitions/{{ c.cwe_id[4:] }}.html" target="_blank" style="color:#90caf9;text-decoration:none;font-family:monospace">{{ c.cwe_id }}</a>
           {% else %}
