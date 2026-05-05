@@ -55,14 +55,15 @@ Alongside CVE probes, `tooling_knowledge_base.json` accumulates tooling knowledg
 
 | Item | Size |
 |------|------|
-| Ollama model — `qwen2.5-coder:3b-instruct` (all LLM tasks) | ~2.0 GB |
+| Ollama model — `qwen2.5-coder:3b-instruct` (planning + scripts) | ~2.0 GB |
+| Ollama model — `qwen2.5:3b` (report prose) | ~2.0 GB |
 | Nuclei templates | ~1.5 GB |
 | CVE offline database (built by `setup.sh`) | ~3–5 GB |
 | SecLists wordlists (snap) | ~2 GB |
 | Tool binaries + Python venv | ~1 GB |
 | Scan session outputs | Variable |
 
-> **RAM note:** Single-model architecture — `qwen2.5-coder:3b-instruct` (~2 GB) handles all LLM tasks (planning, iteration decisions, report prose, and CVE script generation). Using one model eliminates dual-model RAM pressure on CPU-only hosts. 8 GB RAM is sufficient; 16 GB+ recommended.
+> **RAM note:** Three-role model split — `qwen2.5-coder:3b-instruct` (~2 GB) for planning and scripts; `qwen2.5:3b` (~2 GB) for report prose (conclusion, attacker perspective, remediation). Models are called sequentially so RAM peaks at one loaded model at a time. 8 GB RAM is sufficient; 16 GB+ recommended.
 
 ---
 
@@ -152,7 +153,7 @@ chmod +x setup.sh
 | apt packages | `nmap`, `curl`, `ffuf`, `hydra`, `ssh-audit`, `dnsenum`, `dnsrecon`, `perl`, `golang-go`, `python3-tk`, and more |
 | SecLists | Wordlists via `snap install seclists` |
 | Nuclei | Go-based template scanner (`~/go/bin/nuclei`) |
-| Ollama | Local LLM server + pulls `qwen2.5-coder:3b-instruct` (all LLM tasks) |
+| Ollama | Local LLM server + pulls `qwen2.5-coder:3b-instruct` (planning/scripts) and `qwen2.5:3b` (report prose) |
 | Python venv | `.venv/` with `requests`, `jinja2`, `pycryptodome`, `flask`, `flask-sock` |
 | CVE database | Clones `CVE/cve-offline/` and builds `cve-summary.csv` |
 | rdpscan | Clones `rdpscan/` helper |
@@ -500,7 +501,7 @@ When a CVE is confirmed exploitable, the card is flagged `CONFIRMED_VULNERABLE` 
 
 ![Conclusion and execution log](Readme/screenshots/11_conclusion.png)
 
-The AI-generated conclusion paragraph synthesises all findings into a plain-English security posture statement — suitable for inclusion directly into a pentest report's executive summary. Below it, the execution log records every tool invoked, the exact command run, its exit status, and the number of findings it contributed, providing a reproducible evidence chain.
+The conclusion is built from two parts: a deterministic first sentence constructed directly from the real finding counts (critical / high / medium / low) so the risk level is always factually accurate, followed by a single LLM-generated sentence recommending the most critical remediation action. The execution log records every tool invoked, the exact command run, its exit status, and the number of findings it contributed, providing a reproducible evidence chain.
 
 ---
 
@@ -585,8 +586,9 @@ Manual install (if not using `setup.sh`):
 # Install Ollama:
 curl -fsSL https://ollama.com/install.sh | sh
 
-# Pull the model:
-ollama pull qwen2.5-coder:3b-instruct      # all LLM tasks: planning, iteration, scripts, reports
+# Pull the models:
+ollama pull qwen2.5-coder:3b-instruct      # planning, tool decisions, CVE scripts
+ollama pull qwen2.5:3b                     # report conclusion, attacker perspective, remediation
 ```
 
 Ollama will be started automatically by `noctis.py` on first use. Three models handle distinct roles — keeping each model in its area of strength:
@@ -619,7 +621,7 @@ This updates (in order):
 | 2 | SecLists (snap) refreshed |
 | 3 | pip dependencies upgraded |
 | 4 | Nuclei binary + templates updated |
-| 5 | Ollama models pulled (`qwen2.5-coder:3b-instruct` — single model for all LLM tasks) |
+| 5 | Ollama models pulled: `qwen2.5-coder:3b-instruct` (planning/scripts) + `qwen2.5:3b` (report prose) |
 | 6 | CVE offline database pulled + CSV rebuilt |
 | 7 | Noctis Edge — `git fetch` + `git reset --hard origin/master` (always gets latest, even with local changes) |
 | 8 | Nikto submodule — `git pull` inside `nikto/` (initialises submodule if missing) |
@@ -716,6 +718,16 @@ The following are excluded from version control (see `.gitignore`):
 ---
 
 ## Version History
+
+## What's New in v0.7.3
+
+**Three-role model split** — a dedicated `REPORT_MODEL` (default: `qwen2.5:3b`) now handles all narrative prose tasks: report conclusion, attacker perspective blocks, and remediation guidance. `MODEL` and `SCRIPT_MODEL` remain `qwen2.5-coder:3b-instruct` for structured JSON planning and Python script generation respectively. The general language model produces coherent, factually consistent prose where the code-specialist model was prone to hallucinating contradictory natural-language statements. All three models are called sequentially (never concurrently), so RAM peaks at one loaded model at a time. Override via the `NOCTIS_OLLAMA_REPORT_MODEL` environment variable. `setup.sh`, `update.sh`, `docker-compose.yml`, and `docker-run.sh` all updated to pull and configure the third model.
+
+**Deterministic conclusion anchor** — the first sentence of the conclusion is now built directly from the real finding counts (critical / high / medium / low) rather than asked of the LLM. This eliminates the class of hallucination where the model would describe a target with 15 high-severity findings as "having few vulnerabilities" or contradict its own risk label within the same paragraph. The LLM writes only the second sentence: a single remediation recommendation. The fallback (when Ollama is unreachable) is the anchor sentence alone — always factually accurate regardless of model availability.
+
+**Payment platform migration** — subscription and license-key validation migrated from Polar.sh to Lemon Squeezy. The Cloudflare Worker now calls `POST https://api.lemonsqueezy.com/v1/licenses/validate` (public endpoint — no server-side auth token required) and checks `valid === true && license_key.status === "active"`. The two Polar secret bindings (`POLAR_ORG_ACCESS_TOKEN`, `POLAR_ORGANIZATION_ID`) have been removed from the worker entirely.
+
+---
 
 ## What's New in v0.7.2
 
@@ -849,6 +861,7 @@ The following are excluded from version control (see `.gitignore`):
 
 | Version | Date | Changes |
 |---------|------|---------|
+| **v0.7.3** | May 2026 | Three-role model split: `REPORT_MODEL=qwen2.5:3b` for conclusion/attacker-perspective/remediation prose; `MODEL`/`SCRIPT_MODEL` remain `qwen2.5-coder:3b-instruct`; deterministic conclusion anchor built from real finding counts eliminates risk-level hallucination; Polar.sh → Lemon Squeezy license validation migration |
 | **v0.7.2** | May 2026 | HTML report: collapsible Findings and CVE Matches sections with styled expand headers; attacker perspective narrative (LLM-generated threat context) added above remediation in CVE test result cards; Phase 2 script execution parallelised — all LLM-generated probes now run concurrently instead of sequentially, cutting worst-case CVE test time by ~60% |
 | **v0.7.1** | May 2026 | Single-model architecture: `phi4-mini:3.8b` removed, `qwen2.5-coder:3b-instruct` handles all LLM tasks; deterministic fast-path tool selector for all well-known services (SMB, RPC, VMware, MSSQL, SSH, RDP, FTP, LDAP, DNS) eliminates LLM calls for common targets; `keep_alive=1h` per-request + server env-var prevents model eviction between scan phases; `num_ctx` capped at 1024 to reduce KV cache pressure; `format:json` grammar-constrained decoding on all planning calls; model warm-start before scan begins |
 | **v0.7.0** | May 2026 | Five-phase nmap discovery pipeline; NSE script results injected into LLM planning context |
