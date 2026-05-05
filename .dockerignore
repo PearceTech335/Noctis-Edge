@@ -17,6 +17,10 @@ CVE/cve-offline/
 # Excluding this saves ~200 MB of build context transfer time
 CVE/cve/
 
+# NVD CVSS download cache — large intermediate files, not needed in image
+# The final nvd-cvss.csv is kept; only the per-year .json.gz cache is excluded
+CVE/.nvd-cache/
+
 # Runtime output
 sessions/
 session.json

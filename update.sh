@@ -166,6 +166,34 @@ else
 fi
 
 # =============================================================================
+# 5a. EPSS offline database — daily exploit-probability scores
+# =============================================================================
+header "5a  EPSS offline database (exploit probability scores)"
+EPSS_SCRIPT="$SCRIPT_DIR/scripts/build_epss_db.py"
+if [[ -f "$EPSS_SCRIPT" ]]; then
+    info "Downloading daily EPSS scores to CVE/epss-scores.csv ..."
+    "$SCRIPT_DIR/.venv/bin/python3" "$EPSS_SCRIPT" \
+        && ok "EPSS database updated" \
+        || err "EPSS download failed (network issue?) — existing file retained"
+else
+    err "scripts/build_epss_db.py not found — skipping EPSS update"
+fi
+
+# =============================================================================
+# 5b. NVD CVSS offline database — real CVSS scores from NVD JSON 2.0 feeds
+# =============================================================================
+header "5b  NVD CVSS offline database (real CVSS scores from NVD)"
+NVD_SCRIPT="$SCRIPT_DIR/scripts/build_nvd_cvss.py"
+if [[ -f "$NVD_SCRIPT" ]]; then
+    info "Downloading/updating NVD CVSS feeds to CVE/nvd-cvss.csv ..."
+    "$SCRIPT_DIR/.venv/bin/python3" "$NVD_SCRIPT" \
+        && ok "NVD CVSS database updated" \
+        || err "NVD CVSS download failed — existing file retained"
+else
+    err "scripts/build_nvd_cvss.py not found — skipping NVD CVSS update"
+fi
+
+# =============================================================================
 # 6. CVE offline database
 # =============================================================================
 header "6/10  CVE offline database"

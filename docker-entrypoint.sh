@@ -67,6 +67,21 @@ echo "[+] Ollama is ready"
 # ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
+
+# Background threat-intel DB refresh (non-blocking)
+# EPSS: refresh daily if the file is older than 23 hours
+EPSS_CSV="/app/CVE/epss-scores.csv"
+if [[ ! -f "$EPSS_CSV" ]] || [[ $(( $(date +%s) - $(stat -c %Y "$EPSS_CSV" 2>/dev/null || echo 0) )) -gt 82800 ]]; then
+    echo "[*] Refreshing EPSS scores in background ..."
+    /app/.venv/bin/python3 /app/scripts/build_epss_db.py >> /tmp/epss_refresh.log 2>&1 &
+fi
+# NVD CVSS: only build on first run (incremental on subsequent runs via update.sh)
+NVD_CSV="/app/CVE/nvd-cvss.csv"
+if [[ ! -f "$NVD_CSV" ]]; then
+    echo "[*] Building NVD CVSS database in background (first run — this may take a few minutes) ..."
+    /app/.venv/bin/python3 /app/scripts/build_nvd_cvss.py >> /tmp/nvd_refresh.log 2>&1 &
+fi
+
 case "${1:-web}" in
     web)
         echo "[*] Starting Noctis Edge Web UI on port 5000 ..."

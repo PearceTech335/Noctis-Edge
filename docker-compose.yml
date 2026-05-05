@@ -89,6 +89,8 @@ services:
       - noctis_tool_kb:/app/tool_knowledge_base.json
       # Persist per-user config (installation UUID, license key, etc.)
       - noctis_config:/app/noctis.conf
+      # Bind-mount CVE dir so host update.sh refreshes EPSS/NVD data in-container
+      - ./CVE:/app/CVE
     # nmap SYN scans need raw socket capabilities
     cap_add:
       - NET_RAW

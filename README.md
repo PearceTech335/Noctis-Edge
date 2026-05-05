@@ -156,6 +156,7 @@ chmod +x setup.sh
 | Ollama | Local LLM server + pulls `qwen2.5-coder:3b-instruct` (planning/scripts) and `qwen2.5:3b` (report prose) |
 | Python venv | `.venv/` with `requests`, `jinja2`, `pycryptodome`, `flask`, `flask-sock` |
 | CVE database | Clones `CVE/cve-offline/` and builds `cve-summary.csv` |
+| Offline threat-intel DBs | Downloads EPSS scores (`CVE/epss-scores.csv`) and NVD CVSS data (`CVE/nvd-cvss.csv`) |
 | rdpscan | Clones `rdpscan/` helper |
 | Additional tools | `amass`, `metasploit-framework` |
 
@@ -246,8 +247,7 @@ Pass one or more profile names after the target. Tools from all selected profile
 | `external` | External Perimeter Review | nmap, curl, nuclei, ffuf, dns_enum |
 | `internal_ad` | Internal AD Assessment | nmap, nxc (SMB/LDAP) |
 | `api` | API Assessment | curl, nuclei, ffuf |
-| `cloud` | Cloud Exposure Review | curl, nuclei, dns_enum |
-
+| `cloud` | Cloud Exposure Review | curl, nuclei, dns_enum || `ot` | Industrial / OT Assessment | nmap (OT-aware — skips ffuf/hydra/nuclei by default) |
 ---
 
 ## How It Works
@@ -621,8 +621,8 @@ This updates (in order):
 | 2 | SecLists (snap) refreshed |
 | 3 | pip dependencies upgraded |
 | 4 | Nuclei binary + templates updated |
-| 5 | Ollama models pulled: `qwen2.5-coder:3b-instruct` (planning/scripts) + `qwen2.5:3b` (report prose) |
-| 6 | CVE offline database pulled + CSV rebuilt |
+| 5 | Ollama models pulled: `qwen2.5-coder:3b-instruct` (planning/scripts) + `qwen2.5:3b` (report prose) || 5a | EPSS offline database refreshed — daily exploit-probability scores (330k+ CVEs) |
+| 5b | NVD CVSS offline database updated — real CVSS v3.1/v4.0 scores from NVD JSON 2.0 feeds || 6 | CVE offline database pulled + CSV rebuilt |
 | 7 | Noctis Edge — `git fetch` + `git reset --hard origin/master` (always gets latest, even with local changes) |
 | 8 | Nikto submodule — `git pull` inside `nikto/` (initialises submodule if missing) |
 | 9 | CVE Knowledge Base submitted to the community relay |
@@ -713,11 +713,48 @@ The following are excluded from version control (see `.gitignore`):
 | `WordLists/rockyou.txt` | 139 MB — not needed for directory enumeration |
 | `CVE/cve-offline/cve-summary.csv` | 57 MB — regenerate with `updatecsv.sh` |
 | `CVE/cve-offline/` | Separate git repo |
+| `CVE/.nvd-cache/` | NVD CVSS download cache — large intermediate `.json.gz` files (excluded from Docker build context too) |
 | `rdpscan/` | Separate git repo |
 
 ---
 
 ## Version History
+
+## What's New in v0.7.4
+
+---
+
+### 📊 Significantly Improved HTML Reporting
+
+The HTML report has been comprehensively updated to surface richer, more actionable intelligence without requiring operators to cross-reference external tools.
+
+**CVE cards now link directly to NVD.** Every CVE ID in the report is a clickable hyperlink to `https://nvd.nist.gov/vuln/detail/CVE-XXXX-XXXXX`, giving one-click access to the full NVD advisory, scoring history, and patch links without leaving the report.
+
+**Real NVD CVSS scores — v3.1 and v4.0.** Each CVE card now shows authoritative CVSS scores sourced from the offline NVD database rather than derived estimates. The score header badge is labelled `v3.1` or `v4.0` to make the standard immediately clear. Where NVD has published both, both are shown in the detail grid.
+
+**EPSS exploitation probability badge.** An amber `EPSS X.X%` badge appears alongside every CVE that has a known EPSS score. The expanded card shows a dedicated EPSS row with exact probability and percentile rank (sourced from FIRST.org), giving operators instant signal on whether a CVE is likely to be exploited in the wild — not just theoretically severe.
+
+**"The Fix" green one-liner.** A prominent green `THE FIX` block now appears at the top of every expanded CVE card, showing the short-term tactical workaround (firewall the port, add a WAF rule, rotate credentials, etc.) before any technical detail. This means operators can act immediately without reading the full card.
+
+**CWE links to MITRE.** CWE identifiers in CVE cards are now hyperlinks to `https://cwe.mitre.org/data/definitions/<N>.html`, providing one-click access to the weakness definition, attack pattern mappings, and mitigations.
+
+**OT environment banner.** When any service is classified as an operational technology asset (Modbus, S7comm, OPC-UA, DNP3, BACnet, EtherNet/IP, and 9 other protocols), a prominent orange warning banner appears at the top of the Services section advising operators to consult IEC 62443 and NERC-CIP before active testing.
+
+**Type column in Services table.** A new `Type` column shows whether each service is classified as `OT` (orange pill badge) or `IT`. OT services include the matching protocol name as a tooltip (e.g. `Modbus — IEC 61511`).
+
+---
+
+**EPSS offline intelligence** — The platform now maintains a local copy of FIRST.org's Exploit Prediction Scoring System (EPSS) dataset. `setup.sh` and `update.sh` (step 5a) download daily scores (~330k CVEs) to `CVE/epss-scores.csv` via `scripts/build_epss_db.py`. Each CVE match is enriched with probability of exploitation in the wild and EPSS percentile rank, displayed in the report and available in the JSON output. The EPSS CDN publishes the daily file mid-afternoon UTC; a 3-day fallback ensures the download succeeds even when run early in the day. EPSS data is also baked into Docker images at build time (best-effort, non-fatal).
+
+**NVD CVSS offline database** — Real CVSS v3.1 and v4.0 scores are loaded from a local NVD dataset (`CVE/nvd-cvss.csv`, built by `scripts/build_nvd_cvss.py`). The script incrementally downloads NVD JSON 2.0 feeds for 2002–current (~348k CVEs across 25 years), extracting Primary CVSS vectors and scores. The database is rebuilt on first run and refreshed incrementally on subsequent `update.sh` runs (step 5b) by checking each year's `.meta` staleness timestamp — only changed years are re-downloaded. The Docker entrypoint triggers a first-run background build automatically.
+
+**NIST CSF 2.0 compliance mapping** — The internal `_COMPLIANCE_MAPPING` table now includes NIST Cybersecurity Framework 2.0 controls alongside PCI-DSS, SOC2, and ISO 27001. All 17 vulnerability types map to NIST CSF 2.0 functions (GV, ID, PR, DE, RS, RC) and specific control identifiers — for example `DE.CM-4` for detection, `RS.MI-2` for incident response mitigation, `PR.AA-1` for identity & access management. NIST CSF 2.0 chips appear in the report's Compliance Impact section.
+
+**Industrial / OT profile** — A new `ot` assessment profile is available for industrial control system environments. The platform auto-classifies services using 15 OT/ICS protocol ports (S7comm/102, Modbus/502, OPC-UA/4840, DNP3/20000, BACnet/47808, EtherNet/IP/44818, and more) and a library of 20 OT vendor/product keywords (Siemens, Schneider, Rockwell, ABB, Honeywell, SCADA, HMI, PLC, DCS, RTU, and others). OT-classified services are annotated with `asset_type=OT`, `ot_protocol`, and `ot_standard` in the session JSON, and displayed with an orange badge pill in the Services table.
+
+**Docker improvements** — `setup.sh` step 7b pre-fetches EPSS scores at image build time. `docker-compose.yml` adds a `./CVE:/app/CVE` bind mount so running `update.sh` on the host refreshes threat-intel data in-container without a rebuild. `docker-entrypoint.sh` now checks for EPSS staleness (>23h) and missing NVD CVSS on startup, triggering background refresh jobs. `CVE/.nvd-cache/` excluded from `.dockerignore`.
+
+---
 
 ## What's New in v0.7.3
 
@@ -860,8 +897,7 @@ The following are excluded from version control (see `.gitignore`):
 ---
 
 | Version | Date | Changes |
-|---------|------|---------|
-| **v0.7.3** | May 2026 | Three-role model split: `REPORT_MODEL=qwen2.5:3b` for conclusion/attacker-perspective/remediation prose; `MODEL`/`SCRIPT_MODEL` remain `qwen2.5-coder:3b-instruct`; deterministic conclusion anchor built from real finding counts eliminates risk-level hallucination; Polar.sh → Lemon Squeezy license validation migration |
+|---------|------|---------|| **v0.7.4** | May 2026 | **Improved HTML reporting** — CVE IDs hyperlinked to NVD; real CVSS v3.1/v4.0 scores from offline NVD database; amber EPSS badge with exploitation probability and percentile; "The Fix" green one-liner at top of every CVE card; CWE IDs hyperlinked to cwe.mitre.org; OT orange warning banner + Type column in Services table; EPSS offline DB (`build_epss_db.py`, `CVE/epss-scores.csv`, 330k+ CVEs); NVD CVSS offline DB (`build_nvd_cvss.py`, `CVE/nvd-cvss.csv`, 348k records); NIST CSF 2.0 controls added to all 17 vuln-type compliance mappings; `ot` assessment profile with 15 protocol ports and 20 vendor keywords; Docker EPSS build step + CVE bind mount + entrypoint DB refresh || **v0.7.3** | May 2026 | Three-role model split: `REPORT_MODEL=qwen2.5:3b` for conclusion/attacker-perspective/remediation prose; `MODEL`/`SCRIPT_MODEL` remain `qwen2.5-coder:3b-instruct`; deterministic conclusion anchor built from real finding counts eliminates risk-level hallucination; Polar.sh → Lemon Squeezy license validation migration |
 | **v0.7.2** | May 2026 | HTML report: collapsible Findings and CVE Matches sections with styled expand headers; attacker perspective narrative (LLM-generated threat context) added above remediation in CVE test result cards; Phase 2 script execution parallelised — all LLM-generated probes now run concurrently instead of sequentially, cutting worst-case CVE test time by ~60% |
 | **v0.7.1** | May 2026 | Single-model architecture: `phi4-mini:3.8b` removed, `qwen2.5-coder:3b-instruct` handles all LLM tasks; deterministic fast-path tool selector for all well-known services (SMB, RPC, VMware, MSSQL, SSH, RDP, FTP, LDAP, DNS) eliminates LLM calls for common targets; `keep_alive=1h` per-request + server env-var prevents model eviction between scan phases; `num_ctx` capped at 1024 to reduce KV cache pressure; `format:json` grammar-constrained decoding on all planning calls; model warm-start before scan begins |
 | **v0.7.0** | May 2026 | Five-phase nmap discovery pipeline; NSE script results injected into LLM planning context |

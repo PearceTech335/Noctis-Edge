@@ -111,6 +111,14 @@ RUN python3 -m venv .venv && \
         --quiet
 
 # ---------------------------------------------------------------------------
+# 7b. EPSS offline database — bake daily exploit-probability scores at build
+#     time so the first scan can show EPSS data without waiting for an update.
+#     Best-effort: build succeeds even if the CDN is unreachable.
+# ---------------------------------------------------------------------------
+RUN .venv/bin/python3 scripts/build_epss_db.py || \
+    echo "[!] EPSS pre-fetch failed (network unavailable at build time) — will retry at first run"
+
+# ---------------------------------------------------------------------------
 # 8. Entrypoint + runtime directories
 # ---------------------------------------------------------------------------
 COPY docker-entrypoint.sh /docker-entrypoint.sh

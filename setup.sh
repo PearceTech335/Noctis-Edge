@@ -457,6 +457,26 @@ else
 fi
 
 # =============================================================================
+# Offline threat-intelligence databases (EPSS + NVD CVSS)
+# =============================================================================
+header "Offline threat-intelligence databases"
+VENV="$SCRIPT_DIR/.venv"
+
+if [[ -f "$SCRIPT_DIR/scripts/build_epss_db.py" ]]; then
+    info "Downloading EPSS exploit-probability scores ..."
+    "$VENV/bin/python3" "$SCRIPT_DIR/scripts/build_epss_db.py" \
+        && ok "EPSS database ready at CVE/epss-scores.csv" \
+        || err "EPSS download failed — offline EPSS scoring unavailable until ./update.sh runs"
+fi
+
+if [[ -f "$SCRIPT_DIR/scripts/build_nvd_cvss.py" ]]; then
+    info "Downloading NVD CVSS data (first-time build \u2014 this may take several minutes) ..."
+    "$VENV/bin/python3" "$SCRIPT_DIR/scripts/build_nvd_cvss.py" \
+        && ok "NVD CVSS database ready at CVE/nvd-cvss.csv" \
+        || err "NVD CVSS download failed \u2014 CVE cards will show estimated scores until ./update.sh runs"
+fi
+
+# =============================================================================
 # Per-user configuration  (noctis.conf)
 # =============================================================================
 header "Per-user configuration (noctis.conf)"

@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """
-Noctis Edge — Security Through Exposure  v0.7.1
+Noctis Edge — Security Through Exposure  v0.7.4
 Implements: structured findings, verification,
 approval gates, async execution, HTML reports,
-service-specific enumerations, risk scoring, and
-5-phase nmap discovery with LLM-informed NSE scripting.
+service-specific enumerations, risk scoring,
+5-phase nmap discovery with LLM-informed NSE scripting,
+EPSS exploit-probability scoring, NVD CVSS offline database,
+NIST CSF 2.0 compliance mapping, and OT/ICS asset classification.
 """
 
-VERSION = "v0.7.2"
+VERSION = "v0.7.4"
 
 import asyncio
 import dataclasses
@@ -105,6 +107,63 @@ CVE_TEST        = False  # set via --cve-test; LLM generates test scripts per ma
 UNATTENDED      = False  # set via --unattended; auto-approves all prompts (no user input required)
 CVE_KB_PATH     = os.path.join(BASE_DIR, "cve_knowledge_base.json")
 TOOL_KB_PATH    = os.path.join(BASE_DIR, "tool_knowledge_base.json")
+
+# Offline threat-intelligence databases (built by scripts/build_epss_db.py
+# and scripts/build_nvd_cvss.py, refreshed by update.sh steps 5a/5b)
+_EPSS_CSV     = os.path.join(BASE_DIR, "CVE", "epss-scores.csv")
+_NVD_CVSS_CSV = os.path.join(BASE_DIR, "CVE", "nvd-cvss.csv")
+# Lazy-loaded lookup dicts — populated on first call
+_EPSS_DB: "dict | None" = None
+_CVSS_DB: "dict | None" = None
+
+
+def _load_epss_db() -> dict:
+    """Lazy-load CVE/epss-scores.csv → {cve_id: (epss_score, percentile)}."""
+    global _EPSS_DB
+    if _EPSS_DB is not None:
+        return _EPSS_DB
+    _EPSS_DB = {}
+    if not os.path.isfile(_EPSS_CSV):
+        return _EPSS_DB
+    try:
+        import csv as _csv
+        with open(_EPSS_CSV, newline="", encoding="utf-8") as fh:
+            for row in _csv.DictReader(fh):
+                cve = row.get("cve", "").upper()
+                if cve:
+                    _EPSS_DB[cve] = (
+                        float(row.get("epss", 0) or 0),
+                        float(row.get("percentile", 0) or 0),
+                    )
+    except Exception:
+        pass
+    return _EPSS_DB
+
+
+def _load_cvss_db() -> dict:
+    """Lazy-load CVE/nvd-cvss.csv → {cve_id: (v3_score, v3_vector, v3_severity, v4_score, v4_vector)}."""
+    global _CVSS_DB
+    if _CVSS_DB is not None:
+        return _CVSS_DB
+    _CVSS_DB = {}
+    if not os.path.isfile(_NVD_CVSS_CSV):
+        return _CVSS_DB
+    try:
+        import csv as _csv
+        with open(_NVD_CVSS_CSV, newline="", encoding="utf-8") as fh:
+            for row in _csv.DictReader(fh):
+                cve = row.get("cve_id", "").upper()
+                if cve:
+                    _CVSS_DB[cve] = (
+                        float(row.get("cvss_v3_score", 0) or 0),
+                        row.get("cvss_v3_vector", ""),
+                        row.get("cvss_v3_severity", ""),
+                        float(row.get("cvss_v4_score", 0) or 0),
+                        row.get("cvss_v4_vector", ""),
+                    )
+    except Exception:
+        pass
+    return _CVSS_DB
 CVE_FRESH_ATTEMPTS  = 5   # fresh LLM-generated scripts per CVE (on top of known-exploit + KB replays)
 CVE_VERIFY_ATTEMPTS = 2  # independent verifier scripts run when any attempt returns VULNERABLE
 CVE_BATCH_SIZE      = 5  # prompt user to continue after this many CVEs (runaway guard)
@@ -322,7 +381,58 @@ PROFILES = {
         "escalation":      [],
         "report_template": "cloud",
     },
+    "ot": {
+        "name":            "Industrial / OT Assessment",
+        "tools":           ["nmap"],
+        "escalation":      [],
+        "report_template": "ot",
+    },
 }
+
+# ---------------------------------------------------------------------------
+# OT / ICS ASSET CLASSIFICATION
+# ---------------------------------------------------------------------------
+
+_OT_PORTS: dict = {
+    102:   {"protocol": "S7comm",         "standard": "IEC 62443"},
+    502:   {"protocol": "Modbus",         "standard": "IEC 61511"},
+    4840:  {"protocol": "OPC-UA",         "standard": "IEC 62443"},
+    20000: {"protocol": "DNP3",           "standard": "IEC 60870-5"},
+    47808: {"protocol": "BACnet",         "standard": "ASHRAE 135"},
+    44818: {"protocol": "EtherNet/IP",    "standard": "IEC 62443"},
+    789:   {"protocol": "Red Lion Data",  "standard": "IEC 62443"},
+    1089:  {"protocol": "FF-HSE",         "standard": "IEC 61804"},
+    1090:  {"protocol": "FF-HSE",         "standard": "IEC 61804"},
+    1091:  {"protocol": "FF-HSE",         "standard": "IEC 61804"},
+    2222:  {"protocol": "EtherNet/IP IO", "standard": "IEC 62443"},
+    9600:  {"protocol": "OMRON FINS",     "standard": "IEC 62443"},
+    18245: {"protocol": "GE SRTP",        "standard": "IEC 62443"},
+    18246: {"protocol": "GE SRTP",        "standard": "IEC 62443"},
+    34962: {"protocol": "PROFInet",       "standard": "IEC 61158"},
+}
+
+_OT_PRODUCT_KEYWORDS: tuple = (
+    "siemens", "schneider", "rockwell", "allen-bradley", "abb",
+    "honeywell", "emerson", "ge digital", "yokogawa", "mitsubishi",
+    "scada", "hmi", "plc", "dcs", "rtu",
+    "historian", "wonderware", "factorytalk", "wincc", "intouch",
+)
+
+
+def _classify_asset(service: dict) -> str:
+    """Return 'OT' if service appears to be an industrial/OT asset, else 'IT'."""
+    try:
+        port = int(service.get("port", 0))
+    except (ValueError, TypeError):
+        port = 0
+    if port in _OT_PORTS:
+        return "OT"
+    product_lower = (
+        str(service.get("product", "")) + " " + str(service.get("name", ""))
+    ).lower()
+    if any(kw in product_lower for kw in _OT_PRODUCT_KEYWORDS):
+        return "OT"
+    return "IT"
 
 # ---------------------------------------------------------------------------
 # DATA MODELS
@@ -1419,23 +1529,23 @@ def _get_exploit_maturity(cve_id: str, vuln_type: str) -> str:
 # ---------------------------------------------------------------------------
 
 _COMPLIANCE_MAPPING = {
-    "Information Disclosure":  ["PCI-DSS 6.5.10", "SOC2 CC7.2", "ISO27001 A.18.1"],
-    "Authentication Bypass":   ["PCI-DSS 6.5.10", "SOC2 CC6.2", "ISO27001 A.9.2"],
-    "SQL Injection":           ["PCI-DSS 6.5.1", "SOC2 CC7.2", "ISO27001 A.14.2"],
-    "XSS":                     ["PCI-DSS 6.5.1", "SOC2 CC7.2", "ISO27001 A.14.2"],
-    "RCE":                     ["PCI-DSS 6.5.2", "SOC2 CC7.2", "ISO27001 A.14.2"],
-    "Command Injection":       ["PCI-DSS 6.5.2", "SOC2 CC7.2", "ISO27001 A.14.2"],
-    "Buffer Overflow":         ["PCI-DSS 6.5.2", "SOC2 CC7.2", "ISO27001 A.14.2"],
-    "Path Traversal":          ["PCI-DSS 6.5.8", "SOC2 CC7.2", "ISO27001 A.14.2"],
-    "Open Redirect":           ["PCI-DSS 6.5.10", "SOC2 CC7.2", "ISO27001 A.14.2"],
-    "SSRF":                    ["PCI-DSS 6.5.10", "SOC2 CC7.2", "ISO27001 A.14.2"],
-    "DoS":                     ["PCI-DSS 6.5.10", "SOC2 CC7.1", "ISO27001 A.12.6"],
-    "Privilege Escalation":    ["PCI-DSS 6.5.10", "SOC2 CC6.1", "ISO27001 A.9.4"],
-    "XXE":                     ["PCI-DSS 6.5.1", "SOC2 CC7.2", "ISO27001 A.14.2"],
-    "Insecure Deserialization": ["PCI-DSS 6.5.2", "SOC2 CC7.2", "ISO27001 A.14.2"],
-    "Format String":           ["PCI-DSS 6.5.2", "SOC2 CC7.2", "ISO27001 A.14.2"],
-    "Use-After-Free":          ["PCI-DSS 6.5.2", "SOC2 CC7.2", "ISO27001 A.14.2"],
-    "Integer Overflow":        ["PCI-DSS 6.5.2", "SOC2 CC7.2", "ISO27001 A.14.2"],
+    "Information Disclosure":   ["PCI-DSS 6.5.10", "SOC2 CC7.2", "ISO27001 A.18.1",   "NIST CSF DE.CM-4",  "NIST CSF RS.MI-2"],
+    "Authentication Bypass":    ["PCI-DSS 6.5.10", "SOC2 CC6.2", "ISO27001 A.9.2",    "NIST CSF PR.AA-1",  "NIST CSF DE.CM-1"],
+    "SQL Injection":            ["PCI-DSS 6.5.1",  "SOC2 CC7.2", "ISO27001 A.14.2",   "NIST CSF PR.DS-2",  "NIST CSF DE.AE-2"],
+    "XSS":                      ["PCI-DSS 6.5.1",  "SOC2 CC7.2", "ISO27001 A.14.2",   "NIST CSF PR.DS-2",  "NIST CSF DE.AE-2"],
+    "RCE":                      ["PCI-DSS 6.5.2",  "SOC2 CC7.2", "ISO27001 A.14.2",   "NIST CSF RS.MI-2",  "NIST CSF PR.PS-1"],
+    "Command Injection":        ["PCI-DSS 6.5.2",  "SOC2 CC7.2", "ISO27001 A.14.2",   "NIST CSF RS.MI-2",  "NIST CSF PR.PS-1"],
+    "Buffer Overflow":          ["PCI-DSS 6.5.2",  "SOC2 CC7.2", "ISO27001 A.14.2",   "NIST CSF PR.PS-1",  "NIST CSF RS.MI-2"],
+    "Path Traversal":           ["PCI-DSS 6.5.8",  "SOC2 CC7.2", "ISO27001 A.14.2",   "NIST CSF PR.DS-5",  "NIST CSF DE.CM-4"],
+    "Open Redirect":            ["PCI-DSS 6.5.10", "SOC2 CC7.2", "ISO27001 A.14.2",   "NIST CSF PR.AA-5"],
+    "SSRF":                     ["PCI-DSS 6.5.10", "SOC2 CC7.2", "ISO27001 A.14.2",   "NIST CSF PR.PS-4",  "NIST CSF DE.CM-4"],
+    "DoS":                      ["PCI-DSS 6.5.10", "SOC2 CC7.1", "ISO27001 A.12.6",   "NIST CSF DE.AE-4",  "NIST CSF RS.MI-1"],
+    "Privilege Escalation":     ["PCI-DSS 6.5.10", "SOC2 CC6.1", "ISO27001 A.9.4",    "NIST CSF PR.AA-3",  "NIST CSF DE.CM-4"],
+    "XXE":                      ["PCI-DSS 6.5.1",  "SOC2 CC7.2", "ISO27001 A.14.2",   "NIST CSF PR.DS-2",  "NIST CSF DE.AE-2"],
+    "Insecure Deserialization":  ["PCI-DSS 6.5.2",  "SOC2 CC7.2", "ISO27001 A.14.2",   "NIST CSF PR.DS-2",  "NIST CSF RS.MI-2"],
+    "Format String":            ["PCI-DSS 6.5.2",  "SOC2 CC7.2", "ISO27001 A.14.2",   "NIST CSF PR.PS-1",  "NIST CSF RS.MI-2"],
+    "Use-After-Free":           ["PCI-DSS 6.5.2",  "SOC2 CC7.2", "ISO27001 A.14.2",   "NIST CSF PR.PS-1",  "NIST CSF RS.MI-2"],
+    "Integer Overflow":         ["PCI-DSS 6.5.2",  "SOC2 CC7.2", "ISO27001 A.14.2",   "NIST CSF PR.PS-1",  "NIST CSF RS.MI-2"],
 }
 
 _REMEDIATION_REFERENCES = {
@@ -1548,11 +1658,38 @@ def enrich_cve(cve: dict, service: dict) -> dict:
         or _BUSINESS_IMPACT_DEFAULT.get(severity, _BUSINESS_IMPACT_DEFAULT["unknown"])
     )
 
+    # EPSS lookup
+    epss_db = _load_epss_db()
+    epss_entry = epss_db.get(cve["id"].upper(), (0.0, 0.0))
+    epss_score      = epss_entry[0]
+    epss_percentile = epss_entry[1]
+
+    # NVD CVSS lookup — prefer authoritative NVD data over derived estimates
+    cvss_db   = _load_cvss_db()
+    cvss_entry = cvss_db.get(cve["id"].upper())
+    if cvss_entry:
+        nvd_v3_score, nvd_v3_vector, nvd_v3_severity, nvd_v4_score, nvd_v4_vector = cvss_entry
+        # Use NVD score if it's non-zero; fall back to passed-in value
+        resolved_cvss_score  = nvd_v3_score or cve.get("cvss_score", 0.0)
+        resolved_cvss_vector = nvd_v3_vector or _get_cvss_vector(severity, vuln_type)
+    else:
+        nvd_v3_score = nvd_v3_vector = nvd_v3_severity = ""
+        nvd_v4_score = nvd_v4_vector = ""
+        resolved_cvss_score  = cve.get("cvss_score", 0.0)
+        resolved_cvss_vector = _get_cvss_vector(severity, vuln_type)
+
     return {
         "cve_id":                cve["id"],
         "severity":              cve["severity"],
-        "cvss_score":            cve.get("cvss_score", 0.0),
-        "cvss_vector":           _get_cvss_vector(severity, vuln_type),
+        "cvss_score":            resolved_cvss_score,
+        "cvss_vector":           resolved_cvss_vector,
+        "nvd_cvss_v3_score":     nvd_v3_score,
+        "nvd_cvss_v3_vector":    nvd_v3_vector,
+        "nvd_cvss_v3_severity":  nvd_v3_severity,
+        "nvd_cvss_v4_score":     nvd_v4_score,
+        "nvd_cvss_v4_vector":    nvd_v4_vector,
+        "epss_score":            epss_score,
+        "epss_percentile":       epss_percentile,
         "cwe_id":                _CWE_MAPPING.get(vuln_type, "See NVD for CWE information"),
         "exploit_maturity":      _get_exploit_maturity(cve["id"], vuln_type),
         "product":               product,
@@ -2498,11 +2635,20 @@ def _tools_for_service(service_name):
 def rank_and_annotate_services(services):
     annotated = []
     for s in services:
+        try:
+            port_int = int(s.get("port", 0))
+        except (ValueError, TypeError):
+            port_int = 0
+        ot_info = _OT_PORTS.get(port_int, {})
+        asset_type = _classify_asset(s)
         annotated.append({
             **s,
             "priority":          _service_priority(s),
             "recommended_tools": _tools_for_service(s.get("name", "")),
             "cves":              [],
+            "asset_type":        asset_type,
+            "ot_protocol":       ot_info.get("protocol", ""),
+            "ot_standard":       ot_info.get("standard", ""),
         })
     return sorted(annotated, key=lambda x: x["priority"], reverse=True)
 
@@ -3338,13 +3484,32 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 </div>
 {% endif %}
 
+{% set ot_services = services | selectattr('asset_type', 'eq', 'OT') | list %}
+{% if ot_services %}
+<div style="background:#3d1f00;border:2px solid #ff8f00;border-radius:8px;padding:14px 20px;margin:18px 0;display:flex;align-items:center;gap:14px">
+  <span style="font-size:1.6em">&#9888;</span>
+  <div>
+    <strong style="color:#ffb300;font-size:1.05em">Industrial / OT Environment Detected</strong><br>
+    <span style="color:#ffe082;font-size:.9em">{{ ot_services | length }} OT service(s) identified. Refer to IEC 62443 and NERC-CIP before performing active tests on operational technology assets.</span>
+  </div>
+</div>
+{% endif %}
+
 <h2>Services Discovered</h2>
 <table>
-  <tr><th>Port</th><th>Protocol</th><th>Service</th><th>Product / Version</th><th>Priority</th><th>CVEs</th></tr>
+  <tr><th>Port</th><th>Protocol</th><th>Service</th><th>Product / Version</th><th>Type</th><th>Priority</th><th>CVEs</th></tr>
   {% for s in services %}
   <tr>
     <td>{{ s.port }}</td><td>{{ s.protocol }}</td><td>{{ s.name }}</td>
-    <td>{{ s.product }} {{ s.version }}</td><td>{{ s.priority }}</td>
+    <td>{{ s.product }} {{ s.version }}</td>
+    <td>
+      {% if s.asset_type == 'OT' %}
+      <span style="background:#7c3700;color:#ffb300;padding:2px 8px;border-radius:10px;font-size:.75em;font-weight:bold;border:1px solid #ffb300" title="{{ s.ot_protocol }}{% if s.ot_standard %} — {{ s.ot_standard }}{% endif %}">OT</span>
+      {% else %}
+      <span style="color:#777;font-size:.85em">IT</span>
+      {% endif %}
+    </td>
+    <td>{{ s.priority }}</td>
     <td>{% for c in s.cves %}<span class="badge badge-{{ c.severity|lower }}">{{ c.id }}</span> {% endfor %}</td>
   </tr>
   {% endfor %}
@@ -3462,29 +3627,74 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   {% for c in cve_matches | sort(attribute='cvss_score', reverse=True) %}
   <details style="margin-bottom:1.5em;border:1px solid #333;border-radius:6px;padding:1em;background:#16213e">
     <summary style="cursor:pointer;font-weight:600;color:#00d4ff;font-size:1.05em;display:flex;align-items:center;flex-wrap:wrap;gap:.5em">
-      <span style="flex:1;min-width:180px">{{ c.cve_id }} — {{ c.vulnerability_type }} on {{ c.service }}</span>
+      <span style="flex:1;min-width:180px"><a href="https://nvd.nist.gov/vuln/detail/{{ c.cve_id }}" target="_blank" style="color:#00d4ff;text-decoration:none" title="View on NVD">{{ c.cve_id }}</a> — {{ c.vulnerability_type }} on {{ c.service }}</span>
       <span class="badge badge-{{ c.severity|lower }}">{{ c.severity|upper }}</span>
+      {% if c.nvd_cvss_v3_score %}
+      <span style="background:#0f3460;color:#00d4ff;padding:3px 10px;border-radius:4px;font-size:.85em;font-weight:700;border:1px solid #00d4ff;min-width:2.5em;text-align:center" title="NVD CVSS v3.1">v3.1&nbsp;{{ c.nvd_cvss_v3_score }}</span>
+      {% elif c.cvss_score %}
       <span style="background:#0f3460;color:#00d4ff;padding:3px 10px;border-radius:4px;font-size:.9em;font-weight:700;border:1px solid #00d4ff;min-width:2.5em;text-align:center" title="CVSS Score">{{ c.cvss_score }}</span>
+      {% endif %}
+      {% if c.epss_score %}
+      <span style="background:#7c4700;color:#ffb300;padding:3px 9px;border-radius:4px;font-size:.82em;font-weight:700;border:1px solid #ff8f00" title="EPSS: probability of exploitation in the wild">EPSS&nbsp;{{ "%.1f%%"|format(c.epss_score * 100) }}</span>
+      {% endif %}
     </summary>
     
     <div style="margin-top:1em;padding-top:1em;border-top:1px solid #333">
+
+      {# The Fix — prominent quick-win remediation at the top of the card #}
+      {% if c.remediation_short %}
+      <div style="background:#0d2010;border-left:4px solid #66bb6a;border-radius:0 6px 6px 0;padding:.8em 1em;margin-bottom:1em;display:flex;align-items:flex-start;gap:.7em">
+        <span style="color:#66bb6a;font-size:1.1em;flex-shrink:0">&#10003;</span>
+        <div>
+          <strong style="color:#66bb6a;font-size:.88em">THE FIX</strong>
+          <div style="color:#c8e6c9;font-size:.9em;margin-top:.2em;line-height:1.5">{{ c.remediation_short }}</div>
+        </div>
+      </div>
+      {% endif %}
+
       <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:1.5em;margin-bottom:1.5em;font-size:.9em">
         <div>
+          {% if c.nvd_cvss_v3_score %}
+          <strong style="color:#00d4ff">CVSS v3.1 (NVD)</strong><br>
+          <span style="font-size:1.3em;font-weight:700">{{ c.nvd_cvss_v3_score }}</span>
+          {% if c.nvd_cvss_v3_severity %}<span style="color:#aaa;font-size:.85em;margin-left:.4em">({{ c.nvd_cvss_v3_severity }})</span>{% endif %}
+          {% else %}
           <strong style="color:#00d4ff">CVSS Score</strong><br>
           <span style="font-size:1.3em;font-weight:700">{{ c.cvss_score }}</span>
+          {% endif %}
         </div>
         <div>
+          {% if c.nvd_cvss_v4_score %}
+          <strong style="color:#00d4ff">CVSS v4.0 (NVD)</strong><br>
+          <span style="font-size:1.3em;font-weight:700">{{ c.nvd_cvss_v4_score }}</span>
+          {% else %}
           <strong style="color:#00d4ff">CVSS Vector</strong><br>
           <code style="background:#0d1117;padding:.3em .6em;border-radius:3px;font-size:.8em;word-break:break-all">{{ c.cvss_vector }}</code>
+          {% endif %}
         </div>
         <div>
           <strong style="color:#00d4ff">CWE</strong><br>
+          {% set cwe_num = c.cwe_id | regex_search('\\d+') if c.cwe_id else '' %}
+          {% if c.cwe_id and c.cwe_id.startswith('CWE-') %}
+          <a href="https://cwe.mitre.org/data/definitions/{{ c.cwe_id[4:] }}.html" target="_blank" style="color:#90caf9;text-decoration:none;font-family:monospace">{{ c.cwe_id }}</a>
+          {% else %}
           <span style="font-family:monospace">{{ c.cwe_id }}</span>
+          {% endif %}
         </div>
         <div>
           <strong style="color:#00d4ff">Exploit Maturity</strong><br>
           {{ c.exploit_maturity }}
         </div>
+        {% if c.epss_score %}
+        <div style="grid-column:1/-1;background:#2a1a00;border:1px solid #ff8f00;border-radius:6px;padding:.7em 1em">
+          <strong style="color:#ffb300">&#128313; EPSS Exploit Probability</strong>
+          <div style="display:flex;gap:2em;margin-top:.4em;font-size:.92em">
+            <span><strong style="color:#ffe082">Probability:</strong> {{ "%.2f%%"|format(c.epss_score * 100) }}</span>
+            <span><strong style="color:#ffe082">Percentile:</strong> {{ "%.0f"|format(c.epss_percentile * 100) }}th</span>
+            <span style="color:#bbb;font-size:.85em">(Source: FIRST.org EPSS)</span>
+          </div>
+        </div>
+        {% endif %}
       </div>
 
       <div style="background:#0f3460;border-radius:4px;padding:1em;margin-bottom:1em">
