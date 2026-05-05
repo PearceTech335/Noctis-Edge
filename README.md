@@ -435,7 +435,7 @@ On completion, the HTML report is generated with an executive summary stating th
 
 ## Sample Report
 
-The following screenshots are taken from a real Noctis Edge HTML report against a Windows host. Each section is described from the perspective of a penetration tester or security/network administrator.
+The following screenshots are taken from a real Noctis Edge HTML report — a full scan of localhost running all five profiles (`web`, `external`, `internal_ad`, `api`, `cloud`) with `--msf-validate` and `--cve-test` enabled. Each section is described from the perspective of a penetration tester or security/network administrator.
 
 ---
 
@@ -443,7 +443,7 @@ The following screenshots are taken from a real Noctis Edge HTML report against 
 
 ![Report Header and Target Summary](Readme/screenshots/01_header.png)
 
-The report opens with target metadata — IP address, active scan profiles, timestamp, and the total number of open ports discovered. This gives the operator an immediate orientation to what was assessed and when, and provides the identifying information needed for inclusion in a pentest deliverable or incident record.
+The report opens with target metadata — hostname, resolved IP, active scan profiles, timestamp, and the total number of open ports discovered. This gives the operator an immediate orientation to what was assessed and when, and provides the identifying information needed for inclusion in a pentest deliverable or incident record.
 
 ---
 
@@ -451,7 +451,15 @@ The report opens with target metadata — IP address, active scan profiles, time
 
 ![Executive Summary risk severity dashboard](Readme/screenshots/02_executive.png)
 
-The executive summary presents a single-glance severity breakdown (Critical / High / Medium / Low / Info). This is the management-facing indicator — immediately answers "how bad is it?" without requiring the reader to parse technical detail. The compliance impact badges below list every regulatory control implicated by the findings (PCI-DSS, SOC2, ISO 27001), making it directly useful for audit preparation and breach-notification triage.
+The executive summary presents a single-glance severity breakdown (Critical / High / Medium / Low / Info). This is the management-facing indicator — immediately answers "how bad is it?" without requiring the reader to parse technical detail.
+
+---
+
+### Compliance Impact
+
+![Compliance impact framework tags](Readme/screenshots/03_compliance.png)
+
+Every finding is automatically mapped to the regulatory controls it implicates — PCI-DSS, SOC2, ISO 27001, and others. This section is directly usable for audit preparation, gap analysis, or breach-notification triage without manual cross-referencing.
 
 ---
 
@@ -459,21 +467,37 @@ The executive summary presents a single-glance severity breakdown (Critical / Hi
 
 ![Services Discovered attack surface inventory](Readme/screenshots/04_services.png)
 
-Every open port is listed with its protocol, service banner, detected product/version, a priority rank, and the number of CVEs mapped to that service. For a penetration tester this is the primary pivot table — it shows where to focus effort. For a network administrator it is a live inventory of exposed services that can be directly compared against an authorised-services baseline or firewall ruleset.
+Every open port is listed with its protocol, service banner, detected product/version, a priority rank, and the number of CVEs mapped to that service. For a penetration tester this is the primary pivot table — it shows where to focus effort. For a network administrator it is a live inventory of exposed services that can be compared against an authorised-services baseline or firewall ruleset.
 
 ---
 
-### Nmap NSE Results & Findings
+### Nmap NSE Results
 
-![Nmap NSE script results and findings](Readme/screenshots/05_nmap.png)
+![Nmap NSE script results](Readme/screenshots/05_nmap.png)
 
-Phase 3 runs targeted Nmap Scripting Engine (NSE) scripts against each service. The scripts executed per port are listed, and any confirmed findings are surfaced here with a severity badge, source tool, and risk score. Findings represent technically confirmed issues — not just matches — backed by actual script output.
+Phase 3 runs targeted Nmap Scripting Engine (NSE) scripts against each service. The scripts executed per port are listed alongside any notable output, feeding directly into the findings below.
+
+---
+
+### Findings — Confirmed Vulnerabilities
+
+![Findings list with severity badges](Readme/screenshots/06_findings.png)
+
+Findings represent technically confirmed issues — not just matches — surfaced from Nikto, Nmap NSE scripts, and curl probes. Each card shows severity badge, source tool, affected port/protocol, and risk score. This scan against localhost produced 24 findings, predominantly informational header and service-disclosure issues.
+
+---
+
+### Findings (continued)
+
+![Findings continued](Readme/screenshots/07_findings2.png)
+
+The findings list continues, with each entry showing the tool that surfaced it, the specific port and protocol, and a risk score. Items flagged `verified` have been confirmed via an active check; `discovered` items are detected but not actively verified.
 
 ---
 
 ### CVE Matches — Vulnerability Intelligence
 
-![CVE matches expandable list](Readme/screenshots/07_cve_matches.png)
+![CVE matches expandable list](Readme/screenshots/08_cve_matches.png)
 
 All CVEs matched to detected services are listed as expandable accordion entries. Each entry shows the CVE ID, vulnerability class, and the service/port it was mapped to. Penetration testers can use this list to prioritise further exploitation attempts; administrators can cross-reference it against their patch management records to identify unpatched exposure.
 
@@ -499,15 +523,15 @@ The CVE test results panel shows the outcome of every active probe run by `--cve
 
 ![Conclusion and execution log](Readme/screenshots/11_conclusion.png)
 
-The AI-generated conclusion paragraph synthesises all findings into a plain-English security posture statement — suitable for inclusion directly into a pentest report's executive summary. Below it, the execution log records every tool invoked, the exact command run, its exit status, and the number of findings it contributed, providing a reproducible evidence chain and chain-of-custody record.
+The AI-generated conclusion paragraph synthesises all findings into a plain-English security posture statement — suitable for inclusion directly into a pentest report's executive summary. Below it, the execution log records every tool invoked, the exact command run, its exit status, and the number of findings it contributed, providing a reproducible evidence chain.
 
 ---
 
-### Tools Used
+### Execution Log (continued)
 
-![Tools used summary](Readme/screenshots/12_tools.png)
+![Execution log detail](Readme/screenshots/12_exec_log.png)
 
-The tools section lists every tool that ran during the assessment. For penetration testers this confirms scope coverage; for administrators and compliance officers it documents which tooling was used so results can be independently reproduced or challenged.
+The full execution log lists every tool command run during the assessment with status and findings count, giving administrators and compliance officers a chain-of-custody record that can be independently reproduced or challenged.
 
 ---
 
