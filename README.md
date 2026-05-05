@@ -409,27 +409,47 @@ After the main scan (and after `--msf-validate` if both are set):
 
 ## In Operation
 
-During a `--cve-test` run, the terminal displays each CVE under test in sequence, showing the method attempted (known-exploit replay from the knowledge base, LLM-generated probe, or both), the individual script verdicts, and the final per-CVE result. The LLM generates executable Python or Bash scripts in real time — the strategy and full source are printed to the terminal before execution so the operator can audit exactly what is being run against the target.
+Noctis Edge ships with a browser-based web UI (`noctis_web.py`) providing point-and-click access to the full scan engine — no terminal required for day-to-day use. Select a target, choose scan profiles and flags, and launch. Live output streams directly into the built-in terminal panel via WebSocket so every tool invocation, LLM decision, and finding is visible in real time.
 
-| CVE test loop — KB replay and LLM script generation | LLM-generated probe script printed before execution |
-|---|---|
-| ![CVE test loop - KB replay](https://github.com/user-attachments/assets/fa832839-50bd-48fc-a598-5679e4e40792) | ![LLM-generated probe script](https://github.com/user-attachments/assets/3bdf1f6f-33c2-4514-be3a-dbfff592e9e3) |
+**Idle — ready to scan**
 
-| LLM script source output | HTML report — executive summary |
-|---|---|
-| ![LLM script source](https://github.com/user-attachments/assets/b8531a5e-4c5f-4992-9e78-56f486951ad1) | ![HTML report executive summary](https://github.com/user-attachments/assets/2f6d2ce6-77c3-4f21-87ce-7c3ac88d7527) |
+![Noctis Edge web UI idle state](Readme/screenshots/webui/webui_01_idle.png)
 
-| Per-attempt verdict breakdown — INCONCLUSIVE and NOT_VULNERABLE results | VULNERABLE detection with false-positive flagging and expanded script view |
-|---|---|
-| ![Per-attempt verdict breakdown](https://github.com/user-attachments/assets/76a25300-696e-45be-b9bd-52cf35599d47) | ![VULNERABLE detection with false-positive check](https://github.com/user-attachments/assets/70e831f8-6496-4f98-83ad-d08ce5bf5698) |
+The interface loads with a clean dark theme. The target field, profile checkboxes (`web`, `external`, `internal_ad`, `api`, `cloud`), and scan flags (`--aggressive`, `--dns-enum`, `--msf-validate`, `--cve-test`, `--unattended`, `--resume`) are immediately accessible. The version badge in the footer always reflects the currently installed release.
 
-| CVE test results panel — remediation guidance |
-|---|
-| ![CVE test results with suggested remediation](https://github.com/user-attachments/assets/7b699ade-ddba-4dde-8134-0aa1746dde6f) |
+---
 
-Noctis Edge enforces thorough reporting and rigorous check verification at every stage of the CVE test cycle. Each attempt is individually labelled with a verdict — `VULNERABLE`, `NOT_VULNERABLE`, or `INCONCLUSIVE` — so operators can trace exactly which probe triggered a finding and which fell short. When a result is flagged as `VULNERABLE`, a false-positive check runs automatically, replaying two independent verification passes and surfacing a warning banner if both return `INCONCLUSIVE`, preventing unconfirmed detections from being reported as confirmed hits. The final CVE test results panel consolidates all attempt verdicts alongside AI-generated remediation guidance, covering immediate mitigations, permanent fixes, and step-by-step verification procedures — giving operators both the evidence trail and the actionable next steps needed to confidently triage and remediate every finding.
+**Configured and ready**
 
-On completion, the HTML report is generated with an executive summary stating the overall security posture, followed by sections covering the service inventory, findings ranked by risk score, CVE matches, validation results, and the LLM-generated conclusion. 
+![Noctis Edge web UI with all profiles and flags selected](Readme/screenshots/webui/webui_02_configured.png)
+
+All five profiles selected alongside `--aggressive`, `--msf-validate`, `--cve-test`, and `--unattended`. The full command string is previewed in the command bar before the scan starts.
+
+---
+
+**Scan running — tool validation and nmap phases**
+
+![Noctis Edge web UI scan running with tool validation output](Readme/screenshots/webui/webui_03_running.png)
+
+On launch, Noctis Edge verifies every tool dependency (`[OK]`) then moves immediately into the nmap discovery pipeline — host discovery, service/version enumeration, and targeted NSE script execution — with live output streaming to the terminal. The **Stop** button is active throughout.
+
+---
+
+**LLM agentic loop — parallel tool execution**
+
+![Noctis Edge web UI LLM iteration loop with 33 findings](Readme/screenshots/webui/webui_04_llm_loop.png)
+
+After the nmap and initial tool phases, the LLM agent takes over. It evaluates all findings so far, selects the next wave of tools, runs them concurrently, and loops up to the configured iteration budget. The iteration header shows the current loop count, elapsed time, and running findings total. `[ LLM ] Deciding next action ...` marks each decision point.
+
+---
+
+**Scan complete — stopped or finished**
+
+![Noctis Edge web UI scan terminated with completion summary](Readme/screenshots/webui/webui_05_complete.png)
+
+When the LLM exhausts its action budget or the operator clicks **Stop**, the terminal prints a completion summary — total actions taken, findings collected, and elapsed time — before the report generator runs. The **Start Scan** button re-enables and the status bar updates. The **Report** button opens the generated HTML report directly in the browser.
+
+On completion, the HTML report is generated with an executive summary stating the overall security posture, followed by sections covering the service inventory, findings ranked by risk score, CVE matches, validation results, and the LLM-generated conclusion.
 
 ---
 
