@@ -519,6 +519,14 @@ The CVE test results panel shows the outcome of every active probe run by `--cve
 
 ---
 
+### CVE Test Results — VULNERABLE Detection
+
+![CVE test results VULNERABLE verdicts](Readme/screenshots/10b_vulnerable.png)
+
+When a CVE is confirmed exploitable, the card is flagged `CONFIRMED_VULNERABLE` (red — multiple independent probes all returned VULNERABLE) or `VULNERABLE (unverified)` (orange — at least one probe returned VULNERABLE but not unanimously confirmed). Both badges indicate active exploitability; the distinction guides the operator on whether manual follow-up is needed to rule out false positives.
+
+---
+
 ### Conclusion & Execution Log
 
 ![Conclusion and execution log](Readme/screenshots/11_conclusion.png)
