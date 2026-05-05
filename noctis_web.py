@@ -230,10 +230,17 @@ def api_start():
         if _running:
             return jsonify({"ok": False, "error": "A scan is already running"}), 409
 
-    profiles = [p for p in data.get("profiles", []) if p in PROFILES] or ["web"]
-    flags    = [f for f, _ in FLAGS if f in data.get("flags", [])]
+    profiles   = [p for p in data.get("profiles", []) if p in PROFILES] or ["web"]
+    flags      = [f for f, _ in FLAGS if f in data.get("flags", [])]
+    session_dir = (data.get("session_dir") or "").strip()
 
     cmd = [PYTHON, "-u", NOCTIS, target] + profiles + flags
+    if session_dir:
+        # Restrict to paths inside BASE_DIR to prevent path traversal
+        resolved_sd = os.path.realpath(session_dir)
+        if not resolved_sd.startswith(os.path.realpath(BASE_DIR) + os.sep):
+            return jsonify({"ok": False, "error": "session_dir outside project directory"}), 403
+        cmd += ["--session-dir", resolved_sd]
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
 
@@ -401,6 +408,36 @@ def api_sessions():
                     reports.append({"path": full, "label": rel})
     reports.sort(key=lambda r: r["label"])
     return jsonify(reports)
+
+
+@app.route("/api/resume-sessions")
+def api_resume_sessions():
+    """List session directories that have a session.json (resumable scans)."""
+    sessions_dir = os.path.join(BASE_DIR, "sessions")
+    sessions = []
+    if os.path.isdir(sessions_dir):
+        for entry in os.scandir(sessions_dir):
+            if not entry.is_dir():
+                continue
+            sf = os.path.join(entry.path, "session.json")
+            if not os.path.isfile(sf):
+                continue
+            try:
+                with open(sf) as fh:
+                    import json as _json
+                    state = _json.load(fh)
+            except Exception:
+                state = {}
+            label = os.path.relpath(entry.path, BASE_DIR)
+            sessions.append({
+                "path":      entry.path,
+                "label":     label,
+                "target":    state.get("target", "unknown"),
+                "phase":     state.get("phase", ""),
+                "timestamp": label.split("_", 1)[-1] if "_" in label else "",
+            })
+    sessions.sort(key=lambda s: s["label"], reverse=True)
+    return jsonify(sessions)
 
 
 @sock.route("/ws")
@@ -681,7 +718,44 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   letter-spacing: 0.04em;
 }
 
-/* ── Report modal ─────────────────────────────────────────────────────── */
+/* ── Report / Resume modals ──────────────────────────────────────────── */
+#resume-modal-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.65);
+  z-index: 200;
+  align-items: center;
+  justify-content: center;
+}
+#resume-modal-overlay.open { display: flex; }
+#resume-modal {
+  background: var(--bg-panel);
+  border: 1px solid #555;
+  border-radius: 5px;
+  padding: 20px 24px;
+  min-width: 420px;
+  max-width: 90vw;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+#resume-modal h2 { font-size: 13px; color: #ff9800; }
+#resume-modal label { font-size: 10px; color: var(--fg-dim); display: block; margin-bottom: 4px; }
+#resume-modal select {
+  width: 100%;
+  background: var(--bg-input);
+  color: var(--fg);
+  border: 1px solid #555;
+  border-radius: var(--radius);
+  padding: 4px 8px;
+  font-family: inherit;
+  font-size: 10px;
+}
+#resume-modal-footer { display: flex; gap: 8px; justify-content: flex-end; }
+#resume-modal-ok     { background: #e65100; color: var(--btn-fg); }
+#resume-modal-cancel { background: var(--bg-input); color: var(--fg); }
+
 #modal-overlay {
   display: none;
   position: fixed;
@@ -794,6 +868,21 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 
 <!-- Status bar -->
 <div id="status-bar"><span id="status-text">Ready</span><span id="version-badge">{{ version }}</span></div>
+
+<!-- Resume modal -->
+<div id="resume-modal-overlay">
+  <div id="resume-modal">
+    <h2>&#9654; Resume Scan — Select Session</h2>
+    <div>
+      <label for="resume-select">Select an interrupted session to resume:</label>
+      <select id="resume-select"><option value="">— loading… —</option></select>
+    </div>
+    <div id="resume-modal-footer">
+      <button id="resume-modal-cancel" onclick="closeResumeModal()">Cancel</button>
+      <button id="resume-modal-ok" onclick="submitResume()">Resume Scan</button>
+    </div>
+  </div>
+</div>
 
 <!-- Report modal -->
 <div id="modal-overlay">
@@ -973,6 +1062,12 @@ function startScan() {
   const profiles = [...document.querySelectorAll('.profile-cb:checked')].map(cb => cb.value);
   const flags    = [...document.querySelectorAll('.flag-cb:checked')].map(cb => cb.value);
 
+  // If --resume is checked, open the session picker first
+  if (flags.includes('--resume')) {
+    openResumeModal();
+    return;
+  }
+
   fetch('/api/start', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
@@ -1039,6 +1134,45 @@ function quickReply(v) {
     if (!d.ok) alert('Could not send: ' + d.error);
   });
 }
+
+/* ── Resume modal ───────────────────────────────────────────────────── */
+function openResumeModal() {
+  document.getElementById('resume-modal-overlay').classList.add('open');
+  fetch('/api/resume-sessions').then(r => r.json()).then(list => {
+    const sel = document.getElementById('resume-select');
+    sel.innerHTML = '<option value="">— select a session —</option>';
+    list.forEach(item => {
+      const opt = document.createElement('option');
+      opt.value = item.path;
+      opt.textContent = item.label + '  [' + item.target + (item.phase ? ' · ' + item.phase : '') + ']';
+      sel.appendChild(opt);
+    });
+  });
+}
+
+function closeResumeModal() {
+  document.getElementById('resume-modal-overlay').classList.remove('open');
+}
+
+function submitResume() {
+  const path = document.getElementById('resume-select').value;
+  if (!path) { alert('Please select a session to resume.'); return; }
+  closeResumeModal();
+  const target   = document.getElementById('target-input').value.trim();
+  const profiles = [...document.querySelectorAll('.profile-cb:checked')].map(cb => cb.value);
+  const flags    = [...document.querySelectorAll('.flag-cb:checked')].map(cb => cb.value);
+  fetch('/api/start', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ target, profiles, flags, session_dir: path }),
+  }).then(r => r.json()).then(d => {
+    if (!d.ok) { status.textContent = 'Error: ' + d.error; alert(d.error); }
+  });
+}
+
+document.getElementById('resume-modal-overlay').addEventListener('click', e => {
+  if (e.target === document.getElementById('resume-modal-overlay')) closeResumeModal();
+});
 
 /* ── Report modal ────────────────────────────────────────────────────── */
 function openReportModal() {

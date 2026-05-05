@@ -5377,7 +5377,7 @@ async def main_async():
     global SAFE_MODE, AIRGAP_MODE, MSF_VALIDATE, CVE_TEST, UNATTENDED, SESSION_FILE
 
     if len(sys.argv) < 2:
-        print("Usage: python3 noctis.py <target> [profile ...] [--resume] [--aggressive] [--dns-enum] [--msf-validate] [--cve-test] [--unattended]")
+        print("Usage: python3 noctis.py <target> [profile ...] [--resume] [--session-dir <path>] [--aggressive] [--dns-enum] [--msf-validate] [--cve-test] [--unattended]")
         print("       python3 noctis.py --report <json_file>")
         print("Profiles (one or more):", ", ".join(PROFILES))
         sys.exit(1)
@@ -5385,12 +5385,20 @@ async def main_async():
     target        = sys.argv[1]
     profile_names: list = []
     resume        = False
+    resume_session_dir: str | None = None
 
-    for arg in sys.argv[2:]:
+    _argv = sys.argv[2:]
+    _i = 0
+    while _i < len(_argv):
+        arg = _argv[_i]
         if arg in PROFILES:
             profile_names.append(arg)
         elif arg == "--resume":
             resume = True
+        elif arg == "--session-dir":
+            if _i + 1 < len(_argv):
+                _i += 1
+                resume_session_dir = _argv[_i]
         elif arg == "--aggressive":
             SAFE_MODE = False
         elif arg == "--dns-enum":
@@ -5401,6 +5409,7 @@ async def main_async():
             CVE_TEST = True
         elif arg == "--unattended":
             UNATTENDED = True
+        _i += 1
 
     # Ensure Ollama is running before we attempt any LLM calls
     if not ensure_ollama_running():
@@ -5434,13 +5443,24 @@ async def main_async():
 
     # Determine session directory
     if resume:
-        session_dir, resume_state = find_latest_session_dir(target)
-        if session_dir:
-            session_id = os.path.basename(session_dir)
+        if resume_session_dir and os.path.isdir(resume_session_dir):
+            # Resume a specific session chosen by the caller (e.g. via Web UI picker)
+            session_dir  = os.path.realpath(resume_session_dir)
+            session_id   = os.path.basename(session_dir)
+            _sf = os.path.join(session_dir, "session.json")
+            try:
+                with open(_sf) as _fh:
+                    resume_state = json.load(_fh)
+            except Exception:
+                resume_state = None
         else:
-            resume_state = None
-            session_id = f"{safe_tgt}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-            session_dir = os.path.join(BASE_DIR, "sessions", session_id)
+            session_dir, resume_state = find_latest_session_dir(target)
+            if session_dir:
+                session_id = os.path.basename(session_dir)
+            else:
+                resume_state = None
+                session_id = f"{safe_tgt}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                session_dir = os.path.join(BASE_DIR, "sessions", session_id)
     else:
         resume_state = None
         session_id = f"{safe_tgt}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
