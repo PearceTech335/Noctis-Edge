@@ -731,6 +731,8 @@ The following are excluded from version control (see `.gitignore`):
 
 **Bash as an alternative to Python in CVE probe scripts** — all three CVE script generation prompts (`_generate_known_exploit_script`, `_generate_cve_test_script`, `_generate_verification_script`) now offer the LLM a choice of Python 3 or bash. Bash rules are provided alongside the existing Python rules: `curl`, `nc`, `openssl`, `grep`, `awk`, `sed`, and `echo` are permitted; `if/fi` blocks, under 25 lines, single quotes. The execution layer already supported bash (`.sh` extension, `bash` runner) — only the prompts were gating Python-only output. The verification script additionally hints the model to consider switching language when the first attempt used the other (`"consider bash if the previous attempt used Python, or vice versa"`), directly diversifying the two independent probes.
 
+**Bug fix: `nxc_smb` / `nxc_ldap` silently blocked in Phase 1** — `nxc_smb` and `nxc_ldap` were present in the `_FAST_PATH` table and accepted by the LLM planner, but were missing from the `KNOWN_TOOLS` set and had no validation case in `validate_action()`. Every SMB and LDAP action printed `[!] Invalid action blocked` and was silently dropped before `nxc` ever ran. Fixed by adding both tools to `KNOWN_TOOLS` and adding the corresponding `validate_action()` branch (requires a dict with a `"host"` key). SMB/LDAP enumeration now executes correctly on Windows and AD targets.
+
 ---
 
 ## What's New in v0.7.5
