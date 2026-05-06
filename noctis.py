@@ -5031,6 +5031,24 @@ def _derive_inconclusive_reason(cve: dict, attempts: list) -> str:
             "Manual verification is recommended.")
 
 
+def _scrub_for_kb(text: str, target_host: str) -> str:
+    """
+    Remove user-specific data before persisting to the CVE knowledge base:
+      - session temp-file paths from Python/shell tracebacks → bare filename
+      - the actual target host/IP → 'TARGET_HOST' placeholder
+    """
+    if not text:
+        return text
+    # Strip absolute paths ending in a cve_tests temp file, keep only the filename
+    text = re.sub(r'/[^ \t\r\n"\'\\]*/cve_tests/(_tmp_[a-f0-9]+\.[a-z]+)', r'\1', text)
+    # Replace the scan target (IP or hostname) wherever it appears
+    if target_host:
+        text = text.replace(target_host, "TARGET_HOST")
+    # Belt-and-braces: strip any remaining /home/* or /root/* absolute paths
+    text = re.sub(r'/(?:home|root)/[^ \t\r\n"\'\\]+', '<path>', text)
+    return text
+
+
 async def run_cve_tests(cve_matches: list, target: str,
                         session_dir: str, kb: dict) -> tuple[list, dict]:
     """
@@ -5145,6 +5163,8 @@ async def run_cve_tests(cve_matches: list, target: str,
             script     = kb_script.get("script", "")
             if not script:
                 continue
+            # Substitute the TARGET_HOST placeholder with the current scan target
+            script = script.replace("TARGET_HOST", target)
             ext        = ".py" if language == "python" else ".sh"
             safe_cve   = re.sub(r"[^a-zA-Z0-9_-]", "_", cve_id)
             script_path = os.path.join(cve_tests_dir, f"{safe_cve}_kb_{kb_idx:02d}{ext}")
@@ -5320,13 +5340,13 @@ async def run_cve_tests(cve_matches: list, target: str,
                     "script_hash":          script_hash,
                     "strategy":             strategy,
                     "language":             language,
-                    "script":               script,
+                    "script":               _scrub_for_kb(script, target),
                     "verdict":              verdict,
                     "runs":                 1,
                     "vulnerable_count":     1 if verdict == "VULNERABLE" else 0,
                     "not_vulnerable_count": 1 if verdict == "NOT_VULNERABLE" else 0,
                     "inconclusive_count":   1 if verdict == "INCONCLUSIVE" else 0,
-                    "output_sample":        output[:400],
+                    "output_sample":        _scrub_for_kb(output[:400], target),
                     "target_context":       f"{cve.get('product', '')} {cve.get('service', '')}".strip(),
                     "tested_at":            datetime.now(timezone.utc).isoformat(),
                 })
