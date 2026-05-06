@@ -3045,6 +3045,7 @@ If no suitable tool exists: {{"actions": []}}"""
 KNOWN_TOOLS = {
     "curl", "nikto", "nikto_cgi", "nuclei", "ffuf",
     "ssh_enum", "rdp_enum", "dns_enum", "mysql_enum", "mssql_enum",
+    "nxc_smb", "nxc_ldap",
 }
 
 BROKEN_TOOL_SIGNALS = [
@@ -3107,6 +3108,9 @@ def validate_action(action):
         return isinstance(args, dict) and "domain" in args
 
     if tool in ("mysql_enum", "mssql_enum"):
+        return isinstance(args, dict) and "host" in args
+
+    if tool in ("nxc_smb", "nxc_ldap"):
         return isinstance(args, dict) and "host" in args
 
     return False
