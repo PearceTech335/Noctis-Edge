@@ -55,15 +55,15 @@ Alongside CVE probes, `tooling_knowledge_base.json` accumulates tooling knowledg
 
 | Item | Size |
 |------|------|
-| Ollama model — `qwen2.5-coder:3b-instruct` (planning + scripts) | ~2.0 GB |
-| Ollama model — `qwen2.5:3b` (report prose) | ~2.0 GB |
+| Ollama model — `gemma3:4b` (planning + report prose) | ~3.3 GB |
+| Ollama model — `qwen2.5-coder:3b-instruct` (CVE + tool scripts) | ~2.0 GB |
 | Nuclei templates | ~1.5 GB |
 | CVE offline database (built by `setup.sh`) | ~3–5 GB |
 | SecLists wordlists (snap) | ~2 GB |
 | Tool binaries + Python venv | ~1 GB |
 | Scan session outputs | Variable |
 
-> **RAM note:** Three-role model split — `qwen2.5-coder:3b-instruct` (~2 GB) for planning and scripts; `qwen2.5:3b` (~2 GB) for report prose (conclusion, attacker perspective, remediation). Models are called sequentially so RAM peaks at one loaded model at a time. 8 GB RAM is sufficient; 16 GB+ recommended.
+> **RAM note:** Two-model split — `gemma3:4b` (~3.3 GB) for planning and report prose; `qwen2.5-coder:3b-instruct` (~2 GB) for CVE and tool scripts. During the main scan loop only one model is active at a time. During `--cve-test`, gemma3 may remain warm via `keep_alive:1h` while qwen2.5-coder generates scripts — peak concurrent RAM is ~5.2 GB. 8 GB RAM is workable; 16 GB recommended.
 
 ---
 
@@ -153,7 +153,7 @@ chmod +x setup.sh
 | apt packages | `nmap`, `curl`, `ffuf`, `hydra`, `ssh-audit`, `dnsenum`, `dnsrecon`, `perl`, `golang-go`, `python3-tk`, and more |
 | SecLists | Wordlists via `snap install seclists` |
 | Nuclei | Go-based template scanner (`~/go/bin/nuclei`) |
-| Ollama | Local LLM server + pulls `qwen2.5-coder:3b-instruct` (planning/scripts) and `qwen2.5:3b` (report prose) |
+| Ollama | Local LLM server + pulls `gemma3:4b` (planning + prose) and `qwen2.5-coder:3b-instruct` (scripts) |
 | Python venv | `.venv/` with `requests`, `jinja2`, `pycryptodome`, `flask`, `flask-sock` |
 | CVE database | Clones `CVE/cve-offline/` and builds `cve-summary.csv` |
 | Offline threat-intel DBs | Downloads EPSS scores (`CVE/epss-scores.csv`) and NVD CVSS data (`CVE/nvd-cvss.csv`) |
@@ -537,10 +537,10 @@ cve_knowledge_base.json           ← cross-engagement CVE test KB (project root
 
 | Constant | Default | Description |
 |----------|---------|-------------|
-| `MODEL` | `qwen2.5-coder:3b-instruct` | Planning, iteration decisions, structured JSON tool selection (`NOCTIS_OLLAMA_MODEL` env var to override) |
+| `MODEL` | `gemma3:4b` | Planning, iteration decisions, structured JSON tool selection (`NOCTIS_OLLAMA_MODEL` env var to override) |
 | `SCRIPT_MODEL` | `qwen2.5-coder:3b-instruct` | CVE exploit scripts, test scripts, verification scripts (`NOCTIS_OLLAMA_SCRIPT_MODEL` env var to override) |
 | `CVE_SCRIPT_MODEL` | *(same as `SCRIPT_MODEL`)* | CVE probe and verification script generation — set `NOCTIS_OLLAMA_CVE_SCRIPT_MODEL` to use a larger model (e.g. `qwen2.5-coder:7b-instruct`) for better strategy pivoting without affecting planning or reporting |
-| `REPORT_MODEL` | `qwen2.5:3b` | Report conclusion, attacker perspective narratives, remediation guidance (`NOCTIS_OLLAMA_REPORT_MODEL` env var to override) |
+| `REPORT_MODEL` | `gemma3:4b` | Report conclusion, attacker perspective narratives, remediation guidance (`NOCTIS_OLLAMA_REPORT_MODEL` env var to override) |
 | `OLLAMA_URL` | `http://localhost:11434/api/generate` | Ollama API endpoint |
 | `MAX_ITERATIONS` | `10` | Max Phase 2 sequential loop iterations |
 | `MAX_PARALLEL_ACTIONS` | `4` | Max concurrent tools in the Phase 1 parallel wave |
@@ -558,6 +558,7 @@ cve_knowledge_base.json           ← cross-engagement CVE test KB (project root
 | `nmap` | Five-phase discovery: full port scan → service/version enumeration → targeted NSE scripts → OS detection → normalisation |
 | `curl` | HTTP probing |
 | `nikto` | Web server vulnerability scanning (bundled in `nikto/`) |
+| `nikto_cgi` | Web server vulnerability scanning with `-C all` — exhaustive CGI directory scan; auto-selected for all HTTP/HTTPS services in the fast-path |
 | `nuclei` | Template-based scanning |
 | `ffuf` | Directory and web fuzzing (rate-limited, auto-calibrated) |
 | `hydra` | Credential brute-forcing (aggressive only) |
@@ -588,8 +589,8 @@ Manual install (if not using `setup.sh`):
 curl -fsSL https://ollama.com/install.sh | sh
 
 # Pull the models:
-ollama pull qwen2.5-coder:3b-instruct      # planning, tool decisions, CVE scripts
-ollama pull qwen2.5:3b                     # report conclusion, attacker perspective, remediation
+ollama pull gemma3:4b                       # planning, tool decisions + report conclusion, attacker perspective, remediation
+ollama pull qwen2.5-coder:3b-instruct      # CVE exploit scripts, verification scripts
 ```
 
 Ollama will be started automatically by `noctis.py` on first use. Three models handle distinct roles — keeping each model in its area of strength:
@@ -598,12 +599,12 @@ Ollama will be started automatically by `noctis.py` on first use. Three models h
 
 | Model | Environment variable | Purpose |
 |-------|---------------------|---------|
-| `qwen2.5-coder:3b-instruct` | `NOCTIS_OLLAMA_MODEL` | Tool selection, scan planning, structured JSON decisions |
+| `gemma3:4b` | `NOCTIS_OLLAMA_MODEL` | Tool selection, scan planning, structured JSON decisions |
 | `qwen2.5-coder:3b-instruct` | `NOCTIS_OLLAMA_SCRIPT_MODEL` | CVE exploit scripts, verification scripts |
 | `qwen2.5-coder:3b-instruct` | `NOCTIS_OLLAMA_CVE_SCRIPT_MODEL` | CVE probe generation — defaults to `SCRIPT_MODEL`; override with a larger model for better iterative pivoting |
-| `qwen2.5:3b` | `NOCTIS_OLLAMA_REPORT_MODEL` | Report conclusion, attacker perspective, remediation guidance |
+| `gemma3:4b` | `NOCTIS_OLLAMA_REPORT_MODEL` | Report conclusion, attacker perspective, remediation guidance |
 
-All three models are ~2 GB each. They are called sequentially (never concurrently), so RAM peaks at one loaded model at a time. Inference is typically 20–90 seconds per call on CPU-only hardware after the initial warm load.
+`gemma3:4b` is ~3.3 GB; `qwen2.5-coder:3b-instruct` is ~2 GB. During the main scan loop only one is active at a time. During `--cve-test`, both may be resident simultaneously (`keep_alive:1h`) — peak combined RAM ~5.2 GB. Inference is typically 20–90 seconds per call on CPU-only hardware after the initial warm load.
 
 ---
 
@@ -721,6 +722,16 @@ The following are excluded from version control (see `.gitignore`):
 ---
 
 ## Version History
+
+## What's New in v0.7.6
+
+**Two-model architecture: `gemma3:4b` for planning and prose, `qwen2.5-coder:3b-instruct` for scripting** — the `MODEL` and `REPORT_MODEL` defaults are now `gemma3:4b` (Q4_K_M, 3.3 GB). `gemma3:4b` offers stronger natural-language reasoning and more coherent narrative generation than `qwen2.5-coder:3b-instruct`, which is better suited to code tasks. `SCRIPT_MODEL` and `CVE_SCRIPT_MODEL` remain `qwen2.5-coder:3b-instruct`. Peak RAM during `--cve-test` is ~5.2 GB if both models are warm simultaneously. Updated: `setup.sh`, `update.sh`, `docker-run.sh`, `docker-compose.yml`.
+
+**`nikto_cgi` auto-selected for all HTTP/HTTPS services** — `nikto_cgi` (runs `nikto -C all`, exhaustive CGI directory scan) is now placed before plain `nikto` in the fast-path table. HTTP and HTTPS services automatically receive `nikto_cgi` instead of plain `nikto` in the Phase 1 parallel wave, ensuring full CGI coverage on every web service without requiring the LLM to explicitly request it.
+
+**Bash as an alternative to Python in CVE probe scripts** — all three CVE script generation prompts (`_generate_known_exploit_script`, `_generate_cve_test_script`, `_generate_verification_script`) now offer the LLM a choice of Python 3 or bash. Bash rules are provided alongside the existing Python rules: `curl`, `nc`, `openssl`, `grep`, `awk`, `sed`, and `echo` are permitted; `if/fi` blocks, under 25 lines, single quotes. The execution layer already supported bash (`.sh` extension, `bash` runner) — only the prompts were gating Python-only output. The verification script additionally hints the model to consider switching language when the first attempt used the other (`"consider bash if the previous attempt used Python, or vice versa"`), directly diversifying the two independent probes.
+
+---
 
 ## What's New in v0.7.5
 
@@ -919,7 +930,8 @@ The HTML report has been comprehensively updated to surface richer, more actiona
 ---
 
 | Version | Date | Changes |
-|---------|------|---------|| **v0.7.5** | May 2026 | CVE test pipeline reverted to sequential execution; stronger LLM strategy-pivot enforcement (BANNED STRATEGIES block, `temperature` 0→0.4, `num_ctx` 2048→4096); neutral example JSON in CVE script prompt; `CVE_SCRIPT_MODEL` constant + `NOCTIS_OLLAMA_CVE_SCRIPT_MODEL` env var; conclusion rebuilt after CVE testing with correct risk posture; conclusion wording fix (zero scanner findings + confirmed CVEs no longer contradictory); `IMMEDIATE REMEDIATION PATH` green bar with LLM-generated 3-step actionable guidance (CVE-specific, `_generate_immediate_remediation()`); `Attacker Gain & Lateral Movement Potential` amber section added inside CVE match Exploitation Details; `attacker_perspective` + `immediate_remediation` written back to CVE match records at scan time and at `--report` re-render time |
+|---------|------|---------|| **v0.7.6** | May 2026 | Two-model architecture: `gemma3:4b` (planning + prose), `qwen2.5-coder:3b-instruct` (scripting); `nikto_cgi` auto-selected for all HTTP/HTTPS services in fast-path; bash permitted alongside Python in all CVE probe script prompts |
+| **v0.7.5** | May 2026 | CVE test pipeline reverted to sequential execution; stronger LLM strategy-pivot enforcement (BANNED STRATEGIES block, `temperature` 0→0.4, `num_ctx` 2048→4096); neutral example JSON in CVE script prompt; `CVE_SCRIPT_MODEL` constant + `NOCTIS_OLLAMA_CVE_SCRIPT_MODEL` env var; conclusion rebuilt after CVE testing with correct risk posture; conclusion wording fix (zero scanner findings + confirmed CVEs no longer contradictory); `IMMEDIATE REMEDIATION PATH` green bar with LLM-generated 3-step actionable guidance (CVE-specific, `_generate_immediate_remediation()`); `Attacker Gain & Lateral Movement Potential` amber section added inside CVE match Exploitation Details; `attacker_perspective` + `immediate_remediation` written back to CVE match records at scan time and at `--report` re-render time |
 | **v0.7.4** | May 2026 | **Improved HTML reporting** — CVE IDs hyperlinked to NVD; real CVSS v3.1/v4.0 scores from offline NVD database; amber EPSS badge with exploitation probability and percentile; "The Fix" green one-liner at top of every CVE card; CWE IDs hyperlinked to cwe.mitre.org; OT orange warning banner + Type column in Services table; EPSS offline DB (`build_epss_db.py`, `CVE/epss-scores.csv`, 330k+ CVEs); NVD CVSS offline DB (`build_nvd_cvss.py`, `CVE/nvd-cvss.csv`, 348k records); NIST CSF 2.0 controls added to all 17 vuln-type compliance mappings; `ot` assessment profile with 15 protocol ports and 20 vendor keywords; Docker EPSS build step + CVE bind mount + entrypoint DB refresh || **v0.7.3** | May 2026 | Three-role model split: `REPORT_MODEL=qwen2.5:3b` for conclusion/attacker-perspective/remediation prose; `MODEL`/`SCRIPT_MODEL` remain `qwen2.5-coder:3b-instruct`; deterministic conclusion anchor built from real finding counts eliminates risk-level hallucination; Polar.sh → Lemon Squeezy license validation migration |
 | **v0.7.2** | May 2026 | HTML report: collapsible Findings and CVE Matches sections with styled expand headers; attacker perspective narrative (LLM-generated threat context) added above remediation in CVE test result cards; Phase 2 script execution parallelised — all LLM-generated probes now run concurrently instead of sequentially, cutting worst-case CVE test time by ~60% |
 | **v0.7.1** | May 2026 | Single-model architecture: `phi4-mini:3.8b` removed, `qwen2.5-coder:3b-instruct` handles all LLM tasks; deterministic fast-path tool selector for all well-known services (SMB, RPC, VMware, MSSQL, SSH, RDP, FTP, LDAP, DNS) eliminates LLM calls for common targets; `keep_alive=1h` per-request + server env-var prevents model eviction between scan phases; `num_ctx` capped at 1024 to reduce KV cache pressure; `format:json` grammar-constrained decoding on all planning calls; model warm-start before scan begins |

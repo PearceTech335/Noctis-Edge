@@ -9,7 +9,7 @@ EPSS exploit-probability scoring, NVD CVSS offline database,
 NIST CSF 2.0 compliance mapping, and OT/ICS asset classification.
 """
 
-VERSION = "v0.7.5"
+VERSION = "v0.7.6"
 
 import asyncio
 import dataclasses
@@ -4669,21 +4669,26 @@ def _generate_known_exploit_script(cve: dict, target: str) -> dict | None:
     if proof:
         guidance += (". " if guidance else "") + f"Proof: {proof}"
 
-    prompt = f"""Write a Python 3 vulnerability test script. Reply with JSON only.
+    prompt = f"""Write a Python 3 or bash vulnerability test script. Reply with JSON only.
 
 CVE: {cve.get('cve_id', '')} on {target}:{cve.get('service', '')}
 Product: {cve.get('product', '')} — {cve.get('summary', '')[:150]}
 {guidance}
 
-### PYTHON RULES:
+### PYTHON RULES (if language=python):
 - USE ONLY: requests, socket, re, and Python standard library.
 - FORBIDDEN: beautifulsoup4, bs4, lxml, or any non-stdlib package.
 - STRUCTURE: Single try/except block. Keep under 30 lines.
 - QUOTES: Use single quotes (') for all strings inside the script to avoid breaking the JSON.
+### BASH RULES (if language=bash):
+- USE ONLY: curl, nc, openssl, grep, awk, sed, echo — standard Ubuntu tools.
+- STRUCTURE: Use if/fi blocks. Keep under 25 lines. No here-docs.
+- QUOTES: Use single quotes (') for strings to avoid breaking the JSON.
+### BOTH:
 - OUTPUT: Script MUST print exactly one of:\n    VERDICT: VULNERABLE\n    VERDICT: NOT_VULNERABLE\n    VERDICT: INCONCLUSIVE
 
 Reply with ONLY this JSON (no markdown, no code fences):
-{{"language": "python", "strategy": "<one sentence>", "script": "import requests\\ntry:\\n  r = requests.get('http://{target}/', timeout=10)\\n  if 'version' in r.text:\\n    print('VERDICT: VULNERABLE')\\n  else:\\n    print('VERDICT: NOT_VULNERABLE')\\nexcept Exception:\\n  print('VERDICT: INCONCLUSIVE')"}}"""
+{{"language": "python", "strategy": "<one sentence>", "script": "import requests\\ntry:\\n  r = requests.get('http://{target}/', timeout=10)\\n  if 'version' in r.text:\\n    print('VERDICT: VULNERABLE')\\n  else:\\n    print('VERDICT: NOT_VULNERABLE')\\nexcept Exception:\\n  print('VERDICT: INCONCLUSIVE')"}}"""  # language may also be "bash"
 
     _t0 = time.monotonic()
     _sp = _Spinner(f"[ LLM ]  Generating known-exploit script for {cve.get('cve_id', 'CVE')} ...").start()
@@ -4758,7 +4763,7 @@ def _generate_cve_test_script(cve: dict, target: str, previous_attempts: list,
             kb_lines.append(f"  Prior script ({s['verdict']}): {s['strategy']}")
     kb_block = ("\nKB techniques (adapt):\n" + "\n".join(kb_lines)) if kb_lines else ""
 
-    prompt = f"""Write a Python 3 vulnerability test script. Reply with JSON only.
+    prompt = f"""Write a Python 3 or bash vulnerability test script. Reply with JSON only.
 
 CVE: {cve.get('cve_id', '')} on {target}:{cve.get('service', '')}
 Product: {cve.get('product', '')} — {cve.get('summary', '')[:150]}
@@ -4766,15 +4771,20 @@ Safe method: {cve.get('safe_validation_method', '')}
 
 ### ATTEMPTS SO FAR:
 {prior_block}{kb_block}{_banned_clause}
-### PYTHON RULES:
+### PYTHON RULES (if language=python):
 - USE ONLY: requests, socket, re, and Python standard library.
 - FORBIDDEN: beautifulsoup4, bs4, lxml, or any non-stdlib package.
 - STRUCTURE: Single try/except block. Keep under 30 lines.
 - QUOTES: Use single quotes (') for all strings inside the script to avoid breaking the JSON.
+### BASH RULES (if language=bash):
+- USE ONLY: curl, nc, openssl, grep, awk, sed, echo — standard Ubuntu tools.
+- STRUCTURE: Use if/fi blocks. Keep under 25 lines. No here-docs.
+- QUOTES: Use single quotes (') for strings to avoid breaking the JSON.
+### BOTH:
 - OUTPUT: Script MUST print exactly one of:\n    VERDICT: VULNERABLE\n    VERDICT: NOT_VULNERABLE\n    VERDICT: INCONCLUSIVE
 
 Reply with ONLY this JSON (no markdown, no code fences):
-{{"language": "python", "strategy": "<one sentence describing your unique approach NOT in the banned list>", "script": "import socket\\ntry:\\n  s = socket.create_connection(('{target}', PORT), timeout=10)\\n  s.send(b'PROBE\\r\\n')\\n  data = s.recv(512)\\n  print('VERDICT: VULNERABLE' if b'SIGNATURE' in data else 'VERDICT: NOT_VULNERABLE')\\n  s.close()\\nexcept Exception:\\n  print('VERDICT: INCONCLUSIVE')"}}"""
+{{"language": "python", "strategy": "<one sentence describing your unique approach NOT in the banned list>", "script": "import socket\\ntry:\\n  s = socket.create_connection(('{target}', PORT), timeout=10)\\n  s.send(b'PROBE\\r\\n')\\n  data = s.recv(512)\\n  print('VERDICT: VULNERABLE' if b'SIGNATURE' in data else 'VERDICT: NOT_VULNERABLE')\\n  s.close()\\nexcept Exception:\\n  print('VERDICT: INCONCLUSIVE')"}}"""  # language may also be "bash"
 
     _t0 = time.monotonic()
     _sp = _Spinner(f"[ LLM ]  Generating test script for {cve.get('cve_id', 'CVE')} ...").start()
@@ -4817,24 +4827,31 @@ def _generate_verification_script(cve: dict, target: str, triggering_attempt: di
     to confirm or deny a VULNERABLE result and reduce false positives.
     Returns {language, strategy, script} or None on failure.
     """
-    prompt = f"""Write a SECOND, INDEPENDENT Python 3 vulnerability verification script. Reply with JSON only.
+    prev_lang = triggering_attempt.get('language', 'python')
+    alt_lang_hint = " (consider bash if the previous attempt used Python, or vice versa)" if prev_lang else ""
+    prompt = f"""Write a SECOND, INDEPENDENT Python 3 or bash vulnerability verification script. Reply with JSON only.
 
 CVE: {cve.get('cve_id', '')} on {target}:{cve.get('service', '')}
 Product: {cve.get('product', '')} — {cve.get('summary', '')[:150]}
 
 ### CONTRAST RULE — MANDATORY:
 The previous test used this strategy: {triggering_attempt.get('strategy', '')}
-DO NOT REUSE THAT LOGIC. Use a different endpoint, different response field, or different protocol.
+DO NOT REUSE THAT LOGIC. Use a different endpoint, different response field, or different protocol.{alt_lang_hint}
 
-### PYTHON RULES:
+### PYTHON RULES (if language=python):
 - USE ONLY: requests, socket, re, and Python standard library.
 - FORBIDDEN: beautifulsoup4, bs4, lxml, or any non-stdlib package.
 - STRUCTURE: Single try/except block. Keep under 30 lines.
 - QUOTES: Use single quotes (') for all strings inside the script to avoid breaking the JSON.
+### BASH RULES (if language=bash):
+- USE ONLY: curl, nc, openssl, grep, awk, sed, echo — standard Ubuntu tools.
+- STRUCTURE: Use if/fi blocks. Keep under 25 lines. No here-docs.
+- QUOTES: Use single quotes (') for strings to avoid breaking the JSON.
+### BOTH:
 - OUTPUT: Script MUST print exactly one of:\n    VERDICT: VULNERABLE\n    VERDICT: NOT_VULNERABLE\n    VERDICT: INCONCLUSIVE
 
 Reply with ONLY this JSON (no markdown, no code fences):
-{{"language": "python", "strategy": "<different strategy>", "script": "import requests\\ntry:\\n  r = requests.get('http://{target}/', timeout=10, headers={{'User-Agent': 'NoctisVerify/1.0'}})\\n  print('VERDICT: VULNERABLE' if 'CUPS' in r.headers.get('Server', '') else 'VERDICT: NOT_VULNERABLE')\\nexcept Exception:\\n  print('VERDICT: INCONCLUSIVE')"}}"""
+{{"language": "python", "strategy": "<different strategy>", "script": "import requests\\ntry:\\n  r = requests.get('http://{target}/', timeout=10, headers={{'User-Agent': 'NoctisVerify/1.0'}})\\n  print('VERDICT: VULNERABLE' if 'CUPS' in r.headers.get('Server', '') else 'VERDICT: NOT_VULNERABLE')\\nexcept Exception:\\n  print('VERDICT: INCONCLUSIVE')"}}"""  # language may also be "bash"
 
     _t0 = time.monotonic()
     _sp = _Spinner("[ LLM ]  Generating verification script ...").start()
