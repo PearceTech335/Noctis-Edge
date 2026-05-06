@@ -84,7 +84,7 @@ OLLAMA_URL     = os.getenv("NOCTIS_OLLAMA_URL", "http://localhost:11434/api/gene
 MODEL            = os.getenv("NOCTIS_OLLAMA_MODEL",            "qwen2.5-coder:3b-instruct")
 SCRIPT_MODEL     = os.getenv("NOCTIS_OLLAMA_SCRIPT_MODEL",     "qwen2.5-coder:3b-instruct")
 CVE_SCRIPT_MODEL = os.getenv("NOCTIS_OLLAMA_CVE_SCRIPT_MODEL", SCRIPT_MODEL)
-REPORT_MODEL     = os.getenv("NOCTIS_OLLAMA_REPORT_MODEL",     "qwen2.5:3b")
+REPORT_MODEL     = os.getenv("NOCTIS_OLLAMA_REPORT_MODEL",     MODEL)
 OLLAMA_TIMEOUT = int(os.getenv("NOCTIS_OLLAMA_TIMEOUT", "180"))   # seconds — generous for cold start; warm calls are fast
 
 # Ollama inference options applied to all planning/decision calls.
@@ -5739,9 +5739,9 @@ def _build_conclusion_with_cve(report: dict, target: str) -> str:
     if vulnerable:
         cve_parts.append(f"{len(vulnerable)} CVE(s) flagged vulnerable (unconfirmed): {', '.join(vulnerable)}")
 
-    if _posture == "minimal":
+    if not _finding_parts:
+        # No scanner findings — anchor entirely on CVE results (or clean bill)
         if cve_parts:
-            # CVEs found but no scanner findings — lead with the CVE result
             anchor = (
                 f"The assessment of {target} identified no scanner findings but CVE testing revealed "
                 + "; ".join(cve_parts)
@@ -6531,6 +6531,11 @@ def _report_from_json(json_path: str):
                 cm["attacker_perspective"] = _tr["attacker_perspective"]
             if "immediate_remediation" not in cm and _tr.get("immediate_remediation"):
                 cm["immediate_remediation"] = _tr["immediate_remediation"]
+
+    # Always rebuild the conclusion from live data so it reflects the fixed logic
+    # (handles the case where scanner found 0 findings but CVEs are confirmed).
+    _regen_target = report.get("target", "unknown")
+    report["conclusion"] = _build_conclusion_with_cve(report, _regen_target)
 
     base      = os.path.splitext(os.path.abspath(json_path))[0]
     html_path = base + ".html"
