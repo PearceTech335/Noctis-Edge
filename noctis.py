@@ -9,7 +9,7 @@ EPSS exploit-probability scoring, NVD CVSS offline database,
 NIST CSF 2.0 compliance mapping, and OT/ICS asset classification.
 """
 
-VERSION = "v0.7.4"
+VERSION = "v0.7.5"
 
 import asyncio
 import dataclasses
@@ -75,13 +75,16 @@ OLLAMA_URL     = os.getenv("NOCTIS_OLLAMA_URL", "http://localhost:11434/api/gene
 #                  qwen2.5-coder is ideal: trained on code/JSON, deterministic at temp=0
 #   SCRIPT_MODEL — Python exploit / verification script generation
 #                  same coder model; keeps code quality high
+#   CVE_SCRIPT_MODEL — CVE exploit/test script generation (may need a larger model than SCRIPT_MODEL
+#                  for reliable multi-attempt strategy pivoting; falls back to SCRIPT_MODEL)
 #   REPORT_MODEL — narrative prose: conclusion, attacker perspective, remediation
 #                  qwen2.5 (base) is better here: general language model produces coherent,
 #                  factually grounded prose without the coder model's tendency to hallucinate
 #                  contradictory natural-language statements
-MODEL          = os.getenv("NOCTIS_OLLAMA_MODEL",        "qwen2.5-coder:3b-instruct")
-SCRIPT_MODEL   = os.getenv("NOCTIS_OLLAMA_SCRIPT_MODEL", "qwen2.5-coder:3b-instruct")
-REPORT_MODEL   = os.getenv("NOCTIS_OLLAMA_REPORT_MODEL", "qwen2.5:3b")
+MODEL            = os.getenv("NOCTIS_OLLAMA_MODEL",            "qwen2.5-coder:3b-instruct")
+SCRIPT_MODEL     = os.getenv("NOCTIS_OLLAMA_SCRIPT_MODEL",     "qwen2.5-coder:3b-instruct")
+CVE_SCRIPT_MODEL = os.getenv("NOCTIS_OLLAMA_CVE_SCRIPT_MODEL", SCRIPT_MODEL)
+REPORT_MODEL     = os.getenv("NOCTIS_OLLAMA_REPORT_MODEL",     "qwen2.5:3b")
 OLLAMA_TIMEOUT = int(os.getenv("NOCTIS_OLLAMA_TIMEOUT", "180"))   # seconds — generous for cold start; warm calls are fast
 
 # Ollama inference options applied to all planning/decision calls.
@@ -606,7 +609,7 @@ def _warmup_models() -> None:
     except Exception:
         _local_models = set()
 
-    for model in set([MODEL, SCRIPT_MODEL]):
+    for model in set([MODEL, SCRIPT_MODEL, CVE_SCRIPT_MODEL]):
         # Pull the model if it is not available locally.
         _model_present = any(
             m == model or m.startswith(model + ":")
@@ -3641,13 +3644,13 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     
     <div style="margin-top:1em;padding-top:1em;border-top:1px solid #333">
 
-      {# The Fix — prominent quick-win remediation at the top of the card #}
-      {% if c.remediation_short %}
+      {# Immediate Remediation Path — prominent quick-win block at the top of the card #}
+      {% if c.immediate_remediation or c.remediation_short %}
       <div style="background:#0d2010;border-left:4px solid #66bb6a;border-radius:0 6px 6px 0;padding:.8em 1em;margin-bottom:1em;display:flex;align-items:flex-start;gap:.7em">
         <span style="color:#66bb6a;font-size:1.1em;flex-shrink:0">&#10003;</span>
-        <div>
-          <strong style="color:#66bb6a;font-size:.88em">THE FIX</strong>
-          <div style="color:#c8e6c9;font-size:.9em;margin-top:.2em;line-height:1.5">{{ c.remediation_short }}</div>
+        <div style="width:100%">
+          <strong style="color:#66bb6a;font-size:.88em">IMMEDIATE REMEDIATION PATH</strong>
+          <div style="color:#c8e6c9;font-size:.9em;margin-top:.2em;line-height:1.7;white-space:pre-wrap">{{ c.immediate_remediation or c.remediation_short }}</div>
         </div>
       </div>
       {% endif %}
@@ -3705,6 +3708,13 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           <div><span style="color:#00d4ff">Affected Versions:</span> <code>{{ c.version_range }}</code></div>
           <div style="margin-top:.5em"><span style="color:#00d4ff">Safe Validation Method:</span> <br><em>{{ c.safe_validation_method }}</em></div>
           <div style="margin-top:.5em"><span style="color:#00d4ff">Proof of Impact:</span> <br><em>{{ c.proof_of_impact }}</em></div>
+          {% if c.attacker_perspective %}
+          <div style="margin-top:.9em;padding-top:.8em;border-top:1px solid #1e3a5f">
+            <span style="color:#ffb300;font-weight:600;font-size:.88em">&#9888; Attacker Gain &amp; Lateral Movement Potential</span>
+            <div style="color:#ffe082;font-size:.88em;margin-top:.4em;line-height:1.6;white-space:pre-wrap">{{ c.attacker_perspective }}</div>
+            <div style="color:#5d4037;font-size:.76em;margin-top:.4em;font-style:italic">AI-generated threat narrative — review against current threat intelligence.</div>
+          </div>
+          {% endif %}
         </div>
       </div>
 
@@ -4715,11 +4725,31 @@ def _generate_cve_test_script(cve: dict, target: str, previous_attempts: list,
     Ask the LLM to generate a single safe test script for the given CVE.
     Returns {language, strategy, script} or None on failure.
     """
-    prior_strategies = [
-        f"  - {a['strategy']} → {a['verdict']}"
-        for a in previous_attempts[-5:]  # last 5 only to keep prompt short
-    ]
-    prior_block = "\n".join(prior_strategies) if prior_strategies else "  (none yet)"
+    prior_lines = []
+    banned_strategies = []
+    for i, a in enumerate(previous_attempts[-5:], 1):  # last 5 only to keep prompt short
+        strategy = a['strategy']
+        banned_strategies.append(strategy)
+        line = f"  [{i}] {strategy} → {a['verdict']}"
+        # Include a short output snippet so the LLM sees *why* it failed
+        snippet = (a.get("output") or "").strip()
+        if snippet:
+            # First non-empty line of output, capped at 120 chars
+            first_line = next((l for l in snippet.splitlines() if l.strip()), "")
+            if first_line:
+                line += f"\n      output: {first_line[:120]}"
+        prior_lines.append(line)
+    prior_block = "\n".join(prior_lines) if prior_lines else "  (none — this is attempt 1)"
+
+    # Explicit ban clause: enumerate each failed strategy so a small model can't miss it
+    if banned_strategies:
+        _banned_list = "\n".join(f"  - {s}" for s in banned_strategies)
+        _banned_clause = (
+            f"\n### BANNED STRATEGIES (ALL FAILED — DO NOT REPEAT ANY OF THESE):\n{_banned_list}\n"
+            f"You MUST use a completely different technique that is NOT in the banned list above.\n"
+        )
+    else:
+        _banned_clause = ""
 
     kb_lines = []
     if kb_entry and kb_entry.get("scripts"):
@@ -4734,9 +4764,8 @@ CVE: {cve.get('cve_id', '')} on {target}:{cve.get('service', '')}
 Product: {cve.get('product', '')} — {cve.get('summary', '')[:150]}
 Safe method: {cve.get('safe_validation_method', '')}
 
-### ALREADY TRIED — USE A DIFFERENT APPROACH:
-{prior_block}{kb_block}
-
+### ATTEMPTS SO FAR:
+{prior_block}{kb_block}{_banned_clause}
 ### PYTHON RULES:
 - USE ONLY: requests, socket, re, and Python standard library.
 - FORBIDDEN: beautifulsoup4, bs4, lxml, or any non-stdlib package.
@@ -4745,7 +4774,7 @@ Safe method: {cve.get('safe_validation_method', '')}
 - OUTPUT: Script MUST print exactly one of:\n    VERDICT: VULNERABLE\n    VERDICT: NOT_VULNERABLE\n    VERDICT: INCONCLUSIVE
 
 Reply with ONLY this JSON (no markdown, no code fences):
-{{"language": "python", "strategy": "<one sentence>", "script": "import requests\\ntry:\\n  r = requests.get('http://{target}/', timeout=10)\\n  if 'version' in r.text:\\n    print('VERDICT: VULNERABLE')\\n  else:\\n    print('VERDICT: NOT_VULNERABLE')\\nexcept Exception:\\n  print('VERDICT: INCONCLUSIVE')"}}"""
+{{"language": "python", "strategy": "<one sentence describing your unique approach NOT in the banned list>", "script": "import socket\\ntry:\\n  s = socket.create_connection(('{target}', PORT), timeout=10)\\n  s.send(b'PROBE\\r\\n')\\n  data = s.recv(512)\\n  print('VERDICT: VULNERABLE' if b'SIGNATURE' in data else 'VERDICT: NOT_VULNERABLE')\\n  s.close()\\nexcept Exception:\\n  print('VERDICT: INCONCLUSIVE')"}}"""
 
     _t0 = time.monotonic()
     _sp = _Spinner(f"[ LLM ]  Generating test script for {cve.get('cve_id', 'CVE')} ...").start()
@@ -4755,11 +4784,11 @@ Reply with ONLY this JSON (no markdown, no code fences):
                 resp = requests.post(
                     OLLAMA_URL,
                     json={
-                        "model":      SCRIPT_MODEL,
+                        "model":      CVE_SCRIPT_MODEL,
                         "prompt":     prompt,
                         "stream":     False,
                         "keep_alive": _OLLAMA_KEEP_ALIVE,
-                        "options":    {"num_ctx": 2048, "temperature": 0},
+                        "options":    {"num_ctx": 4096, "temperature": 0.4},
                     },
                     timeout=180,
                 )
@@ -4815,11 +4844,11 @@ Reply with ONLY this JSON (no markdown, no code fences):
                 resp = requests.post(
                     OLLAMA_URL,
                     json={
-                        "model":      SCRIPT_MODEL,
+                        "model":      CVE_SCRIPT_MODEL,
                         "prompt":     prompt,
                         "stream":     False,
                         "keep_alive": _OLLAMA_KEEP_ALIVE,
-                        "options":    {"num_ctx": 2048, "temperature": 0},
+                        "options":    {"num_ctx": 4096, "temperature": 0.4},
                     },
                     timeout=180,
                 )
@@ -5102,6 +5131,7 @@ async def run_cve_tests(cve_matches: list, target: str,
         vulnerable_found     = False
         verification_results: list = []
         verified             = False  # True if ≥1 verifier independently confirms VULNERABLE
+        kb_pending_vulnerable: list = []  # VULNERABLE scripts deferred until Phase 3 confirms
 
         # ------------------------------------------------------------------
         # Phase 0: Targeted known-exploit attempt (implements the documented
@@ -5207,13 +5237,17 @@ async def run_cve_tests(cve_matches: list, target: str,
                 "output":      output[:600],
                 "verdict":     verdict,
             })
+            if vulnerable_found:
+                break  # skip remaining KB scripts; proceed to Phase 3
 
         # ------------------------------------------------------------------
-        # Phase 2: Generate CVE_FRESH_ATTEMPTS new LLM scripts, then run
-        #          all of them concurrently to eliminate sequential wait time.
+        # Phase 2: Generate up to CVE_FRESH_ATTEMPTS new LLM scripts one at
+        #   a time.  After each run, the full result (including output) is
+        #   added to `attempts` before the next script is generated, so the
+        #   LLM sees real feedback — what failed and why — and can adapt.
         # ------------------------------------------------------------------
         if vulnerable_found:
-            print(f"  [Phase 2] VULNERABLE already confirmed — skipping fresh script generation.")
+            print(f"  [Phase 2] VULNERABLE already found — skipping LLM script generation.")
         new_slots   = CVE_FRESH_ATTEMPTS if not vulnerable_found else 0
         done_new    = 0
 
@@ -5223,47 +5257,26 @@ async def run_cve_tests(cve_matches: list, target: str,
         if new_slots > 0 and not _p2_ollama_up:
             print(f"  [Phase 2] Ollama is not reachable — skipping LLM script generation.")
 
-        # ------------------------------------------------------------------
-        # Phase 2a: Generate all scripts sequentially.
-        #   Each call receives the already-planned strategies as PENDING
-        #   attempts so the LLM naturally picks diverse approaches.
-        # ------------------------------------------------------------------
-        staged = []   # list of {language, strategy, script} or None per slot
         for i in range(1, new_slots + 1):
             if not _p2_ollama_up:
-                staged.append(None)
+                # Count the slot as exhausted but don't waste LLM calls
+                done_new += 1
                 continue
-            # Build a synthetic view of already-planned (not yet run) scripts
-            # so the LLM avoids duplicating strategies across slots.
-            planned = [
-                {"strategy": p["strategy"], "verdict": "PENDING"}
-                for p in staged if p is not None
-            ]
-            attempt_num = len(attempts) + 1 + len(staged)
+
+            attempt_num = len(attempts) + 1
             sp = _Spinner(f"[{i:02d}/{new_slots:02d}] Generating script ...").start()
             generated = _generate_cve_test_script(
-                cve, target, attempts + planned, kb_entry, attempt_num
+                cve, target, attempts, kb_entry, attempt_num
             )
             sp.stop(" OK" if generated else " SKIPPED (parse failure)")
-            staged.append(generated)
 
-        # ------------------------------------------------------------------
-        # Phase 2b: Write scripts to disk, then execute all concurrently.
-        # ------------------------------------------------------------------
-        async def _run_staged_script(slot_idx: int, gen: dict | None) -> dict:
-            """Execute one generated script and return a fully-formed attempt record."""
-            attempt_num = len(attempts) + 1 + slot_idx
-            if gen is None:
-                label = "Ollama unavailable" if not _p2_ollama_up else "LLM parse failure"
-                return {
-                    "attempt_num": attempt_num, "source": "llm_generated",
-                    "strategy": label, "language": "", "script": "",
-                    "script_path": "", "output": "", "verdict": "INCONCLUSIVE",
-                    "_gen": None,
-                }
-            language    = gen["language"]
-            strategy    = gen["strategy"]
-            script      = gen["script"]
+            if generated is None:
+                done_new += 1
+                continue
+
+            language    = generated["language"]
+            strategy    = generated["strategy"]
+            script      = generated["script"]
             ext         = ".py" if language == "python" else ".sh"
             safe_cve    = re.sub(r"[^a-zA-Z0-9_-]", "_", cve_id)
             script_path = os.path.join(
@@ -5271,6 +5284,8 @@ async def run_cve_tests(cve_matches: list, target: str,
             )
             with open(script_path, "w", encoding="utf-8") as fh:
                 fh.write(script)
+
+            sp2 = _Spinner(f"[{i:02d}/{new_slots:02d}] Running ({language}) ...").start()
             run_result = await asyncio.get_event_loop().run_in_executor(
                 None, lambda s=script, l=language: _run_script(s, l, cve_tests_dir, timeout=30)
             )
@@ -5281,97 +5296,77 @@ async def run_cve_tests(cve_matches: list, target: str,
                 output = f"[ERROR: {run_result['error']}]\n{output}"
             m       = re.search(r"VERDICT:\s*(VULNERABLE|NOT_VULNERABLE|INCONCLUSIVE)", output)
             verdict = m.group(1) if m else "INCONCLUSIVE"
-            return {
-                "attempt_num": attempt_num, "source": "llm_generated",
-                "strategy": strategy, "language": language, "script": script,
-                "script_path": script_path, "output": output[:600],
-                "verdict": verdict, "_gen": gen,
-            }
-
-        if staged:
-            print(f"  [Phase 2] Running {len(staged)} script(s) concurrently ...")
-            run_records = await asyncio.gather(
-                *[_run_staged_script(slot_idx, gen)
-                  for slot_idx, gen in enumerate(staged)]
-            )
-        else:
-            run_records = []
-
-        # ------------------------------------------------------------------
-        # Phase 2c: Process results in order — update attempts, flags, KB.
-        #   VULNERABLE verdicts are held in kb_pending_vulnerable and only
-        #   written to the KB after Phase 3 verification so that a false
-        #   positive doesn't permanently pollute the knowledge base.
-        # ------------------------------------------------------------------
-        kb_pending_vulnerable = []   # [(gen, script, output, script_hash)] deferred until Phase 3
-
-        for rec in run_records:
-            verdict  = rec["verdict"]
-            strategy = rec["strategy"]
-            language = rec["language"]
-            script   = rec.get("script", "")
-            output   = rec.get("output", "")
-            gen      = rec.pop("_gen", None)  # internal key — strip before storing
+            sp2.stop(f" {verdict}")
 
             verdict_counts[verdict] = verdict_counts.get(verdict, 0) + 1
             if verdict == "VULNERABLE":
                 vulnerable_found = True
-            print(f"  [{rec['attempt_num']:02d}] {strategy[:80]} → {verdict}")
+
+            print(f"  [{attempt_num:02d}] {strategy[:80]} → {verdict}")
+            rec = {
+                "attempt_num": attempt_num, "source": "llm_generated",
+                "strategy": strategy, "language": language, "script": script,
+                "script_path": script_path, "output": output[:600],
+                "verdict": verdict, "_gen": generated,
+            }
             attempts.append(rec)
             done_new += 1
 
-            # Only update KB for scripts that were actually generated
-            if gen is None or not script:
-                continue
+            # Write non-VULNERABLE results to KB immediately; defer VULNERABLE
+            # until Phase 3 confirms (false-positive guard).
+            gen = rec.pop("_gen", None)
+            if gen is not None and script:
+                script_hash = hashlib.sha256(script.encode()).hexdigest()[:16]
+                if cve_id not in kb:
+                    kb[cve_id] = {
+                        "first_tested":   datetime.now(timezone.utc).isoformat(),
+                        "last_tested":    datetime.now(timezone.utc).isoformat(),
+                        "test_count":     0,
+                        "best_verdict":   "INCONCLUSIVE",
+                        "verdict_counts": {"VULNERABLE": 0, "NOT_VULNERABLE": 0, "INCONCLUSIVE": 0},
+                        "scripts":        [],
+                    }
+                entry = kb[cve_id]
+                entry["last_tested"] = datetime.now(timezone.utc).isoformat()
+                entry["test_count"]  = entry.get("test_count", 0) + 1
+                vc = entry.setdefault("verdict_counts",
+                                      {"VULNERABLE": 0, "NOT_VULNERABLE": 0, "INCONCLUSIVE": 0})
 
-            script_hash = hashlib.sha256(script.encode()).hexdigest()[:16]
-            if cve_id not in kb:
-                kb[cve_id] = {
-                    "first_tested":   datetime.now(timezone.utc).isoformat(),
-                    "last_tested":    datetime.now(timezone.utc).isoformat(),
-                    "test_count":     0,
-                    "best_verdict":   "INCONCLUSIVE",
-                    "verdict_counts": {"VULNERABLE": 0, "NOT_VULNERABLE": 0, "INCONCLUSIVE": 0},
-                    "scripts":        [],
-                }
-            entry = kb[cve_id]
-            entry["last_tested"] = datetime.now(timezone.utc).isoformat()
-            entry["test_count"]  = entry.get("test_count", 0) + 1
-            vc = entry.setdefault("verdict_counts", {"VULNERABLE": 0, "NOT_VULNERABLE": 0, "INCONCLUSIVE": 0})
+                if verdict == "VULNERABLE":
+                    kb_pending_vulnerable.append({
+                        "gen": gen, "script": script, "output": output,
+                        "script_hash": script_hash, "strategy": strategy,
+                        "language": language,
+                    })
+                else:
+                    vc[verdict] = vc.get(verdict, 0) + 1
+                    existing_hashes = {s["script_hash"] for s in entry["scripts"]}
+                    if script_hash not in existing_hashes:
+                        entry["scripts"].append({
+                            "script_hash":          script_hash,
+                            "strategy":             strategy,
+                            "language":             language,
+                            "script":               _scrub_for_kb(script, target),
+                            "verdict":              verdict,
+                            "runs":                 1,
+                            "vulnerable_count":     0,
+                            "not_vulnerable_count": 1 if verdict == "NOT_VULNERABLE" else 0,
+                            "inconclusive_count":   1 if verdict == "INCONCLUSIVE" else 0,
+                            "output_sample":        _scrub_for_kb(output[:400], target),
+                            "target_context":       f"{cve.get('product', '')} {cve.get('service', '')}".strip(),
+                            "tested_at":            datetime.now(timezone.utc).isoformat(),
+                        })
+                    _verdict_rank = {"VULNERABLE": 3, "INCONCLUSIVE": 2, "NOT_VULNERABLE": 1}
+                    if _verdict_rank.get(verdict, 0) > _verdict_rank.get(entry["best_verdict"], 0):
+                        entry["best_verdict"] = verdict
 
-            if verdict == "VULNERABLE":
-                # Defer: don't write VULNERABLE into the KB until Phase 3 confirms
-                kb_pending_vulnerable.append({
-                    "gen": gen, "script": script, "output": output,
-                    "script_hash": script_hash, "strategy": strategy,
-                    "language": language,
-                })
-                continue
+            if vulnerable_found:
+                break  # found one — skip remaining slots and go to Phase 3
 
-            vc[verdict] = vc.get(verdict, 0) + 1
-            existing_hashes = {s["script_hash"] for s in entry["scripts"]}
-            if script_hash not in existing_hashes:
-                entry["scripts"].append({
-                    "script_hash":          script_hash,
-                    "strategy":             strategy,
-                    "language":             language,
-                    "script":               _scrub_for_kb(script, target),
-                    "verdict":              verdict,
-                    "runs":                 1,
-                    "vulnerable_count":     1 if verdict == "VULNERABLE" else 0,
-                    "not_vulnerable_count": 1 if verdict == "NOT_VULNERABLE" else 0,
-                    "inconclusive_count":   1 if verdict == "INCONCLUSIVE" else 0,
-                    "output_sample":        _scrub_for_kb(output[:400], target),
-                    "target_context":       f"{cve.get('product', '')} {cve.get('service', '')}".strip(),
-                    "tested_at":            datetime.now(timezone.utc).isoformat(),
-                })
-            _verdict_rank = {"VULNERABLE": 3, "INCONCLUSIVE": 2, "NOT_VULNERABLE": 1}
-            if _verdict_rank.get(verdict, 0) > _verdict_rank.get(entry["best_verdict"], 0):
-                entry["best_verdict"] = verdict
-
+        # ------------------------------------------------------------------
+        # Phase 2c: (removed — results are recorded inline above)
         # ------------------------------------------------------------------
         # Phase 3: False-positive verification — triggered by ANY VULNERABLE
-        # ------------------------------------------------------------------
         if vulnerable_found:
             triggering = next((a for a in attempts if a["verdict"] == "VULNERABLE"), None)
             print(f"\n  [VERIFY] VULNERABLE found — running {CVE_VERIFY_ATTEMPTS} independent verifier(s) ...")
@@ -5593,6 +5588,50 @@ def _generate_attacker_perspective(cve: dict) -> str:
         _sp.stop(f" done ({_fmt_dur(time.monotonic() - _t0)})")
 
 
+def _generate_immediate_remediation(cve: dict) -> str:
+    """
+    Ask the LLM for 3 numbered, CVE-specific steps an operator can take right now
+    to reduce exposure — before a permanent patch is available.
+    Returns plain text (numbered list), or a short fallback on failure.
+    """
+    prompt = (
+        f"You are a security engineer writing the immediate-action section of a penetration test report.\n\n"
+        f"CVE ID:        {cve.get('cve_id', 'Unknown')}\n"
+        f"Description:   {cve.get('summary', '')[:400]}\n"
+        f"Affected:      {cve.get('product', '')} {cve.get('version_range', '')}\n"
+        f"Service:       {cve.get('service', '')}\n"
+        f"Port:          {cve.get('port', '')}\n"
+        f"Vuln type:     {cve.get('vulnerability_type', '')}\n\n"
+        "List exactly 3 numbered steps an operator can take TODAY to reduce exposure for this specific CVE. "
+        "Be concrete and specific — name the exact port, service name, config option, or credential type to act on. "
+        "Do NOT write generic advice like 'apply the vendor patch' or 'follow best practices'. "
+        "Focus on firewall rules, service isolation, config hardening, credential rotation, or access restriction "
+        "that can be completed in under an hour without a full upgrade. "
+        "Format: '1. <action>  2. <action>  3. <action>' — plain text only, no markdown, no bullet symbols."
+    )
+    _t0 = time.monotonic()
+    _sp = _Spinner(f"[ LLM ]  Generating immediate remediation path for {cve.get('cve_id', 'CVE')} ...").start()
+    try:
+        resp = requests.post(
+            OLLAMA_URL,
+            json={
+                "model":      REPORT_MODEL,
+                "prompt":     prompt,
+                "stream":     False,
+                "keep_alive": _OLLAMA_KEEP_ALIVE,
+                "options":    {"num_ctx": 1024, "temperature": 0.2},
+            },
+            timeout=OLLAMA_TIMEOUT,
+        )
+        payload = resp.json()
+        text = payload.get("response", "").strip()
+        return text if text else "Immediate remediation guidance unavailable."
+    except Exception as e:
+        return f"Immediate remediation guidance unavailable ({e})."
+    finally:
+        _sp.stop(f" done ({_fmt_dur(time.monotonic() - _t0)})")
+
+
 def _generate_remediation(cve: dict) -> str:
     """
     Ask the LLM for a concise remediation path for a single confirmed-vulnerable CVE.
@@ -5648,14 +5687,87 @@ def generate_cve_remediations(cve_test_results: list, cve_matches: list) -> None
     if not targets:
         return
 
-    print(f"\n[REMEDIATION] Generating LLM attacker perspective + remediation for "
+    print(f"\n[REMEDIATION] Generating LLM immediate remediation + attacker perspective + remediation for "
           f"{len(targets)} vulnerable CVE(s) ...")
     for result in targets:
         cve_id  = result["cve_id"]
         cve_rec = cve_meta.get(cve_id, {"cve_id": cve_id})
-        result["attacker_perspective"] = _generate_attacker_perspective(cve_rec)
-        result["remediation"] = _generate_remediation(cve_rec)
-        print(f"  [+] Attacker perspective + remediation written for {cve_id}")
+        result["immediate_remediation"] = _generate_immediate_remediation(cve_rec)
+        result["attacker_perspective"]  = _generate_attacker_perspective(cve_rec)
+        result["remediation"]           = _generate_remediation(cve_rec)
+        # Write-back to the cve_match record so the CVE Matches card can also render them
+        if cve_id in cve_meta:
+            cve_meta[cve_id]["immediate_remediation"] = result["immediate_remediation"]
+            cve_meta[cve_id]["attacker_perspective"]  = result["attacker_perspective"]
+        print(f"  [+] Immediate remediation + attacker perspective + remediation written for {cve_id}")
+
+
+def _build_conclusion_with_cve(report: dict, target: str) -> str:
+    """Rebuild the conclusion anchor after CVE test results are available.
+
+    If confirmed/vulnerable CVEs exist the conclusion must reflect that —
+    overwriting the earlier pre-CVE conclusion stored in the report.
+    """
+    counts = report.get("counts", {})
+    _c, _h, _m, _l = (counts.get(k, 0) for k in ("critical", "high", "medium", "low"))
+    _total = _c + _h + _m + _l
+
+    cve_results = report.get("cve_test_results", [])
+    confirmed = [r["cve_id"] for r in cve_results if r.get("overall_verdict") == "CONFIRMED_VULNERABLE"]
+    vulnerable = [r["cve_id"] for r in cve_results if r.get("overall_verdict") == "VULNERABLE"]
+
+    if _c > 0 or confirmed:
+        _posture = "critical"
+    elif _h > 0 or vulnerable:
+        _posture = "high"
+    elif _m > 0:
+        _posture = "medium"
+    elif _l > 0:
+        _posture = "low"
+    else:
+        _posture = "minimal"
+
+    _finding_parts = []
+    if _c: _finding_parts.append(f"{_c} critical")
+    if _h: _finding_parts.append(f"{_h} high")
+    if _m: _finding_parts.append(f"{_m} medium")
+    if _l: _finding_parts.append(f"{_l} low")
+
+    cve_parts = []
+    if confirmed:
+        cve_parts.append(f"{len(confirmed)} CVE(s) confirmed exploitable: {', '.join(confirmed)}")
+    if vulnerable:
+        cve_parts.append(f"{len(vulnerable)} CVE(s) flagged vulnerable (unconfirmed): {', '.join(vulnerable)}")
+
+    if _posture == "minimal":
+        if cve_parts:
+            # CVEs found but no scanner findings — lead with the CVE result
+            anchor = (
+                f"The assessment of {target} identified no scanner findings but CVE testing revealed "
+                + "; ".join(cve_parts)
+                + f", indicating a {_posture_from_cve(confirmed, vulnerable)}-risk exposure requiring immediate attention."
+            )
+        else:
+            anchor = f"The assessment of {target} identified no exploitable findings, indicating a low-risk security posture."
+    else:
+        _finding_str = ", ".join(_finding_parts) + f" (total {_total})"
+        anchor = (
+            f"The assessment of {target} identified {_finding_str} severity findings, "
+            f"indicating a {_posture}-risk security posture that requires immediate attention."
+        )
+        if cve_parts:
+            anchor += " CVE testing identified " + "; ".join(cve_parts) + "."
+
+    return anchor
+
+
+def _posture_from_cve(confirmed: list, vulnerable: list) -> str:
+    """Return posture label driven purely by CVE verdicts (no scanner findings)."""
+    if confirmed:
+        return "critical"
+    if vulnerable:
+        return "high"
+    return "low"
 
 
 async def _run_cve_test_phase(report: dict, target: str, session_dir: str) -> dict:
@@ -6324,6 +6436,8 @@ async def main_async():
 
     if CVE_TEST:
         report = await _run_cve_test_phase(report, target, session_dir)
+        # Regenerate conclusion now that CVE verdicts are known
+        report["conclusion"] = _build_conclusion_with_cve(report, target)
         # Overwrite with updated report containing CVE test results
         with open(json_path, "w") as fh:
             json.dump(report, fh, indent=2, default=str)
@@ -6405,6 +6519,18 @@ def _report_from_json(json_path: str):
     print(f"[*] Loading report from: {json_path}")
     with open(json_path, encoding="utf-8") as fh:
         report = json.load(fh)
+
+    # Back-fill LLM-generated fields from cve_test_results into cve_matches so the
+    # CVE Matches cards render the attacker gain block and immediate remediation path
+    # even when re-rendering from an older JSON that predates those fields.
+    _test_lookup = {r["cve_id"]: r for r in report.get("cve_test_results", []) if r.get("cve_id")}
+    for cm in report.get("cve_matches", []):
+        _tr = _test_lookup.get(cm.get("cve_id", ""))
+        if _tr:
+            if "attacker_perspective" not in cm and _tr.get("attacker_perspective"):
+                cm["attacker_perspective"] = _tr["attacker_perspective"]
+            if "immediate_remediation" not in cm and _tr.get("immediate_remediation"):
+                cm["immediate_remediation"] = _tr["immediate_remediation"]
 
     base      = os.path.splitext(os.path.abspath(json_path))[0]
     html_path = base + ".html"
