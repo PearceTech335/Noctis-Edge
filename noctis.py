@@ -26,7 +26,7 @@ import threading
 import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 if __name__ == "__main__":
@@ -3554,7 +3554,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 </details>
 {% endif %}
 
-<h2>Findings ({{ findings|length }})</h2>
+<h2>Scan Findings ({{ findings|length }})</h2>
 {% if findings %}
 <details style="margin-bottom:1.2em;border:1px solid #1e4a6e;border-radius:6px;background:#0d1b2a">
   <summary style="cursor:pointer;color:#29b6f6;font-size:.92em;font-weight:600;padding:.65em 1em;user-select:none;display:flex;align-items:center;gap:.6em">
@@ -3642,10 +3642,10 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <details style="margin-bottom:1.2em;border:1px solid #1e4a6e;border-radius:6px;background:#0d1b2a">
   <summary style="cursor:pointer;color:#29b6f6;font-size:.92em;font-weight:600;padding:.65em 1em;user-select:none;display:flex;align-items:center;gap:.6em">
     <span>&#9654;</span>
-    <span>{{ cve_matches|length }} CVE match(es) ranked by CVSS score &mdash; click to expand</span>
+    <span>{{ cve_matches|length }} CVE match(es) ranked by exploit probability &mdash; click to expand</span>
   </summary>
   <div style="padding:.5em;margin-bottom:2em">
-  {% for c in cve_matches | sort(attribute='cvss_score', reverse=True) %}
+  {% for c in cve_matches | sort(attribute='epss_score', reverse=True) %}
   <details style="margin-bottom:1.5em;border:1px solid #333;border-radius:6px;padding:1em;background:#16213e">
     <summary style="cursor:pointer;font-weight:600;color:#00d4ff;font-size:1.05em;display:flex;align-items:center;flex-wrap:wrap;gap:.5em">
       <span style="flex:1;min-width:180px"><a href="https://nvd.nist.gov/vuln/detail/{{ c.cve_id }}" target="_blank" style="color:#00d4ff;text-decoration:none" title="View on NVD">{{ c.cve_id }}</a> — {{ c.vulnerability_type }} on {{ c.service }}</span>
@@ -4956,6 +4956,18 @@ def _print_timing(start: float, done: int, total: int) -> None:
     print(f"  Elapsed: {_fmt_dur(elapsed)}  |  ETA: {eta_str}  ({done}/{total} attempts)")
 
 
+def _print_scan_eta(label: str, scan_start: datetime, frac_done: float) -> None:
+    """Print a one-line phase status: current time, elapsed, and estimated completion."""
+    now     = datetime.now()
+    elapsed = (now - scan_start).total_seconds()
+    if frac_done > 0.02:
+        eta = scan_start + timedelta(seconds=elapsed / frac_done)
+        eta_str = eta.strftime("%H:%M:%S")
+    else:
+        eta_str = "calculating…"
+    print(f"[*] ── {label} | Time: {now.strftime('%H:%M:%S')} | Elapsed: {_fmt_dur(elapsed)} | Est. completion: {eta_str}")
+
+
 def _script_score(s: dict) -> float:
     """
     Score a KB script for ranking. Higher = more historically useful.
@@ -6025,6 +6037,7 @@ async def gather_target_info(target: str, available_tools: dict, airgap: bool = 
 
 async def main_async():
     global SAFE_MODE, AIRGAP_MODE, MSF_VALIDATE, CVE_TEST, UNATTENDED, SESSION_FILE
+    scan_start = datetime.now()
 
     if len(sys.argv) < 2:
         print("Usage: python3 noctis.py <target> [profile ...] [--resume] [--session-dir <path>] [--aggressive] [--dns-enum] [--msf-validate] [--cve-test] [--unattended]")
@@ -6164,6 +6177,7 @@ async def main_async():
     print("  Nmap Discovery — 5 Phases")
     print(f"{'=' * 52}")
     services, nmap_meta = run_nmap_discovery(target)
+    _print_scan_eta("Nmap discovery done", scan_start, 0.12)
 
     if not services:
         print("[!] No open services found. Exiting.")
@@ -6275,6 +6289,7 @@ async def main_async():
             scan_records.extend(wave_records)
             phase1_count = sum(r.get("findings_count", 0) for r in wave_records)
             print(f"\n[+] Phase 1 complete — {len(wave_records)} tool(s) run, {phase1_count} finding(s)")
+            _print_scan_eta("Phase 1 done", scan_start, 0.20)
             # Persist KB and refresh context so sequential loop gets updated rates
             _save_tool_kb(tool_kb)
             context["tool_kb_text"] = _tool_kb_summary(tool_kb)
@@ -6293,8 +6308,11 @@ async def main_async():
     _consecutive_dupes = 0
     _MAX_CONSECUTIVE_DUPES = 3  # stop early if model is stuck in a loop
     while i < effective_max:
+        _ifrac = 0.20 + (i / max(effective_max, 1)) * 0.50
+        _ielap = (datetime.now() - scan_start).total_seconds()
+        _ieta  = (scan_start + timedelta(seconds=_ielap / _ifrac)).strftime("%H:%M") if _ifrac > 0.02 else "…"
         print(f"\n{'=' * 52}")
-        print(f"  Iteration {i + 1} / {effective_max}  |  Target: {target}  |  Elapsed: {_fmt_dur(time.monotonic() - loop_start)}")
+        print(f"  Iteration {i + 1} / {effective_max}  |  Target: {target}  |  Elapsed: {_fmt_dur(time.monotonic() - loop_start)}  |  Est. completion: {_ieta}")
         print(f"{'=' * 52}")
         if broken_tools:
             print(f"  Disabled : {', '.join(sorted(broken_tools))}")
@@ -6441,6 +6459,7 @@ async def main_async():
     print(f"[+] {len(all_findings)} total findings collected")
     print(f"[+] Total scan time: {_fmt_dur(time.monotonic() - loop_start)}")
     print(f"{'=' * 52}")
+    _print_scan_eta("Iterations complete", scan_start, 0.70)
 
     report = generate_report(target, services, all_findings, scan_records, profile_name, target_info=target_info)
     # Attach nmap discovery metadata for report consumers and the HTML renderer
@@ -6463,7 +6482,9 @@ async def main_async():
     })
 
     if MSF_VALIDATE:
+        _print_scan_eta("MSF validation starting", scan_start, 0.70)
         report = await run_msf_validation(report, target, session_dir, available_tools)
+        _print_scan_eta("MSF validation done", scan_start, 0.85 if CVE_TEST else 0.93)
 
     json_path = os.path.join(session_dir, f"report_{safe_tgt}.json")
     html_path = os.path.join(session_dir, f"report_{safe_tgt}.html")
@@ -6477,8 +6498,10 @@ async def main_async():
     with open(html_path, "w") as fh:
         fh.write(html_content)
     print(f"[+] HTML report → {html_path}")
+    _print_scan_eta("Base reports saved", scan_start, 0.70 if CVE_TEST else (0.85 if MSF_VALIDATE else 0.97))
 
     if CVE_TEST:
+        _print_scan_eta("CVE testing starting", scan_start, 0.85 if MSF_VALIDATE else 0.70)
         report = await _run_cve_test_phase(report, target, session_dir)
         # Regenerate conclusion now that CVE verdicts are known
         report["conclusion"] = _build_conclusion_with_cve(report, target)
@@ -6489,6 +6512,7 @@ async def main_async():
         with open(html_path, "w") as fh:
             fh.write(html_content)
         print(f"[+] Reports updated with CVE test results")
+        _print_scan_eta("CVE testing done", scan_start, 0.97)
 
     # Console summary
     print(f"\n{'=' * 52}")
