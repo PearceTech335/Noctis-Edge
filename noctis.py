@@ -5299,7 +5299,12 @@ async def run_cve_tests(cve_matches: list, target: str,
 
         # ------------------------------------------------------------------
         # Phase 2c: Process results in order — update attempts, flags, KB.
+        #   VULNERABLE verdicts are held in kb_pending_vulnerable and only
+        #   written to the KB after Phase 3 verification so that a false
+        #   positive doesn't permanently pollute the knowledge base.
         # ------------------------------------------------------------------
+        kb_pending_vulnerable = []   # [(gen, script, output, script_hash)] deferred until Phase 3
+
         for rec in run_records:
             verdict  = rec["verdict"]
             strategy = rec["strategy"]
@@ -5333,6 +5338,16 @@ async def run_cve_tests(cve_matches: list, target: str,
             entry["last_tested"] = datetime.now(timezone.utc).isoformat()
             entry["test_count"]  = entry.get("test_count", 0) + 1
             vc = entry.setdefault("verdict_counts", {"VULNERABLE": 0, "NOT_VULNERABLE": 0, "INCONCLUSIVE": 0})
+
+            if verdict == "VULNERABLE":
+                # Defer: don't write VULNERABLE into the KB until Phase 3 confirms
+                kb_pending_vulnerable.append({
+                    "gen": gen, "script": script, "output": output,
+                    "script_hash": script_hash, "strategy": strategy,
+                    "language": language,
+                })
+                continue
+
             vc[verdict] = vc.get(verdict, 0) + 1
             existing_hashes = {s["script_hash"] for s in entry["scripts"]}
             if script_hash not in existing_hashes:
@@ -5423,6 +5438,49 @@ async def run_cve_tests(cve_matches: list, target: str,
             else:
                 print(f"  [VERIFY] UNCONFIRMED — possible false positive "
                       f"({verify_confirmed}/{CVE_VERIFY_ATTEMPTS} verifiers agree)")
+
+        # ------------------------------------------------------------------
+        # Flush deferred VULNERABLE KB entries — now that we know whether
+        # Phase 3 confirmed them, write the correct verdict into the KB.
+        # Unconfirmed false positives are downgraded to INCONCLUSIVE so the
+        # KB doesn't accumulate noise from bad concurrent guesses.
+        # ------------------------------------------------------------------
+        if kb_pending_vulnerable:
+            kb_write_verdict = "VULNERABLE" if verified else "INCONCLUSIVE"
+            if not verified and kb_pending_vulnerable:
+                print(f"  [KB] Downgrading {len(kb_pending_vulnerable)} VULNERABLE "
+                      f"pending entry/entries to INCONCLUSIVE (false-positive guard)")
+            entry = kb.setdefault(cve_id, {
+                "first_tested":   datetime.now(timezone.utc).isoformat(),
+                "last_tested":    datetime.now(timezone.utc).isoformat(),
+                "test_count":     0,
+                "best_verdict":   "INCONCLUSIVE",
+                "verdict_counts": {"VULNERABLE": 0, "NOT_VULNERABLE": 0, "INCONCLUSIVE": 0},
+                "scripts":        [],
+            })
+            vc = entry.setdefault("verdict_counts", {"VULNERABLE": 0, "NOT_VULNERABLE": 0, "INCONCLUSIVE": 0})
+            existing_hashes = {s["script_hash"] for s in entry["scripts"]}
+            for pend in kb_pending_vulnerable:
+                vc[kb_write_verdict] = vc.get(kb_write_verdict, 0) + 1
+                if pend["script_hash"] not in existing_hashes:
+                    entry["scripts"].append({
+                        "script_hash":          pend["script_hash"],
+                        "strategy":             pend["strategy"],
+                        "language":             pend["language"],
+                        "script":               _scrub_for_kb(pend["script"], target),
+                        "verdict":              kb_write_verdict,
+                        "runs":                 1,
+                        "vulnerable_count":     1 if kb_write_verdict == "VULNERABLE" else 0,
+                        "not_vulnerable_count": 0,
+                        "inconclusive_count":   1 if kb_write_verdict == "INCONCLUSIVE" else 0,
+                        "output_sample":        _scrub_for_kb(pend["output"][:400], target),
+                        "target_context":       f"{cve.get('product', '')} {cve.get('service', '')}".strip(),
+                        "tested_at":            datetime.now(timezone.utc).isoformat(),
+                    })
+                    existing_hashes.add(pend["script_hash"])
+            _verdict_rank = {"VULNERABLE": 3, "INCONCLUSIVE": 2, "NOT_VULNERABLE": 1}
+            if _verdict_rank.get(kb_write_verdict, 0) > _verdict_rank.get(entry["best_verdict"], 0):
+                entry["best_verdict"] = kb_write_verdict
 
         # ------------------------------------------------------------------
         # Overall verdict
