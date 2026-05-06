@@ -78,13 +78,13 @@ OLLAMA_URL     = os.getenv("NOCTIS_OLLAMA_URL", "http://localhost:11434/api/gene
 #   CVE_SCRIPT_MODEL — CVE exploit/test script generation (may need a larger model than SCRIPT_MODEL
 #                  for reliable multi-attempt strategy pivoting; falls back to SCRIPT_MODEL)
 #   REPORT_MODEL — narrative prose: conclusion, attacker perspective, remediation
-#                  qwen2.5 (base) is better here: general language model produces coherent,
-#                  factually grounded prose without the coder model's tendency to hallucinate
-#                  contradictory natural-language statements
-MODEL            = os.getenv("NOCTIS_OLLAMA_MODEL",            "qwen2.5-coder:3b-instruct")
+#                  gemma3:4b is better here: strong natural-language reasoning produces coherent,
+#                  factually grounded prose; qwen2.5-coder tends to produce terse or contradictory
+#                  narrative for non-code tasks
+MODEL            = os.getenv("NOCTIS_OLLAMA_MODEL",            "gemma3:4b")
 SCRIPT_MODEL     = os.getenv("NOCTIS_OLLAMA_SCRIPT_MODEL",     "qwen2.5-coder:3b-instruct")
 CVE_SCRIPT_MODEL = os.getenv("NOCTIS_OLLAMA_CVE_SCRIPT_MODEL", SCRIPT_MODEL)
-REPORT_MODEL     = os.getenv("NOCTIS_OLLAMA_REPORT_MODEL",     MODEL)
+REPORT_MODEL     = os.getenv("NOCTIS_OLLAMA_REPORT_MODEL",     "gemma3:4b")
 OLLAMA_TIMEOUT = int(os.getenv("NOCTIS_OLLAMA_TIMEOUT", "180"))   # seconds — generous for cold start; warm calls are fast
 
 # Ollama inference options applied to all planning/decision calls.
