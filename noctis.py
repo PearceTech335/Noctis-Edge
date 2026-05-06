@@ -4174,7 +4174,7 @@ def _save_cve_kb(kb: dict):
 # TOOL KNOWLEDGE BASE — persistent performance tracking per tool per service
 # ---------------------------------------------------------------------------
 
-# Canonical service key map — nmap service names → normalised keys used in KB
+# Canonical service key map — nmap service names → normalised protocol labels used in KB
 _SVC_KEY_MAP: dict = {
     "http":          "http",
     "ssl/http":      "https",
@@ -4218,13 +4218,131 @@ _TOOL_SVC_FALLBACK: dict = {
     "nxc":       "smb",
 }
 
+# nmap product string → short canonical product label.
+# Longest matching prefix wins (sort by length descending at build time).
+_PRODUCT_LABEL_MAP: dict = {
+    # HTTP servers
+    "apache":                  "apache",
+    "nginx":                   "nginx",
+    "microsoft-iis":           "iis",
+    "microsoft iis":           "iis",
+    "lighttpd":                "lighttpd",
+    "cherokee":                "cherokee",
+    "caddy":                   "caddy",
+    "traefik":                 "traefik",
+    "tomcat":                  "tomcat",
+    "jetty":                   "jetty",
+    "gunicorn":                "gunicorn",
+    "uvicorn":                 "uvicorn",
+    "uwsgi":                   "uwsgi",
+    "werkzeug":                "werkzeug",
+    "node.js":                 "nodejs",
+    "node":                    "nodejs",
+    "express":                 "express",
+    "flask":                   "flask",
+    "django":                  "django",
+    "ollama":                  "ollama",
+    "grafana":                 "grafana",
+    "kibana":                  "kibana",
+    "elasticsearch":           "elasticsearch",
+    "jenkins":                 "jenkins",
+    "jira":                    "jira",
+    "confluence":              "confluence",
+    "sonarqube":               "sonarqube",
+    "gitea":                   "gitea",
+    "gitlab":                  "gitlab",
+    "harbor":                  "harbor",
+    "keycloak":                "keycloak",
+    "roundcube":               "roundcube",
+    # SSH
+    "openssh":                 "openssh",
+    "dropbear":                "dropbear",
+    "bitvise":                 "bitvise-ssh",
+    # RDP / VNC
+    "microsoft terminal":      "windows-rdp",
+    "microsoft windows rdp":   "windows-rdp",
+    "xrdp":                    "xrdp",
+    "realvnc":                 "realvnc",
+    "tigervnc":                "tigervnc",
+    "tightvnc":                "tightvnc",
+    "vnc":                     "vnc",
+    # Databases
+    "mysql":                   "mysql",
+    "mariadb":                 "mariadb",
+    "postgresql":              "postgresql",
+    "microsoft sql server":    "mssql",
+    "microsoft sql":           "mssql",
+    "redis":                   "redis",
+    "mongodb":                 "mongodb",
+    "couchdb":                 "couchdb",
+    "cassandra":               "cassandra",
+    "influxdb":                "influxdb",
+    # FTP
+    "vsftpd":                  "vsftpd",
+    "proftpd":                 "proftpd",
+    "filezilla":               "filezilla-ftp",
+    "pure-ftpd":               "pure-ftpd",
+    # SMTP
+    "postfix":                 "postfix",
+    "exim":                    "exim",
+    "sendmail":                "sendmail",
+    "microsoft exchange":      "exchange",
+    "microsoft esmtp":         "exchange",
+    "hmail":                   "hmail",
+    "dovecot":                 "dovecot",
+    # SMB / AD
+    "samba":                   "samba",
+    "microsoft windows smb":   "windows-smb",
+    "microsoft smb":           "windows-smb",
+    # DNS
+    "bind":                    "bind",
+    "dnsmasq":                 "dnsmasq",
+    "microsoft dns":           "windows-dns",
+    "powerdns":                "powerdns",
+    # Printing
+    "cups":                    "cups",
+    # SNMP
+    "net-snmp":                "net-snmp",
+    "snmpd":                   "snmpd",
+    # Other
+    "openssl":                 "",    # Not a product; will fall back to service label
+    "telnetd":                 "telnetd",
+}
+# Pre-sort by key length descending so longest prefix wins
+_PRODUCT_LABEL_MAP = dict(
+    sorted(_PRODUCT_LABEL_MAP.items(), key=lambda kv: -len(kv[0]))
+)
+
+
+def _normalize_product(product: str) -> str:
+    """Normalize an nmap product string to a short lowercase identifier.
+
+    Returns an empty string when the product is unknown or uninformative,
+    in which case the caller should fall back to the bare service label.
+    """
+    if not product:
+        return ""
+    p = product.lower().strip()
+    # Strip trailing noise: version numbers, parenthetical OS qualifiers
+    p = re.sub(r'\s*\([^)]*\)\s*$', '', p)   # e.g. "(Ubuntu)"
+    p = re.sub(r'[\s/]\d[\d.]*.*$', '', p)    # e.g. " 2.4.51"
+    p = p.strip()
+    for prefix, label in _PRODUCT_LABEL_MAP.items():
+        if p.startswith(prefix):
+            return label
+    # Generic normalisation: lower, collapse whitespace → hyphens, cap length
+    p = re.sub(r'\s+', '-', p)
+    return p[:24] if p else ""
+
 
 def _svc_key(tool: str, args, services: list) -> str:
-    """Derive a port-qualified service key (e.g. '631/ipp', '443/https') from action + context.
+    """Derive a product-qualified service key from action context.
 
-    Format: "<port>/<service>" when a matched service is found, otherwise the tool's
-    fallback service name (e.g. 'http', 'ssh'). Port-qualified keys let the KB track
-    success rates per specific open port rather than just per protocol family.
+    Format: "<product>/<protocol>" when the server software is known
+    (e.g. "nginx/http", "openssh/ssh", "mssql/mssql"), otherwise just the
+    protocol label (e.g. "http", "ssh").  Port numbers are intentionally
+    excluded — the KB tracks *what works against which infrastructure*, not
+    against which port number a service happened to run on during one scan.
     """
     if tool in _TOOL_SVC_DIRECT:
         return _TOOL_SVC_DIRECT[tool]
@@ -4241,24 +4359,78 @@ def _svc_key(tool: str, args, services: list) -> str:
         port = port_m.group(1)
         for svc in services:
             if str(svc.get("port", "")) == port:
-                raw       = svc.get("name", "").lower()
-                normalised = _SVC_KEY_MAP.get(raw, raw.split("/")[-1] or "unknown")
-                return f"{port}/{normalised}"
+                raw        = svc.get("name", "").lower()
+                protocol   = _SVC_KEY_MAP.get(raw, raw.split("/")[-1] or "unknown")
+                product    = _normalize_product(svc.get("product", ""))
+                if product:
+                    return f"{product}/{protocol}"
+                return protocol
 
-    # No port match — fall back to service-type only
+    # No port match — fall back to tool's default service type
     return _TOOL_SVC_FALLBACK.get(tool, "unknown")
 
 
+_PORT_KEY_RE = re.compile(r'^\d+/(.+)$')
+
+
+def _migrate_tool_kb_v1(kb: dict) -> dict:
+    """Migrate v1 port-keyed entries (e.g. '5000/http') to bare service labels ('http').
+
+    Entries with the same post-migration key are merged by summing counters and
+    recalculating derived rates.  The migrated KB is written back to disk immediately.
+    """
+    changed = False
+    for tool, svcs in list(kb.items()):
+        if tool.startswith("_") or not isinstance(svcs, dict):
+            continue
+        merged: dict = {}
+        for key, stats in svcs.items():
+            m = _PORT_KEY_RE.match(key)
+            new_key = m.group(1) if m else key
+            if new_key not in merged:
+                merged[new_key] = dict(stats)
+            else:
+                # Merge: sum counters, recalculate rates
+                slot = merged[new_key]
+                slot["runs"]             = slot.get("runs", 0)             + stats.get("runs", 0)
+                slot["findings_yielded"] = slot.get("findings_yielded", 0) + stats.get("findings_yielded", 0)
+                slot["total_findings"]   = slot.get("total_findings", 0)   + stats.get("total_findings", 0)
+                slot["broken_count"]     = slot.get("broken_count", 0)     + stats.get("broken_count", 0)
+                slot["timed_out_count"]  = slot.get("timed_out_count", 0)  + stats.get("timed_out_count", 0)
+                runs = slot["runs"]
+                slot["success_rate"]         = round(slot["findings_yielded"] / runs, 3) if runs else 0.0
+                slot["avg_findings_per_run"] = round(slot["total_findings"]   / runs, 2) if runs else 0.0
+                # Keep the most recent last_run
+                if stats.get("last_run", "") > slot.get("last_run", ""):
+                    slot["last_run"] = stats["last_run"]
+            if new_key != key:
+                changed = True
+        kb[tool] = merged
+    if changed:
+        kb.setdefault("_meta", {})["version"] = 2
+        print("[*] Tool KB migrated from v1 (port-keyed) to v2 (product/service-keyed)")
+    return kb
+
+
 def _load_tool_kb() -> dict:
-    """Load the persistent tool knowledge base, returning seed dict on missing/corrupt file."""
+    """Load the persistent tool knowledge base, returning seed dict on missing/corrupt file.
+
+    Automatically migrates v1 port-keyed entries (e.g. '5000/http') to the v2
+    product/service scheme (e.g. 'nginx/http' or bare 'http') on first load.
+    """
     if not os.path.exists(TOOL_KB_PATH):
-        return {"_meta": {"version": 1}}
+        return {"_meta": {"version": 2}}
     try:
         with open(TOOL_KB_PATH, "r", encoding="utf-8") as fh:
-            return json.load(fh)
+            kb = json.load(fh)
     except Exception as e:
         print(f"[!] Tool KB load error ({e}) — starting with empty KB.")
-        return {"_meta": {"version": 1}}
+        return {"_meta": {"version": 2}}
+    # Migrate v1 → v2 if needed
+    if kb.get("_meta", {}).get("version", 1) < 2:
+        kb = _migrate_tool_kb_v1(kb)
+        _save_tool_kb(kb)
+    return kb
 
 
 def _save_tool_kb(kb: dict):
@@ -4343,9 +4515,9 @@ def _tool_kb_summary(tool_kb: dict) -> str:
         )
         svc_lines.append(f"  {svc:16} → {entries}")
 
-    blocks = ["TOOL KB — per-tool success rates (port/service, prior scans):"]
+    blocks = ["TOOL KB — per-tool success rates (product/service, prior scans):"]
     blocks += tool_lines
-    blocks += ["", "TOOL KB — best tools per open port/service:"]
+    blocks += ["", "TOOL KB — best tools per service/infrastructure type:"]
     blocks += svc_lines
     return "\n".join(blocks)
 

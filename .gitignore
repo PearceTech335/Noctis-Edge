@@ -48,6 +48,7 @@ ForYouToDo.md
 .codex
 .noctis_config.example
 cloudflare/PAID_TIER_PLAN.md
+generate_kb_scripts.py
 
 # IDE / tool config
 .continue/
