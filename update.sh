@@ -67,6 +67,65 @@ sudo apt autoremove -y   || true
 ok "apt done"
 
 # =============================================================================
+# 1b. Additional tools — amass, NetExec (nxc)
+#     Mirrors the fixed logic in setup.sh so reinstalls / fresh VMs get the
+#     same correct behaviour from update.sh.
+# =============================================================================
+header "1b  Additional tools (amass, NetExec)"
+
+# Ensure go/bin and pipx bin are findable for this session
+export PATH="$PATH:$HOME/go/bin:$HOME/.local/bin"
+
+info "Checking amass ..."
+if command -v amass &>/dev/null; then
+    if command -v go &>/dev/null; then
+        info "Updating amass via go install ..."
+        go install -v github.com/owasp-amass/amass/v4/cmd/amass@latest 2>/dev/null \
+            && ok "amass updated" \
+            || err "amass update failed — continuing"
+    else
+        ok "amass already installed ($(command -v amass)) — skipping go update (go not found)"
+    fi
+else
+    if sudo apt install -y amass 2>/dev/null; then
+        ok "amass installed via apt"
+    elif command -v snap &>/dev/null && sudo snap install amass 2>/dev/null; then
+        ok "amass installed via snap"
+    elif command -v go &>/dev/null; then
+        go install -v github.com/owasp-amass/amass/v4/cmd/amass@latest 2>/dev/null \
+            && ok "amass installed via go install" \
+            || err "amass could not be installed — external recon profile will run without it"
+    else
+        err "amass not found and go is not installed — external recon profile will run without it"
+    fi
+fi
+
+info "Checking NetExec (nxc) ..."
+if command -v nxc &>/dev/null; then
+    pipx upgrade netexec 2>/dev/null \
+        && ok "nxc updated via pipx" \
+        || { ok "nxc already up to date (pipx upgrade skipped — not a pipx install)"; }
+else
+    if sudo apt install -y netexec 2>/dev/null && command -v nxc &>/dev/null; then
+        ok "NetExec installed via apt"
+    else
+        info "Using pipx to install NetExec ..."
+        sudo apt install -y libkrb5-dev 2>/dev/null || true
+        if ! sudo apt install -y pipx 2>/dev/null; then
+            python3 -m pip install pipx --break-system-packages 2>/dev/null \
+                || python3 -m pip install pipx 2>/dev/null || true
+        fi
+        export PATH="$HOME/.local/bin:$PATH"
+        pipx ensurepath 2>/dev/null || true
+        if pipx install netexec 2>/dev/null || pipx install "git+https://github.com/Pennyw0rth/NetExec" 2>/dev/null; then
+            ok "NetExec installed via pipx (~/.local/bin/nxc)"
+        else
+            err "NetExec (nxc) could not be installed — internal_ad profile will not function"
+        fi
+    fi
+fi
+
+# =============================================================================
 # 2. snap — SecLists
 # =============================================================================
 header "2/10  Snap packages (seclists)"

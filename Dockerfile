@@ -39,6 +39,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         wget \
         tar \
+        gnupg \
         # Required by some Perl modules
         libssl-dev \
     && rm -rf /var/lib/apt/lists/*
@@ -50,7 +51,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # ---------------------------------------------------------------------------
 ENV GOROOT=/usr/local/go
 ENV GOPATH=/root/go
-ENV PATH=$PATH:/usr/local/go/bin:/root/go/bin
+ENV PATH=$PATH:/usr/local/go/bin:/root/go/bin:/root/.local/bin
 
 ARG GO_VERSION=1.26.2
 RUN ARCH=$(dpkg --print-architecture) && \
@@ -70,6 +71,47 @@ RUN go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest && \
 
 # Pre-fetch Nuclei templates so the first scan doesn't need internet
 RUN nuclei -update-templates -silent 2>/dev/null || true
+
+# ---------------------------------------------------------------------------
+# 3b. amass — DNS and attack-surface reconnaissance
+#     Try go install (already have the toolchain); apt fallback for distros
+#     that package it.
+# ---------------------------------------------------------------------------
+RUN go install -v github.com/owasp-amass/amass/v4/cmd/amass@latest 2>/dev/null || \
+    apt-get install -y --no-install-recommends amass 2>/dev/null || \
+    echo "[!] amass could not be installed — external recon profile will run without it"
+
+# ---------------------------------------------------------------------------
+# 3c. NetExec (nxc) — internal Active Directory enumeration
+#     pipx is the only reliable cross-distro install path; try apt first
+#     (available on Ubuntu 23.04+ / Debian 12+), fall back to pip.
+# ---------------------------------------------------------------------------
+RUN apt-get install -y --no-install-recommends libkrb5-dev 2>/dev/null || true
+RUN apt-get install -y --no-install-recommends pipx 2>/dev/null || \
+    pip3 install pipx --break-system-packages 2>/dev/null || \
+    pip3 install pipx 2>/dev/null || true
+RUN pipx ensurepath 2>/dev/null || true && \
+    (pipx install netexec 2>/dev/null || \
+     pipx install "git+https://github.com/Pennyw0rth/NetExec" 2>/dev/null) || \
+    echo "[!] NetExec (nxc) could not be installed — internal_ad profile will not function"
+
+# ---------------------------------------------------------------------------
+# 3d. Metasploit Framework — optional; adds ~2-3 GB to the image.
+#     Enable with:  docker compose build --build-arg INSTALL_MSF=true
+#     Uses the official rapid7 apt repository (works on any Debian/Ubuntu).
+# ---------------------------------------------------------------------------
+ARG INSTALL_MSF=false
+RUN if [ "$INSTALL_MSF" = "true" ]; then \
+        curl -fsSL https://apt.metasploit.com/metasploit-framework.gpg.key \
+            | gpg --dearmor -o /etc/apt/trusted.gpg.d/metasploit.gpg && \
+        echo "deb [signed-by=/etc/apt/trusted.gpg.d/metasploit.gpg] https://apt.metasploit.com/ buster main" \
+            > /etc/apt/sources.list.d/metasploit-framework.list && \
+        apt-get update -qq && \
+        apt-get install -y metasploit-framework && \
+        rm -rf /var/lib/apt/lists/*; \
+    else \
+        echo "[*] Metasploit skipped (build with --build-arg INSTALL_MSF=true to include)"; \
+    fi
 
 # ---------------------------------------------------------------------------
 # 4. Application source

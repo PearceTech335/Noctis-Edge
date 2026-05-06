@@ -244,13 +244,18 @@ else
     if sudo apt install -y netexec 2>/dev/null && command -v nxc &>/dev/null; then
         ok "NetExec installed via apt"
     else
-        # netexec is not on PyPI — install from source via pipx
-        info "Using pipx to install NetExec from GitHub source ..."
-        sudo apt install -y pipx libkrb5-dev 2>/dev/null || true
+        info "Using pipx to install NetExec ..."
+        sudo apt install -y libkrb5-dev 2>/dev/null || true
+        # pipx: apt (Ubuntu 23.04+) or pip fallback for older releases
+        if ! sudo apt install -y pipx 2>/dev/null; then
+            python3 -m pip install pipx --break-system-packages 2>/dev/null \
+                || python3 -m pip install pipx 2>/dev/null || true
+        fi
         # Ensure ~/.local/bin is on PATH for this session and future shells
         export PATH="$HOME/.local/bin:$PATH"
         pipx ensurepath 2>/dev/null || true
-        if pipx install "git+https://github.com/Pennyw0rth/NetExec"; then
+        # Try PyPI package first, fall back to GitHub source
+        if pipx install netexec 2>/dev/null || pipx install "git+https://github.com/Pennyw0rth/NetExec" 2>/dev/null; then
             ok "NetExec installed via pipx (~/.local/bin/nxc)"
         else
             fail "NetExec (nxc) could not be installed — internal_ad profile will not function"
@@ -405,7 +410,7 @@ if [[ "${NO_OPTIONAL:-0}" != "1" ]]; then
         ok "amass installed via snap"
     else
         info "apt/snap failed — trying go install fallback ..."
-        go install github.com/owasp-amass/amass/v4/...@latest 2>/dev/null \
+        go install -v github.com/owasp-amass/amass/v4/cmd/amass@latest 2>/dev/null \
             && ok "amass installed via go install" \
             || skip "amass could not be installed (external recon profile will run without it)"
     fi
@@ -415,20 +420,30 @@ if [[ "${NO_OPTIONAL:-0}" != "1" ]]; then
         if command -v msfconsole &>/dev/null; then
             skip "msfconsole already installed at $(command -v msfconsole)"
         else
-            info "Installing metasploit-framework via apt (Kali / Parrot only) ..."
+            info "Installing metasploit-framework ..."
             if sudo apt install -y metasploit-framework 2>/dev/null; then
                 ok "metasploit-framework installed via apt"
             else
-                info "apt install failed — trying Metasploit nightly installer ..."
-                curl -fsSL https://raw.githubusercontent.com/rapid7/metasploit-omnibus/master/config/templates/metasploit-framework-wrappers/msfupdate.erb \
-                    -o /tmp/msfinstall 2>/dev/null \
-                    && chmod 755 /tmp/msfinstall \
-                    && sudo /tmp/msfinstall \
-                    && ok "metasploit-framework installed via nightly installer" \
-                    || {
-                        skip "metasploit-framework could not be installed automatically"
-                        info "Install manually: https://docs.metasploit.com/docs/using-metasploit/getting-started/nightly-installers.html"
-                    }
+                info "apt package unavailable — adding rapid7 apt repository ..."
+                if curl -fsSL https://apt.metasploit.com/metasploit-framework.gpg.key \
+                       | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/metasploit.gpg 2>/dev/null \
+                    && echo "deb [signed-by=/etc/apt/trusted.gpg.d/metasploit.gpg] https://apt.metasploit.com/ buster main" \
+                       | sudo tee /etc/apt/sources.list.d/metasploit-framework.list >/dev/null \
+                    && sudo apt-get update -qq 2>/dev/null \
+                    && sudo apt-get install -y metasploit-framework 2>/dev/null; then
+                    ok "metasploit-framework installed via rapid7 apt repository"
+                else
+                    info "rapid7 apt repo failed — trying Metasploit nightly installer ..."
+                    curl -fsSL https://raw.githubusercontent.com/rapid7/metasploit-omnibus/master/config/templates/metasploit-framework-wrappers/msfupdate.erb \
+                        -o /tmp/msfinstall 2>/dev/null \
+                        && chmod 755 /tmp/msfinstall \
+                        && sudo /tmp/msfinstall \
+                        && ok "metasploit-framework installed via nightly installer" \
+                        || {
+                            skip "metasploit-framework could not be installed automatically"
+                            info "Install manually: https://docs.metasploit.com/docs/using-metasploit/getting-started/nightly-installers.html"
+                        }
+                fi
             fi
         fi
     else
