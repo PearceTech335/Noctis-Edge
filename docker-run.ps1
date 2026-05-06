@@ -20,8 +20,10 @@
 
 $ErrorActionPreference = "Stop"
 
-$OLLAMA_MODEL = "qwen2.5-coder:3b-instruct"
-$SCRIPT_DIR   = Split-Path -Parent $MyInvocation.MyCommand.Definition
+$OLLAMA_MODEL  = "gemma3:4b"                    # planning + reasoning (NOCTIS_OLLAMA_MODEL)
+$SCRIPT_MODEL  = "qwen2.5-coder:3b-instruct"   # CVE scripts + tool scripts (NOCTIS_OLLAMA_SCRIPT_MODEL)
+$REPORT_MODEL  = "gemma3:4b"                   # narrative prose: conclusion, attacker perspective, remediation (NOCTIS_OLLAMA_REPORT_MODEL)
+$SCRIPT_DIR    = Split-Path -Parent $MyInvocation.MyCommand.Definition
 
 function Write-Header($msg) {
     Write-Host ""
@@ -100,7 +102,7 @@ $waited = 0
 $ready  = $false
 while ($waited -lt 120) {
     try {
-        $result = Invoke-DC @("exec", "ollama", "curl", "-sf", "http://localhost:11434/api/tags")
+        Invoke-DC @("exec", "-T", "ollama", "bash", "-c", "</dev/tcp/localhost/11434") 2>$null
         if ($LASTEXITCODE -eq 0) { $ready = $true; break }
     } catch {}
     Start-Sleep -Seconds 3
@@ -114,16 +116,18 @@ if (-not $ready) {
 Write-Ok "Ollama is ready"
 
 # ---------------------------------------------------------------------------
-# 4. Pull the LLM model (skips if already in the volume)
+# 4. Pull required LLM models (skips models already in the volume)
 # ---------------------------------------------------------------------------
-Write-Header "4/5  Pulling LLM model ($OLLAMA_MODEL)"
-$modelList = Invoke-DC @("exec", "ollama", "ollama", "list") 2>&1
-if ($modelList -match [regex]::Escape($OLLAMA_MODEL)) {
-    Write-Ok "Model already present — skipping download"
-} else {
-    Write-Info "Downloading model (~1.9 GB). This only happens once ..."
-    Invoke-DC @("exec", "ollama", "ollama", "pull", $OLLAMA_MODEL)
-    Write-Ok "Model downloaded"
+Write-Header "4/5  Pulling LLM models"
+$modelList = Invoke-DC @("exec", "-T", "ollama", "ollama", "list") 2>&1
+foreach ($MODEL in @($OLLAMA_MODEL, $SCRIPT_MODEL, $REPORT_MODEL) | Select-Object -Unique) {
+    if ($modelList -match [regex]::Escape($MODEL)) {
+        Write-Ok "${MODEL} already present — skipping download"
+    } else {
+        Write-Info "Downloading ${MODEL}. This only happens once ..."
+        Invoke-DC @("exec", "-T", "ollama", "ollama", "pull", $MODEL)
+        Write-Ok "${MODEL} downloaded"
+    }
 }
 
 # ---------------------------------------------------------------------------

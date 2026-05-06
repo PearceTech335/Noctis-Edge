@@ -85,7 +85,7 @@ MODEL            = os.getenv("NOCTIS_OLLAMA_MODEL",            "gemma3:4b")
 SCRIPT_MODEL     = os.getenv("NOCTIS_OLLAMA_SCRIPT_MODEL",     "qwen2.5-coder:3b-instruct")
 CVE_SCRIPT_MODEL = os.getenv("NOCTIS_OLLAMA_CVE_SCRIPT_MODEL", SCRIPT_MODEL)
 REPORT_MODEL     = os.getenv("NOCTIS_OLLAMA_REPORT_MODEL",     "gemma3:4b")
-OLLAMA_TIMEOUT = int(os.getenv("NOCTIS_OLLAMA_TIMEOUT", "180"))   # seconds — generous for cold start; warm calls are fast
+OLLAMA_TIMEOUT = int(os.getenv("NOCTIS_OLLAMA_TIMEOUT", "360"))   # seconds — 360s covers cold model reload (~3 min) after RAM eviction
 
 # Ollama inference options applied to all planning/decision calls.
 # num_ctx:     1024 — caps KV cache; prompts are <700 tokens; reduces resident RAM ~400MB vs 2048
@@ -3285,6 +3285,20 @@ async def execute_async(action, available_tools, session_dir=None):
     if tool == "mssql_enum":
         return await run_mssql_enum(args.get("host", ""), args.get("port", "1433"), available_tools)
 
+    if tool == "nxc_smb":
+        host = args.get("host", "")
+        port = str(args.get("port", "445"))
+        cmd  = ["nxc", "smb", host, "-p", port, "--shares", "--users", "--groups", "--pass-pol"]
+        output = await run_command_async(cmd, timeout=60)
+        return output, []
+
+    if tool == "nxc_ldap":
+        host = args.get("host", "")
+        port = str(args.get("port", "389"))
+        cmd  = ["nxc", "ldap", host, "-p", port, "--users", "--groups"]
+        output = await run_command_async(cmd, timeout=60)
+        return output, []
+
     return "[!] Unknown tool", []
 
 
@@ -6125,6 +6139,15 @@ async def main_async():
         for t in INTERNET_ONLY_TOOLS:
             available_tools.pop(t, None)
     print_tool_status(available_tools, unavailable_tools)
+
+    # Pre-initialize nxc so ~/.nxc/ config directory is created before any
+    # parallel Phase-1 calls.  Without this, two concurrent nxc_smb actions
+    # can both attempt first-time setup simultaneously and crash each other.
+    if "nxc" in available_tools:
+        try:
+            subprocess.run(["nxc", "--version"], capture_output=True, timeout=10)
+        except Exception:
+            pass
 
     # Session resume
     if resume:

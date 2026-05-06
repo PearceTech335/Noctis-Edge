@@ -105,7 +105,7 @@ chmod +x docker-run.sh
 The launcher script handles everything automatically:
 1. Pulls the latest source (`git pull`)
 2. Builds the Docker image — all scanning tools and the offline CVE database are baked in (~5–10 min first build; cached on subsequent runs)
-3. Starts the Ollama sidecar and downloads the LLM model (~1.9 GB, one-time, stored in a Docker volume)
+3. Starts the Ollama sidecar and downloads the LLM models (~5.2 GB total: `gemma3:4b` + `qwen2.5-coder:3b-instruct`, one-time, stored in a Docker volume)
 4. Starts the Noctis Edge Web UI
 
 Open **http://localhost:5000** in your browser — no further configuration needed.
@@ -624,7 +624,7 @@ This updates (in order):
 | 2 | SecLists (snap) refreshed |
 | 3 | pip dependencies upgraded |
 | 4 | Nuclei binary + templates updated |
-| 5 | Ollama models pulled: `qwen2.5-coder:3b-instruct` (planning/scripts) + `qwen2.5:3b` (report prose) || 5a | EPSS offline database refreshed — daily exploit-probability scores (330k+ CVEs) |
+| 5 | Ollama models pulled: `gemma3:4b` (planning + report prose) + `qwen2.5-coder:3b-instruct` (scripts) || 5a | EPSS offline database refreshed — daily exploit-probability scores (330k+ CVEs) |
 | 5b | NVD CVSS offline database updated — real CVSS v3.1/v4.0 scores from NVD JSON 2.0 feeds || 6 | CVE offline database pulled + CSV rebuilt |
 | 7 | Noctis Edge — `git fetch` + `git reset --hard origin/master` (always gets latest, even with local changes) |
 | 8 | Nikto submodule — `git pull` inside `nikto/` (initialises submodule if missing) |
@@ -732,6 +732,12 @@ The following are excluded from version control (see `.gitignore`):
 **Bash as an alternative to Python in CVE probe scripts** — all three CVE script generation prompts (`_generate_known_exploit_script`, `_generate_cve_test_script`, `_generate_verification_script`) now offer the LLM a choice of Python 3 or bash. Bash rules are provided alongside the existing Python rules: `curl`, `nc`, `openssl`, `grep`, `awk`, `sed`, and `echo` are permitted; `if/fi` blocks, under 25 lines, single quotes. The execution layer already supported bash (`.sh` extension, `bash` runner) — only the prompts were gating Python-only output. The verification script additionally hints the model to consider switching language when the first attempt used the other (`"consider bash if the previous attempt used Python, or vice versa"`), directly diversifying the two independent probes.
 
 **Bug fix: `nxc_smb` / `nxc_ldap` silently blocked in Phase 1** — `nxc_smb` and `nxc_ldap` were present in the `_FAST_PATH` table and accepted by the LLM planner, but were missing from the `KNOWN_TOOLS` set and had no validation case in `validate_action()`. Every SMB and LDAP action printed `[!] Invalid action blocked` and was silently dropped before `nxc` ever ran. Fixed by adding both tools to `KNOWN_TOOLS` and adding the corresponding `validate_action()` branch (requires a dict with a `"host"` key). SMB/LDAP enumeration now executes correctly on Windows and AD targets.
+
+**Bug fix: `nxc_smb` / `nxc_ldap` missing dispatch handlers in `run_tool()`** — even after the `KNOWN_TOOLS` and `validate_action()` fix, both tools passed validation but then hit `[!] Unknown tool` at execution time because `run_tool()` had no `if tool == "nxc_smb":` or `if tool == "nxc_ldap":` branch. Added both handlers: `nxc smb {host} -p {port} --shares --users --groups --pass-pol` and `nxc ldap {host} -p {port} --users --groups`.
+
+**Bug fix: nxc first-time-use race condition** — when two `nxc_smb` actions run in parallel during the Phase 1 wave, both attempted to create the `~/.nxc/` config directory simultaneously on a fresh install, causing one to crash with a traceback. Fixed by running `nxc --version` during tool validation at startup (before any parallel execution begins), ensuring the directory is pre-created.
+
+**Bug fix: LLM timeout after Phase 1 parallel wave** — after a long Phase 1 parallel tool wave, `gemma3:4b` could be evicted from Ollama's RAM on 8 GB machines. Reloading the 3.3 GB model takes ~3 minutes, which exceeded the previous 180-second `OLLAMA_TIMEOUT`. Increased to 360 seconds (overridable via `NOCTIS_OLLAMA_TIMEOUT` env var), providing a safe buffer for cold model reloads.
 
 ---
 
