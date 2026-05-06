@@ -34,8 +34,11 @@ import sys
 
 # Tool name: lowercase alphanumeric + underscores/hyphens, 1-50 chars
 TOOL_NAME_RE = re.compile(r'^[a-z_][a-z0-9_-]{0,49}$')
-# Service key: port/service or "unknown"
-SVC_KEY_RE   = re.compile(r'^(\d{1,5}/[a-z0-9_][a-z0-9_-]{0,29}|unknown)$')
+# Service key: bare label (e.g. "http"), product/label (e.g. "nginx/http",
+# "golang-net/http-server/http"), or the special value "unknown".
+# Port numbers are intentionally absent — noctis.py tracks what works against
+# which infrastructure type, not which port a service ran on in a single scan.
+SVC_KEY_RE   = re.compile(r'^([a-z0-9][a-z0-9._\-/]{0,79}|unknown)$')
 
 REQUIRED_STATS_FIELDS = {"runs", "findings_yielded", "total_findings", "success_rate",
                           "avg_findings_per_run", "broken_count", "timeout_count"}
