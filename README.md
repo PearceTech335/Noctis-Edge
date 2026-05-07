@@ -10,7 +10,7 @@ Noctis Edge is a Python-based, AI-assisted vulnerability exposure and testing pl
 
 Unlike cloud-dependent security platforms, **Noctis Edge runs entirely on your local machine**. All scanning, LLM-assisted analysis, CVE validation, and report generation happen on-device — no target data, credentials, or findings ever leave the host. It supports command-line execution via `noctis.py` and a browser-based Web UI via `noctis_web.py` (served locally at `http://127.0.0.1:5000`), without requiring external SaaS platforms, third-party APIs, or cloud processing.
 
-This architecture makes Noctis Edge particularly suited for regulated environments, internal security teams, air-gapped networks, OT environments, and organisations where confidentiality and control are non-negotiable.
+This architecture makes Noctis Edge particularly suited for regulated environments, internal security teams, air-gapped networks, OT environments, and organizations where confidentiality and control are non-negotiable.
 
 ---
 
@@ -238,7 +238,7 @@ CVE lookups run against the normalised service list after Phase 5 completes.
 
 ### 3. LLM-Driven Scan — Phase 1 (Parallel)
 
-1. The LLM analyses all discovered services at once (with NSE context) and returns a JSON array of one initial tool per service — or a deterministic fast-path map is used for well-known service fingerprints (SMB, RDP, SSH, FTP, etc.), eliminating LLM calls entirely for common targets.
+1. The LLM analyzes all discovered services at once (with NSE context) and returns a JSON array of one initial tool per service — or a deterministic fast-path map is used for well-known service fingerprints (SMB, RDP, SSH, FTP, etc.), eliminating LLM calls entirely for common targets.
 2. All actions in the wave run concurrently via `asyncio.gather()`, bounded by `MAX_PARALLEL_ACTIONS` (default 4).
 3. Findings are enriched, verified, and auto-tagged before being passed into Phase 2 context.
 
