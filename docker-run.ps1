@@ -1,5 +1,5 @@
-# =============================================================================
-#  Noctis Edge — One-Shot Docker Launcher  (Windows PowerShell)
+﻿# =============================================================================
+#  Noctis Edge -- One-Shot Docker Launcher  (Windows PowerShell)
 #
 #  Usage (run from the Noctis-Edge directory):
 #    .\docker-run.ps1
@@ -76,10 +76,10 @@ try {
     if ($LASTEXITCODE -eq 0) {
         git -C $SCRIPT_DIR pull --rebase origin master 2>&1 | Out-Null
         if ($LASTEXITCODE -eq 0) { Write-Ok "Source up to date" }
-        else { Write-Info "git pull failed (may have local changes) — continuing" }
+        else { Write-Info "git pull failed (may have local changes) -- continuing" }
     }
 } catch {
-    Write-Info "git not found or not a repo — skipping git pull"
+    Write-Info "git not found or not a repo -- skipping git pull"
 }
 
 # ---------------------------------------------------------------------------
@@ -122,7 +122,7 @@ Write-Header "4/5  Pulling LLM models"
 $modelList = Invoke-DC @("exec", "-T", "ollama", "ollama", "list") 2>&1
 foreach ($MODEL in @($OLLAMA_MODEL, $SCRIPT_MODEL, $REPORT_MODEL) | Select-Object -Unique) {
     if ($modelList -match [regex]::Escape($MODEL)) {
-        Write-Ok "${MODEL} already present — skipping download"
+        Write-Ok "${MODEL} already present -- skipping download"
     } else {
         Write-Info "Downloading ${MODEL}. This only happens once ..."
         Invoke-DC @("exec", "-T", "ollama", "ollama", "pull", $MODEL)
