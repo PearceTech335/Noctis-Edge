@@ -41,7 +41,7 @@ TOOL_NAME_RE = re.compile(r'^[a-z_][a-z0-9_-]{0,49}$')
 SVC_KEY_RE   = re.compile(r'^([a-z0-9][a-z0-9._\-/]{0,79}|unknown)$')
 
 REQUIRED_STATS_FIELDS = {"runs", "findings_yielded", "total_findings", "success_rate",
-                          "avg_findings_per_run", "broken_count", "timeout_count"}
+                          "avg_findings_per_run", "broken_count", "timed_out_count"}
 
 # Sanity bounds
 MAX_RUNS         = 100_000
