@@ -129,8 +129,9 @@ RUN git clone --depth=1 https://github.com/sullo/nikto.git nikto
 RUN if [ -f CVE/cve-offline/cve-summary.csv ]; then \
         echo "[OK] CVE database already present ($(wc -l < CVE/cve-offline/cve-summary.csv) records) — skipping download"; \
     else \
-        echo "[--] Building CVE database from NVD feeds (this downloads ~200 MB) ..."; \
-        .venv/bin/python3 scripts/build_cve_db.py || \
+        mkdir -p CVE/cve-offline && \
+        echo "[--] Building CVE database from NVD feeds (this downloads ~200 MB) ..." && \
+        python3 scripts/build_cve_db.py || \
             echo "[!] CVE database build failed at image-build time — will retry on first container start"; \
     fi
 
