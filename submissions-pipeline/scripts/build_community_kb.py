@@ -2,13 +2,15 @@
 """
 Noctis-Edge-Submissions — Community KB Build Script
 
-Usage: build_community_kb.py [output_path]
+Usage: build_community_kb.py [output_path] [--trust-admin UUID]
   output_path defaults to community_kb.json
+  --trust-admin UUID  treat this user's scripts as if confirmed by 2 submitters
 
 Reads all *.json from the repo root (never quarantine/).
 Quality filter:
   - script verdict must be VULNERABLE or NOT_VULNERABLE
   - same script_hash must appear in >= 2 independent submissions (different user_id)
+    (admin UUID bypasses this requirement when --trust-admin is set)
 Final safety gate: re-runs the full static blocklist before writing output.
 Output: community_kb.json with a built_at ISO timestamp.
 """
@@ -63,7 +65,16 @@ def _static_safe(script: str) -> bool:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    output_path = sys.argv[1] if len(sys.argv) > 1 else "community_kb.json"
+    args = sys.argv[1:]
+    trust_admin: str | None = None
+    if "--trust-admin" in args:
+        idx = args.index("--trust-admin")
+        if idx + 1 < len(args):
+            trust_admin = args.pop(idx + 1)
+        args.pop(idx)
+    output_path = args[0] if args else "community_kb.json"
+    if trust_admin:
+        print(f"[build_kb] Trust-admin mode: UUID {trust_admin} bypasses the ≥2 submitter threshold.")
 
     # Find all submission files — skip quarantine/ and the output file itself
     submission_files = [
@@ -122,8 +133,11 @@ def main() -> None:
     for cve_id, hashes in sorted(aggregated.items()):
         accepted: list[dict] = []
         for script_hash, info in hashes.items():
-            # Must appear in >= 2 independent submissions
-            if len(info["user_ids"]) < 2:
+            # Must appear in >= 2 independent submissions (admin UUID counts as 2)
+            effective_count = len(info["user_ids"])
+            if trust_admin and trust_admin in info["user_ids"]:
+                effective_count = max(effective_count, 2)
+            if effective_count < 2:
                 filtered_quality += 1
                 continue
 

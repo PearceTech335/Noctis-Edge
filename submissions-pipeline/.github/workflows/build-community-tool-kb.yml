@@ -46,7 +46,14 @@ jobs:
       # Build community_tool_kb.json
       # -----------------------------------------------------------------
       - name: Build community_tool_kb.json
-        run: python3 scripts/build_community_tool_kb.py community_tool_kb.json
+        env:
+          ADMIN_USER_ID: ${{ secrets.ADMIN_USER_ID }}
+        run: |
+          if [ -n "$ADMIN_USER_ID" ]; then
+            python3 scripts/build_community_tool_kb.py community_tool_kb.json --trust-admin "$ADMIN_USER_ID"
+          else
+            python3 scripts/build_community_tool_kb.py community_tool_kb.json
+          fi
 
       # -----------------------------------------------------------------
       # Push to Noctis-Edge-Tool-KB (private repo)

@@ -2,16 +2,18 @@
 """
 Noctis-Edge-Tool-Submissions — Community Tool KB Build Script
 
-Usage: build_community_tool_kb.py [output_path]
+Usage: build_community_tool_kb.py [output_path] [--trust-admin UUID]
   output_path defaults to community_tool_kb.json
+  --trust-admin UUID  treat this user's entries as if they meet the MIN_RUNS gate
 
 Reads all *.json from the repo root (never quarantine/).
 Aggregates tool performance statistics across all user submissions:
-  - Sums runs, findings_yielded, total_findings, broken_count, timeout_count
+  - Sums runs, findings_yielded, total_findings, broken_count, timed_out_count
   - Recalculates success_rate and avg_findings_per_run from aggregated totals
   - Records submission_count (number of users who contributed each entry)
 
 Quality gate: only includes entries with total_runs >= 3 across all users.
+  (admin UUID bypasses this when --trust-admin is set)
 Safety gate:  re-runs structural validation before writing output.
 Output:       community_tool_kb.json with a built_at ISO timestamp.
 """
@@ -25,7 +27,7 @@ from datetime import datetime, timezone
 
 # Tool name and service key patterns (mirror validate_tool_submissions.py)
 TOOL_NAME_RE = re.compile(r'^[a-z_][a-z0-9_-]{0,49}$')
-SVC_KEY_RE   = re.compile(r'^(\d{1,5}/[a-z0-9_][a-z0-9_-]{0,29}|unknown)$')
+SVC_KEY_RE   = re.compile(r'^([a-z0-9][a-z0-9._\-/]{0,79}|unknown)$')
 
 MIN_RUNS_FOR_INCLUSION = 3   # entries with fewer combined runs are excluded
 
@@ -45,7 +47,16 @@ def _structural_ok(tool_name: str, svc_key: str, stats: dict) -> bool:
 
 
 def main() -> None:
-    output_path = sys.argv[1] if len(sys.argv) > 1 else "community_tool_kb.json"
+    args = sys.argv[1:]
+    trust_admin: str | None = None
+    if "--trust-admin" in args:
+        idx = args.index("--trust-admin")
+        if idx + 1 < len(args):
+            trust_admin = args.pop(idx + 1)
+        args.pop(idx)
+    output_path = args[0] if args else "community_tool_kb.json"
+    if trust_admin:
+        print(f"[build_tool_kb] Trust-admin mode: UUID {trust_admin} bypasses the runs gate.")
 
     submission_files = [
         f for f in glob.glob("*.json")
@@ -94,7 +105,7 @@ def main() -> None:
                     "findings_yielded":   0,
                     "total_findings":     0,
                     "broken_count":       0,
-                    "timeout_count":      0,
+                    "timed_out_count":    0,
                     "submission_count":   0,
                     "_user_ids":          set(),
                 })
@@ -111,7 +122,7 @@ def main() -> None:
                 agg_slot["findings_yielded"] += max(0, stats.get("findings_yielded", 0))
                 agg_slot["total_findings"]   += max(0, stats.get("total_findings", 0))
                 agg_slot["broken_count"]     += max(0, stats.get("broken_count", 0))
-                agg_slot["timeout_count"]    += max(0, stats.get("timeout_count", 0))
+                agg_slot["timed_out_count"]  += max(0, stats.get("timed_out_count", 0))
                 agg_slot["_user_ids"].add(user_id)
                 agg_slot["submission_count"]  = len(agg_slot["_user_ids"])
 
@@ -129,7 +140,8 @@ def main() -> None:
         for svc_key, agg in sorted(svc_map.items()):
             total_runs = agg["runs"]
 
-            if total_runs < MIN_RUNS_FOR_INCLUSION:
+            is_admin_slot = trust_admin is not None and trust_admin in agg["_user_ids"]
+            if total_runs < MIN_RUNS_FOR_INCLUSION and not is_admin_slot:
                 excluded_slots += 1
                 continue
 
@@ -146,7 +158,7 @@ def main() -> None:
                 "success_rate":       success_rate,
                 "avg_findings_per_run": avg_findings_per_run,
                 "broken_count":       agg["broken_count"],
-                "timeout_count":      agg["timeout_count"],
+                "timed_out_count":    agg["timed_out_count"],
                 "submission_count":   agg["submission_count"],
             }
 
