@@ -81,6 +81,12 @@ if [[ ! -f "$NVD_CSV" ]]; then
     echo "[*] Building NVD CVSS database in background (first run — this may take a few minutes) ..."
     /app/.venv/bin/python3 /app/scripts/build_nvd_cvss.py >> /tmp/nvd_refresh.log 2>&1 &
 fi
+# CVE summary DB: build on first run if not already baked into the image
+CVE_CSV="/app/CVE/cve-offline/cve-summary.csv"
+if [[ ! -f "$CVE_CSV" ]]; then
+    echo "[*] Building CVE summary database in background (first run — this may take a few minutes) ..."
+    /app/.venv/bin/python3 /app/scripts/build_cve_db.py >> /tmp/cve_db_build.log 2>&1 &
+fi
 
 case "${1:-web}" in
     web)
