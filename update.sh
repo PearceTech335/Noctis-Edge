@@ -280,6 +280,24 @@ fi
 # 7. Noctis Edge itself
 # =============================================================================
 header "7/10  Noctis Edge repository"
+
+# Detect whether we are running inside a Docker install.
+# Heuristic: docker-compose.yml is present AND either docker or docker-compose
+# is available on PATH.  The KB/CVE files are bind-mounted so they update
+# immediately, but noctis.py and other source files are baked into the image
+# — a rebuild + restart is required to deploy code changes.
+_DOCKER_MODE=false
+_DC=""
+if [[ -f "$SCRIPT_DIR/docker-compose.yml" ]]; then
+    if docker compose version > /dev/null 2>&1; then
+        _DC="docker compose"
+        _DOCKER_MODE=true
+    elif command -v docker-compose > /dev/null 2>&1; then
+        _DC="docker-compose"
+        _DOCKER_MODE=true
+    fi
+fi
+
 if [[ -d "$SCRIPT_DIR/.git" ]]; then
     info "Fetching latest Noctis Edge from GitHub ..."
     # fetch + reset guarantees the working tree matches origin/master regardless
@@ -289,6 +307,21 @@ if [[ -d "$SCRIPT_DIR/.git" ]]; then
         && git -C "$SCRIPT_DIR" reset --hard origin/master --quiet \
         && ok "Noctis Edge updated to latest" \
         || err "Noctis Edge update failed — check network or run 'git fetch && git reset --hard origin/master' manually"
+
+    # ── Docker: rebuild image + restart noctis container ─────────────────────
+    # The git pull above updates source on the host, but the running container
+    # still has the old code baked into its image layer.  Rebuild and do a
+    # rolling restart so the new code goes live automatically.
+    if [[ "$_DOCKER_MODE" == true ]]; then
+        info "Docker install detected — rebuilding noctis image with updated source ..."
+        $_DC build noctis \
+            && ok "Docker image rebuilt" \
+            || { err "Docker image build failed — container still running old code"; }
+        info "Restarting noctis container ..."
+        $_DC up -d --no-deps noctis \
+            && ok "noctis container restarted with new image" \
+            || err "Container restart failed — run '$_DC up -d noctis' manually"
+    fi
 else
     info "No .git directory found — skipping self-update"
 fi
