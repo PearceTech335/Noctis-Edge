@@ -747,15 +747,12 @@ Phase boundaries covered: nmap discovery, Phase 1 parallel scan, each iteration 
 
 **HTML report: heading and sort order improvements** — the "Findings" heading that appears directly below the "Nmap NSE Script Results" collapsible is renamed to **"Scan Findings"** to make clear these are tool-based scanner findings rather than NSE-specific output. The **CVE Matches** section now sorts entries by **EPSS exploit probability** (highest first) rather than CVSS score, so the CVEs most likely to be exploited in the wild appear at the top of the table; the summary line also reflects the new sort order.
 
-**Community KB pipeline: `--trust-admin` flag and bug fixes** — three fixes to the community knowledge base build pipeline:
+**Community KB pipeline: bug fixes** — 2 fixes to the community knowledge base build pipeline:
 
-- **`--trust-admin UUID` flag** added to both `build_community_kb.py` and `build_community_tool_kb.py`. When the build workflow passes the admin's UUID, that user's own submissions bypass the quality gate (CVE KB requires ≥2 independent submitters per script hash; tool KB requires ≥3 total runs per slot). This ensures the platform owner's own validated data is always published to the community KB without needing to wait for independent confirmation from other users. The flag is wired into both `build-community-kb.yml` and `build-community-tool-kb.yml` via the `ADMIN_USER_ID` GitHub Actions secret.
 
 - **`SVC_KEY_RE` regex fix** in `build_community_tool_kb.py` — the service-key validation regex was `^\d{1,5}/...` (port-number prefix required), which silently rejected valid service keys like `http`, `werkzeug/http`, and `golang-net/http-server/http`. Broadened to `^[a-z0-9][a-z0-9._\-/]{0,79}$` to accept the full range of service fingerprint strings that `noctis.py` actually generates.
 
 - **`timed_out_count` field name fix** in `build_community_tool_kb.py` — the aggregation code referenced `timeout_count` in four places and in the `_structural_ok()` validator, but the actual submission schema uses `timed_out_count`. Every submitted tool KB slot failed structural validation silently, resulting in zero slots ever being published to the community tool KB. All references corrected.
-
-- **`workflow_dispatch` trigger** added to `validate-tool-submissions.yml` and `build-community-tool-kb.yml` — allows manual workflow runs from the GitHub Actions UI to test and re-trigger the pipeline even when a push does not change any JSON files (e.g. identical re-submissions that produce no git diff).
 
 ---
 
