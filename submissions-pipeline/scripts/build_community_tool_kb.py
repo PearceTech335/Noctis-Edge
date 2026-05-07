@@ -39,7 +39,7 @@ def _structural_ok(tool_name: str, svc_key: str, stats: dict) -> bool:
     if not SVC_KEY_RE.match(svc_key):
         return False
     for field in ("runs", "findings_yielded", "total_findings",
-                  "success_rate", "avg_findings_per_run", "broken_count", "timeout_count"):
+                  "success_rate", "avg_findings_per_run", "broken_count", "timed_out_count"):
         v = stats.get(field)
         if not isinstance(v, (int, float)) or v != v:  # NaN check
             return False
