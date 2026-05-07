@@ -34,6 +34,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         # DNS enumeration
         dnsenum \
         dnsrecon \
+        # Password brute-forcing
+        hydra \
         # General utilities
         git \
         ca-certificates \
@@ -104,7 +106,7 @@ ARG INSTALL_MSF=false
 RUN if [ "$INSTALL_MSF" = "true" ]; then \
         curl -fsSL https://apt.metasploit.com/metasploit-framework.gpg.key \
             | gpg --dearmor -o /etc/apt/trusted.gpg.d/metasploit.gpg && \
-        echo "deb [signed-by=/etc/apt/trusted.gpg.d/metasploit.gpg] https://apt.metasploit.com/ buster main" \
+        echo "deb [signed-by=/etc/apt/trusted.gpg.d/metasploit.gpg] https://apt.metasploit.com/ bookworm main" \
             > /etc/apt/sources.list.d/metasploit-framework.list && \
         apt-get update -qq && \
         apt-get install -y metasploit-framework && \
