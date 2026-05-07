@@ -155,7 +155,7 @@ if [[ -f "$VENV/bin/activate" ]]; then
     ok "pip done (requests, jinja2, pycryptodome, flask, flask-sock)"
 else
     info "No venv found — installing to system Python (consider creating a venv)"
-    pip3 install --upgrade requests jinja2 pycryptodome netexec --quiet
+    pip3 install --upgrade requests jinja2 pycryptodome flask flask-sock --quiet
     ok "pip done"
 fi
 

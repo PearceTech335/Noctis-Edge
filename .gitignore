@@ -23,6 +23,16 @@ CVE/cve-offline/cve-summary.csv
 CVE/cve/
 CVE/cve-offline/
 
+# NVD incremental download cache — large intermediate JSON files
+CVE/.nvd-cache/
+
+# Offline threat-intelligence databases — rebuilt by setup.sh / update.sh, not source
+CVE/epss-scores.csv
+CVE/nvd-cvss.csv
+
+# Development / quarantine scratch area — not for distribution
+quarantine/
+
 
 # Scan session data (runtime output — not source code)
 sessions/
@@ -54,6 +64,9 @@ generate_kb_scripts.py
 .continue/
 .idea/
 .vscode/
+
+# VS Code Copilot agent instructions — local editor configuration, not part of the project
+.github/instructions/
 
 # OS noise
 .DS_Store
