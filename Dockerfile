@@ -98,22 +98,16 @@ RUN pipx ensurepath 2>/dev/null || true && \
     echo "[!] NetExec (nxc) could not be installed — internal_ad profile will not function"
 
 # ---------------------------------------------------------------------------
-# 3d. Metasploit Framework — optional; adds ~2-3 GB to the image.
-#     Enable with:  docker compose build --build-arg INSTALL_MSF=true
-#     Uses the official rapid7 apt repository (works on any Debian/Ubuntu).
+# 3d. Metasploit Framework — mandatory install for offline operation.
+#     Uses the official Rapid7 apt repository.
 # ---------------------------------------------------------------------------
-ARG INSTALL_MSF=false
-RUN if [ "$INSTALL_MSF" = "true" ]; then \
-        curl -fsSL https://apt.metasploit.com/metasploit-framework.gpg.key \
-            | gpg --dearmor -o /etc/apt/trusted.gpg.d/metasploit.gpg && \
-        echo "deb [signed-by=/etc/apt/trusted.gpg.d/metasploit.gpg] https://apt.metasploit.com/ bookworm main" \
-            > /etc/apt/sources.list.d/metasploit-framework.list && \
-        apt-get update -qq && \
-        apt-get install -y metasploit-framework && \
-        rm -rf /var/lib/apt/lists/*; \
-    else \
-        echo "[*] Metasploit skipped (build with --build-arg INSTALL_MSF=true to include)"; \
-    fi
+RUN curl -fsSL https://apt.metasploit.com/metasploit-framework.gpg.key \
+        | gpg --dearmor -o /etc/apt/trusted.gpg.d/metasploit.gpg && \
+    echo "deb [signed-by=/etc/apt/trusted.gpg.d/metasploit.gpg] https://apt.metasploit.com/ bookworm main" \
+        > /etc/apt/sources.list.d/metasploit-framework.list && \
+    apt-get update -qq && \
+    apt-get install -y metasploit-framework && \
+    rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------------------------
 # 4. Application source
