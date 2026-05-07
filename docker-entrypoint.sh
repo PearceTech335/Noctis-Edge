@@ -97,11 +97,18 @@ if [[ ! -f "$NVD_CSV" ]]; then
     echo "[*] Building NVD CVSS database in background (first run — this may take a few minutes) ..."
     /app/.venv/bin/python3 /app/scripts/build_nvd_cvss.py >> /tmp/nvd_refresh.log 2>&1 &
 fi
-# CVE summary DB: build on first run if not already baked into the image
+# CVE summary DB: ALWAYS build synchronously if missing.
+# A background build causes a race condition where any scan (CLI or web UI)
+# starts before the CSV is ready, producing "no CVEs matched" for every port.
 CVE_CSV="/app/CVE/cve-offline/cve-summary.csv"
 if [[ ! -f "$CVE_CSV" ]]; then
-    echo "[*] Building CVE summary database in background (first run — this may take a few minutes) ..."
-    /app/.venv/bin/python3 /app/scripts/build_cve_db.py >> /tmp/cve_db_build.log 2>&1 &
+    echo "[*] CVE database not found — building now (this may take a few minutes) ..."
+    /app/.venv/bin/python3 /app/scripts/build_cve_db.py
+    if [[ ! -f "$CVE_CSV" ]]; then
+        echo "[!] CVE database build failed — CVE matching will be unavailable until resolved"
+    else
+        echo "[+] CVE database ready"
+    fi
 fi
 
 case "${1:-web}" in

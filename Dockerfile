@@ -25,6 +25,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         perl \
         libnet-ssleay-perl \
         liburi-perl \
+        libjson-perl \
         # Python
         python3 \
         python3-pip \
@@ -119,6 +120,12 @@ COPY . .
 # 5. Nikto (clone fresh — avoids submodule state dependency)
 # ---------------------------------------------------------------------------
 RUN git clone --depth=1 https://github.com/sullo/nikto.git nikto
+
+# Verify nikto can load all required Perl modules — fail the build fast if any
+# dependency is missing rather than silently producing "tool broken" at runtime.
+RUN perl nikto/program/nikto.pl -Version 2>&1 | tee /tmp/nikto-check.txt && \
+    grep -qi "Required module not found" /tmp/nikto-check.txt && \
+    echo "[FATAL] Nikto is missing Perl dependencies — see above" && exit 1 || true
 
 # ---------------------------------------------------------------------------
 # 6. CVE offline database

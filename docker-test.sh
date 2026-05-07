@@ -21,7 +21,7 @@ cd "$SCRIPT_DIR"
 # LLM models used during the test scan.
 # SCRIPT_MODEL defaults to OLLAMA_MODEL so the test only needs ONE model download.
 # Override via environment variables to match your docker-compose.yml in production.
-OLLAMA_MODEL="${NOCTIS_OLLAMA_MODEL:-qwen2.5-coder:3b-instruct}"
+OLLAMA_MODEL="${NOCTIS_OLLAMA_MODEL:-qwen2.5-coder:7b-instruct}"
 SCRIPT_MODEL="${NOCTIS_OLLAMA_SCRIPT_MODEL:-${OLLAMA_MODEL}}"
 
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; CYAN='\033[1;36m'; NC='\033[0m'

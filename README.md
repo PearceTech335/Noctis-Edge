@@ -67,14 +67,14 @@ Alongside CVE probes, `tooling_knowledge_base.json` accumulates tool-performance
 | Item | Size |
 |------|------|
 | Ollama — `gemma3:4b` (planning + prose) | ~3.3 GB |
-| Ollama — `qwen2.5-coder:3b-instruct` (scripts) | ~2.0 GB |
+| Ollama — `qwen2.5-coder:7b-instruct` (scripts) | ~4.4 GB |
 | Nuclei templates | ~1.5 GB |
 | CVE offline database | ~3–5 GB |
 | SecLists wordlists | ~2 GB |
 | Tool binaries + Python venv | ~1 GB |
 | Scan session outputs | Variable |
 
-> **RAM note:** Only one model is active at a time during the main scan loop. During `--cve-test`, both models may be warm simultaneously — peak concurrent RAM is ~5.2 GB.
+> **RAM note:** Only one model is active at a time during the main scan loop. During `--cve-test`, both models may be warm simultaneously — peak concurrent RAM is ~7.7 GB. 16 GB RAM recommended; 32 GB optimal.
 
 ---
 
@@ -146,7 +146,7 @@ chmod +x setup.sh && ./setup.sh
 | apt packages | `nmap`, `curl`, `ffuf`, `hydra`, `ssh-audit`, `dnsenum`, `dnsrecon`, `perl`, `golang-go`, `python3-tk`, and more |
 | SecLists | Wordlists via `snap install seclists` |
 | Nuclei | Go-based template scanner (`~/go/bin/nuclei`) |
-| Ollama | Local LLM server + `gemma3:4b` + `qwen2.5-coder:3b-instruct` |
+| Ollama | Local LLM server + `gemma3:4b` + `qwen2.5-coder:7b-instruct` |
 | Python venv | `.venv/` with `requests`, `jinja2`, `pycryptodome`, `flask`, `flask-sock` |
 | CVE database | `CVE/cve-offline/` → `cve-summary.csv`; EPSS scores; NVD CVSS data |
 | rdpscan | `rdpscan/` helper |
@@ -339,7 +339,7 @@ Top-of-file constants in `noctis.py` (all overridable via environment variables)
 | Constant | Default | Env var | Description |
 |----------|---------|---------|-------------|
 | `MODEL` | `gemma3:4b` | `NOCTIS_OLLAMA_MODEL` | Planning, iteration decisions, structured JSON tool selection |
-| `SCRIPT_MODEL` | `qwen2.5-coder:3b-instruct` | `NOCTIS_OLLAMA_SCRIPT_MODEL` | CVE exploit scripts, verification scripts |
+| `SCRIPT_MODEL` | `qwen2.5-coder:7b-instruct` | `NOCTIS_OLLAMA_SCRIPT_MODEL` | CVE exploit scripts, verification scripts |
 | `CVE_SCRIPT_MODEL` | *(same as `SCRIPT_MODEL`)* | `NOCTIS_OLLAMA_CVE_SCRIPT_MODEL` | CVE probe generation — override with a larger model for better pivoting |
 | `REPORT_MODEL` | `gemma3:4b` | `NOCTIS_OLLAMA_REPORT_MODEL` | Report conclusion, attacker perspective, remediation guidance |
 | `OLLAMA_URL` | `http://localhost:11434/api/generate` | — | Ollama API endpoint |
@@ -384,7 +384,7 @@ Manual install:
 ```bash
 curl -fsSL https://ollama.com/install.sh | sh
 ollama pull gemma3:4b                       # planning + report prose
-ollama pull qwen2.5-coder:3b-instruct      # CVE probe + verification scripts
+ollama pull qwen2.5-coder:7b-instruct      # CVE probe + verification scripts
 ```
 
 ### Model Roles
@@ -392,11 +392,11 @@ ollama pull qwen2.5-coder:3b-instruct      # CVE probe + verification scripts
 | Model | Env var | Purpose |
 |-------|---------|---------|
 | `gemma3:4b` | `NOCTIS_OLLAMA_MODEL` | Tool selection, scan planning, structured JSON decisions |
-| `qwen2.5-coder:3b-instruct` | `NOCTIS_OLLAMA_SCRIPT_MODEL` | CVE exploit and verification scripts |
-| `qwen2.5-coder:3b-instruct` | `NOCTIS_OLLAMA_CVE_SCRIPT_MODEL` | CVE probe generation (override with a larger model for better strategy pivoting) |
+| `qwen2.5-coder:7b-instruct` | `NOCTIS_OLLAMA_SCRIPT_MODEL` | CVE exploit and verification scripts |
+| `qwen2.5-coder:7b-instruct` | `NOCTIS_OLLAMA_CVE_SCRIPT_MODEL` | CVE probe generation (override with a larger model for better strategy pivoting) |
 | `gemma3:4b` | `NOCTIS_OLLAMA_REPORT_MODEL` | Report conclusion, attacker perspective, remediation guidance |
 
-`gemma3:4b` is ~3.3 GB; `qwen2.5-coder:3b-instruct` is ~2 GB. During the main scan only one model is active at a time. During `--cve-test` both may be resident simultaneously — peak combined RAM ~5.2 GB. Inference is typically 20–90 s per call on CPU-only hardware after the initial warm load.
+`gemma3:4b` is ~3.3 GB; `qwen2.5-coder:7b-instruct` is ~4.4 GB. During the main scan only one model is active at a time. During `--cve-test` both may be resident simultaneously — peak combined RAM ~7.7 GB. Inference is typically 20–90 s per call on CPU-only hardware after the initial warm load.
 
 ---
 
@@ -493,6 +493,13 @@ The worker is already deployed at `https://noctis-kb-relay.pearcetechnologies1.w
 ---
 
 ## Version History
+
+## What's New in v0.7.7
+
+- **Script model upgraded to `qwen2.5-coder:7b-instruct`:** `SCRIPT_MODEL` and `CVE_SCRIPT_MODEL` default changed from `qwen2.5-coder:3b-instruct` to `qwen2.5-coder:7b-instruct` for improved CVE probe and verification script quality. Peak concurrent RAM during `--cve-test` increases to ~7.7 GB; 16 GB recommended.
+- **Nikto `libjson-perl` fix:** `libjson-perl` added to the Dockerfile `apt-get install` list. Previously missing, causing nikto to print `Required module not found: JSON` at startup, which matched `BROKEN_TOOL_SIGNALS` and disabled nikto for every session without explanation. A post-clone sanity check is now baked into the Dockerfile build so missing Perl modules fail the build immediately.
+- **CVE database race condition fixed:** `docker-entrypoint.sh` now always builds `cve-summary.csv` synchronously if missing (previously built in background `&`, so the scan started before the CSV was ready, producing "no CVEs matched" on every port).
+- **`_load_cve_db()` self-heal:** if `cve-summary.csv` is missing at runtime, `noctis.py` now attempts to rebuild it automatically via `build_cve_db.py`. If the build also fails, it hard-exits with a `[FATAL]` message and exact instructions instead of silently returning an empty DB.
 
 ## What's New in v0.7.6
 

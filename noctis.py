@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Noctis Edge — Security Through Exposure  v0.7.4
+Noctis Edge — Security Through Exposure  v0.7.7
 Implements: structured findings, verification,
 approval gates, async execution, HTML reports,
 service-specific enumerations, risk scoring,
@@ -9,7 +9,7 @@ EPSS exploit-probability scoring, NVD CVSS offline database,
 NIST CSF 2.0 compliance mapping, and OT/ICS asset classification.
 """
 
-VERSION = "v0.7.6"
+VERSION = "v0.7.7"
 
 import asyncio
 import dataclasses
@@ -82,7 +82,7 @@ OLLAMA_URL     = os.getenv("NOCTIS_OLLAMA_URL", "http://localhost:11434/api/gene
 #                  factually grounded prose; qwen2.5-coder tends to produce terse or contradictory
 #                  narrative for non-code tasks
 MODEL            = os.getenv("NOCTIS_OLLAMA_MODEL",            "gemma3:4b")
-SCRIPT_MODEL     = os.getenv("NOCTIS_OLLAMA_SCRIPT_MODEL",     "qwen2.5-coder:3b-instruct")
+SCRIPT_MODEL     = os.getenv("NOCTIS_OLLAMA_SCRIPT_MODEL",     "qwen2.5-coder:7b-instruct")
 CVE_SCRIPT_MODEL = os.getenv("NOCTIS_OLLAMA_CVE_SCRIPT_MODEL", SCRIPT_MODEL)
 REPORT_MODEL     = os.getenv("NOCTIS_OLLAMA_REPORT_MODEL",     "gemma3:4b")
 OLLAMA_TIMEOUT = int(os.getenv("NOCTIS_OLLAMA_TIMEOUT", "360"))   # seconds — 360s covers cold model reload (~3 min) after RAM eviction
@@ -2140,8 +2140,27 @@ def _load_cve_db():
         return _CVE_DB
     _CVE_DB = []
     if not os.path.exists(CVE_CSV):
-        print(f"[!] CVE database not found at {CVE_CSV}")
-        return _CVE_DB
+        # Attempt to self-heal: build the CSV on the fly.
+        build_script = os.path.join(BASE_DIR, "scripts", "build_cve_db.py")
+        if os.path.exists(build_script):
+            print(f"[!] CVE database not found at {CVE_CSV} — attempting to build it now ...")
+            import subprocess
+            result = subprocess.run(
+                [sys.executable, build_script],
+                cwd=BASE_DIR,
+            )
+            if result.returncode != 0 or not os.path.exists(CVE_CSV):
+                sys.exit(
+                    f"[FATAL] CVE database could not be built.\n"
+                    f"        Run:  python3 scripts/build_cve_db.py\n"
+                    f"        Expected output: {CVE_CSV}"
+                )
+            print("[+] CVE database built successfully")
+        else:
+            sys.exit(
+                f"[FATAL] CVE database not found at {CVE_CSV}\n"
+                f"        and build script is missing at {build_script}"
+            )
     with open(CVE_CSV, "r", encoding="utf-8", errors="ignore") as fh:
         for line in fh:
             line = line.strip()

@@ -14,7 +14,7 @@
 #    docker compose up -d
 
 #    docker compose exec ollama ollama pull gemma3:4b
-#    docker compose exec ollama ollama pull qwen2.5-coder:3b-instruct
+#    docker compose exec ollama ollama pull qwen2.5-coder:7b-instruct
 #    # Open http://localhost:5000
 #
 #  CLI scan (without web UI):
@@ -74,7 +74,7 @@ services:
       # Planning model — tool decisions, iteration, JSON structured outputs
       - NOCTIS_OLLAMA_MODEL=gemma3:4b
       # Script model — CVE exploit scripts, test scripts, verification scripts
-      - NOCTIS_OLLAMA_SCRIPT_MODEL=qwen2.5-coder:3b-instruct
+      - NOCTIS_OLLAMA_SCRIPT_MODEL=qwen2.5-coder:7b-instruct
       # Report model — conclusion, attacker perspective, remediation prose
       - NOCTIS_OLLAMA_REPORT_MODEL=gemma3:4b
       # Bind to all interfaces so the host browser can reach port 5000
