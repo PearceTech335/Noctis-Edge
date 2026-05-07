@@ -5,6 +5,11 @@ on:
     branches: [main]
     paths:
       - "*.json"
+  workflow_dispatch:
+    inputs:
+      files:
+        description: 'Space-separated UUID JSON files to validate (e.g. "uuid1.json uuid2.json")'
+        required: true
 
 permissions:
   contents: write   # needed to commit quarantine/ moves
@@ -23,7 +28,11 @@ jobs:
       - name: Get changed submission files
         id: changed
         run: |
-          FILES=$(git diff --name-only HEAD^ HEAD | grep -E '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$' || true)
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            FILES="${{ github.event.inputs.files }}"
+          else
+            FILES=$(git diff --name-only HEAD^ HEAD | grep -E '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$' || true)
+          fi
           echo "files=$FILES" >> "$GITHUB_OUTPUT"
           echo "Changed submission files: $FILES"
 
