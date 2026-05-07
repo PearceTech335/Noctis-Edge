@@ -85,11 +85,11 @@ services:
       # Persist scan sessions on the host so reports survive container restarts
       - ./sessions:/app/sessions
       # Persist CVE knowledge base (accumulates test results over time)
-      - noctis_kb:/app/cve_knowledge_base.json
+      - ./cve_knowledge_base.json:/app/cve_knowledge_base.json
       # Persist tool knowledge base (accumulates tool usage data over time)
-      - noctis_tool_kb:/app/tool_knowledge_base.json
+      - ./tool_knowledge_base.json:/app/tool_knowledge_base.json
       # Persist per-user config (installation UUID, license key, etc.)
-      - noctis_config:/app/noctis.conf
+      - ./noctis.conf:/app/noctis.conf
       # Bind-mount CVE dir so host update.sh refreshes EPSS/NVD data in-container
       - ./CVE:/app/CVE
     # nmap SYN scans need raw socket capabilities
@@ -105,10 +105,4 @@ services:
 # ---------------------------------------------------------------------------
 volumes:
   ollama_models:
-    driver: local
-  noctis_kb:
-    driver: local
-  noctis_tool_kb:
-    driver: local
-  noctis_config:
     driver: local

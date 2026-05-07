@@ -119,6 +119,10 @@ done
 # 5. Start Noctis Edge
 # ---------------------------------------------------------------------------
 hdr "5/5  Starting Noctis Edge Web UI"
+# Create empty host-side files so Docker bind-mounts them as files, not directories.
+for f in noctis.conf cve_knowledge_base.json tool_knowledge_base.json; do
+    [[ -f "$SCRIPT_DIR/$f" ]] || { touch "$SCRIPT_DIR/$f"; info "Created placeholder: $f"; }
+done
 $DC up -d noctis
 ok "Noctis Edge is running"
 

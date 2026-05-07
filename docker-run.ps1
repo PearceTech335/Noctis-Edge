@@ -134,6 +134,13 @@ foreach ($MODEL in @($OLLAMA_MODEL, $SCRIPT_MODEL, $REPORT_MODEL) | Select-Objec
 # 5. Start Noctis Edge
 # ---------------------------------------------------------------------------
 Write-Header "5/5  Starting Noctis Edge Web UI"
+# Create empty host-side files so Docker bind-mounts them as files, not directories.
+foreach ($f in @("noctis.conf", "cve_knowledge_base.json", "tool_knowledge_base.json")) {
+    if (-not (Test-Path (Join-Path $SCRIPT_DIR $f))) {
+        [System.IO.File]::WriteAllText((Join-Path $SCRIPT_DIR $f), "")
+        Write-Info "Created placeholder: $f"
+    }
+}
 Invoke-DC @("up", "-d", "noctis")
 Write-Ok "Noctis Edge is running"
 
