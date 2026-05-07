@@ -754,6 +754,8 @@ Phase boundaries covered: nmap discovery, Phase 1 parallel scan, each iteration 
 
 - **`timed_out_count` field name fix** in `build_community_tool_kb.py` — the aggregation code referenced `timeout_count` in four places and in the `_structural_ok()` validator, but the actual submission schema uses `timed_out_count`. Every submitted tool KB slot failed structural validation silently, resulting in zero slots ever being published to the community tool KB. All references corrected.
 
+**Bug fix: Docker KB persistence — tool and CVE knowledge lost on container restart** — `_save_cve_kb()` and `_save_tool_kb()` used `os.replace()` (a `rename(2)` syscall) to atomically swap in a newly-written `.tmp` file. When running inside Docker with individual file bind-mounts (`./cve_knowledge_base.json:/app/cve_knowledge_base.json`), the `.tmp` file lives on the container's overlay FS while the target is a bind-mounted host inode — different kernel mount points. `rename(2)` cannot cross mount boundaries and fails with `EXDEV`, which was caught and printed as `[!] Tool KB save error` but otherwise silently discarded. All tool-performance learning and CVE test results accumulated during a scan were lost every time the container restarted. Fixed by catching `OSError` on `os.replace()` and falling back to `shutil.copy2()` + `os.unlink()`, which writes through the existing inode and works correctly on both native Linux/macOS and Docker on any host OS. Additionally, `docker-entrypoint.sh` now bootstraps missing KB files as `{}` at startup to prevent Docker from auto-creating them as empty directories (which happens when the files are absent on the host at `docker compose up` time and would cause `IsADirectoryError` in `json.load()`).
+
 ---
 
 ## What's New in v0.7.5

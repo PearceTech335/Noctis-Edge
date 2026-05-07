@@ -16,6 +16,22 @@ CONF_FILE="/app/noctis.conf"
 DATA_DIR="/data"
 
 # ---------------------------------------------------------------------------
+# Ensure KB files are regular files, not directories.
+# If cve_knowledge_base.json / tool_knowledge_base.json are absent from the
+# host at "docker compose up" time, Docker bind-mounts them as empty
+# directories instead of files, breaking json.load().  Bootstrap them here.
+# ---------------------------------------------------------------------------
+for KB_FILE in /app/cve_knowledge_base.json /app/tool_knowledge_base.json; do
+    if [[ -d "$KB_FILE" ]]; then
+        echo "[!] $KB_FILE was created as a directory by Docker — removing and replacing with empty JSON."
+        rm -rf "$KB_FILE"
+        echo '{}' > "$KB_FILE"
+    elif [[ ! -f "$KB_FILE" ]]; then
+        echo '{}' > "$KB_FILE"
+    fi
+done
+
+# ---------------------------------------------------------------------------
 # Generate noctis.conf if not present
 # A named Docker volume keeps this persistent across container restarts.
 # ---------------------------------------------------------------------------

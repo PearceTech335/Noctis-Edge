@@ -4188,12 +4188,24 @@ def _load_cve_kb() -> dict:
 
 
 def _save_cve_kb(kb: dict):
-    """Atomically write the CVE knowledge base to disk."""
+    """Write the CVE knowledge base to disk.
+
+    Attempts an atomic rename first; falls back to shutil.copy2 when running
+    inside Docker where the file is a bind-mounted inode (a separate mount
+    point) and rename(2) would fail with EXDEV.
+    """
     tmp = CVE_KB_PATH + ".tmp"
     try:
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(kb, fh, indent=2, default=str)
-        os.replace(tmp, CVE_KB_PATH)
+        try:
+            os.replace(tmp, CVE_KB_PATH)
+        except OSError:
+            # Docker file bind-mounts are separate mount points; rename(2)
+            # across a mount boundary fails with EXDEV.  copy2 opens the
+            # existing inode for writing, preserving the bind-mount link.
+            shutil.copy2(tmp, CVE_KB_PATH)
+            os.unlink(tmp)
     except Exception as e:
         print(f"[!] CVE KB save error: {e}")
 
@@ -4462,12 +4474,24 @@ def _load_tool_kb() -> dict:
 
 
 def _save_tool_kb(kb: dict):
-    """Atomically write the tool knowledge base to disk."""
+    """Write the tool knowledge base to disk.
+
+    Attempts an atomic rename first; falls back to shutil.copy2 when running
+    inside Docker where the file is a bind-mounted inode (a separate mount
+    point) and rename(2) would fail with EXDEV.
+    """
     tmp = TOOL_KB_PATH + ".tmp"
     try:
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(kb, fh, indent=2, default=str)
-        os.replace(tmp, TOOL_KB_PATH)
+        try:
+            os.replace(tmp, TOOL_KB_PATH)
+        except OSError:
+            # Docker file bind-mounts are separate mount points; rename(2)
+            # across a mount boundary fails with EXDEV.  copy2 opens the
+            # existing inode for writing, preserving the bind-mount link.
+            shutil.copy2(tmp, TOOL_KB_PATH)
+            os.unlink(tmp)
     except Exception as e:
         print(f"[!] Tool KB save error: {e}")
 
