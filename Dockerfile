@@ -103,7 +103,7 @@ RUN pipx ensurepath 2>/dev/null || true && \
 # ---------------------------------------------------------------------------
 RUN curl -fsSL https://apt.metasploit.com/metasploit-framework.gpg.key \
         | gpg --dearmor -o /etc/apt/trusted.gpg.d/metasploit.gpg && \
-    echo "deb [signed-by=/etc/apt/trusted.gpg.d/metasploit.gpg] https://apt.metasploit.com/ bookworm main" \
+    echo "deb [signed-by=/etc/apt/trusted.gpg.d/metasploit.gpg] https://apt.metasploit.com/ apt main" \
         > /etc/apt/sources.list.d/metasploit-framework.list && \
     apt-get update -qq && \
     apt-get install -y metasploit-framework && \
