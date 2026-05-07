@@ -29,6 +29,7 @@ nikto_*.txt
 # Per-user secrets / config — mounted as volume at runtime
 noctis.conf
 cve_knowledge_base.json
+tool_knowledge_base.json
 
 # OS noise
 .DS_Store
