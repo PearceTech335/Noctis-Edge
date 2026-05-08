@@ -2842,10 +2842,11 @@ async def verify_findings_batch(findings):
 # LLM
 # ---------------------------------------------------------------------------
 
-def query_llm(context, broken_tools=None, available_tools=None, used_actions=None):
+def query_llm(context, broken_tools=None, available_tools=None, used_actions=None, timed_out_tools=None):
     if broken_tools    is None: broken_tools    = set()
     if available_tools is None: available_tools = {}
     if used_actions    is None: used_actions    = set()
+    if timed_out_tools is None: timed_out_tools = {}
 
     all_tool_descs = {
         "curl":       'curl: "http://target:port"',
@@ -2923,6 +2924,15 @@ def query_llm(context, broken_tools=None, available_tools=None, used_actions=Non
         + "\n".join(f"  - {t}" for t in sorted(broken_tools))
         if broken_tools else "DISABLED TOOLS: (none)"
     )
+    if timed_out_tools:
+        _to_lines = [
+            f"  - {t} (timed out with no findings on: {', '.join(sorted(sks))})"
+            for t, sks in sorted(timed_out_tools.items())
+        ]
+        disabled_block += (
+            "\nTIMED OUT PER SERVICE (still usable on other service types — avoid repeating on listed services):\n"
+            + "\n".join(_to_lines)
+        )
 
     prompt = f"""### SCAN STATE — READ FIRST:
 {already_run_block}
@@ -3039,6 +3049,7 @@ def _fast_path_actions(
     broken_tools: set,
     available_tools: dict,
     used_actions: set,
+    timed_out_tools: dict | None = None,
 ) -> list[dict]:
     """Return a list of validated tool actions derived from the fast-path table.
 
@@ -3047,6 +3058,7 @@ def _fast_path_actions(
     actions for services that have a clear fast-path match; services with no
     match are left for the LLM.
     """
+    timed_out_tools = timed_out_tools or {}
     actions: list[dict] = []
     seen: set = set()
     for svc in services:
@@ -3057,6 +3069,9 @@ def _fast_path_actions(
                 continue
             if tool in broken_tools:
                 break  # try next fast-path entry for this service
+            # Skip if this tool already timed out on this service type
+            if svc_name and svc_name in timed_out_tools.get(tool, set()):
+                break
             # Tool availability checks (mirrors query_llm logic)
             if tool == "ssh_enum"  and "ssh-audit" not in available_tools:
                 break
@@ -3085,6 +3100,7 @@ def _untested_service_fallback(
     used_actions: set,
     broken_tools: set,
     available_tools: dict | None = None,
+    timed_out_tools: dict | None = None,
 ) -> "dict | None":
     """Rule-based escape hatch for when the LLM is stuck repeating the same action.
 
@@ -3096,11 +3112,12 @@ def _untested_service_fallback(
     Returns an action dict like {\"tool\": ..., \"args\": ...} or None if every
     service has been touched already.  Never makes an LLM call.
     """
-    if available_tools is None:
-        available_tools = {}
+    if available_tools  is None: available_tools  = {}
+    if timed_out_tools  is None: timed_out_tools  = {}
     for svc in services:
         port     = str(svc.get("port", ""))
         svc_name = svc.get("name", "")
+        svc_key  = svc_name.lower()
         # Has any tool been run against this port yet?
         if any(port in ak for ak in used_actions):
             continue
@@ -3108,6 +3125,9 @@ def _untested_service_fallback(
         rec_tools = svc.get("recommended_tools", []) or ["curl"]
         for tool in rec_tools:
             if tool in broken_tools:
+                continue
+            # Skip tools that already timed out with no findings on this service type
+            if svc_key and svc_key in timed_out_tools.get(tool, set()):
                 continue
             if tool == "ssh_enum"  and "ssh-audit" not in available_tools:
                 continue
@@ -3138,7 +3158,7 @@ def _untested_service_fallback(
     return None  # all services tested
 
 
-def query_llm_parallel(context, broken_tools=None, available_tools=None, used_actions=None):
+def query_llm_parallel(context, broken_tools=None, available_tools=None, used_actions=None, timed_out_tools=None):
     """Phase-1 LLM call: plan ONE initial action per discovered service simultaneously.
 
     Returns a validated, deduplicated list of action dicts.
@@ -3148,6 +3168,7 @@ def query_llm_parallel(context, broken_tools=None, available_tools=None, used_ac
     if broken_tools    is None: broken_tools    = set()
     if available_tools is None: available_tools = {}
     if used_actions    is None: used_actions    = set()
+    if timed_out_tools is None: timed_out_tools = {}
 
     target   = context["target"]
     services = context.get("services", [])
@@ -3157,7 +3178,7 @@ def query_llm_parallel(context, broken_tools=None, available_tools=None, used_ac
     # This runs at zero LLM cost and correctly handles the vast majority
     # of real-world services (SMB, HTTP, SSH, RDP, VMware, etc.).
     # ------------------------------------------------------------------
-    fast_actions = _fast_path_actions(services, target, broken_tools, available_tools, used_actions)
+    fast_actions = _fast_path_actions(services, target, broken_tools, available_tools, used_actions, timed_out_tools)
     fast_covered_ports = {
         str(a["args"].get("port") or (a["args"].get("url", "").split(":")[-1].split("/")[0]))
         for a in fast_actions
@@ -6566,7 +6587,8 @@ async def main_async():
         "nxc_smb", "nxc_ldap",
     ])
 
-    broken_tools = set()
+    broken_tools: set = set()               # tools structurally broken (binary missing / permission denied)
+    timed_out_tools: dict[str, set] = {}    # tool → set of svc_keys where it timed out with no findings
     nmap_phase_cmd = (
         f"nmap -Pn -T4 --open -p- --min-rate 2000 {target} | "
         f"-sV -sC -p <ports> | --script <nse> | -O"
@@ -6582,7 +6604,7 @@ async def main_async():
         print(f"\n{'=' * 52}")
         print("  Phase 1 — Parallel Initial Scan")
         print(f"{'=' * 52}")
-        initial_actions = query_llm_parallel(context, broken_tools, available_tools, used_actions)
+        initial_actions = query_llm_parallel(context, broken_tools, available_tools, used_actions, timed_out_tools)
         if initial_actions:
             print(f"[+] LLM planned {len(initial_actions)} parallel action(s):")
             for a in initial_actions:
@@ -6604,6 +6626,11 @@ async def main_async():
                 if broken:
                     broken_tools.add(tool)
                     print(f"[!] '{tool}' appears broken — disabling for this session.")
+                elif timed_out_w and not findings and tool not in {"ffuf", "nikto"}:
+                    _p1_ban_key = _svc_key(tool, args, services)
+                    timed_out_tools.setdefault(tool, set()).add(_p1_ban_key)
+                    print(f"[!] '{tool}' timed out with no findings on '{_p1_ban_key}' (Phase 1) — "
+                          f"skipping this service type in later iterations.")
                 else:
                     preview = output[:300].replace("\n", " | ")
                     print(f"\n[>] {tool}: {preview}")
@@ -6657,11 +6684,13 @@ async def main_async():
         print(f"{'=' * 52}")
         if broken_tools:
             print(f"  Disabled : {', '.join(sorted(broken_tools))}")
+        if timed_out_tools:
+            print(f"  Timed out (per-svc): {', '.join(sorted(timed_out_tools))}")
         if all_findings:
             print(f"  Findings : {len(all_findings)} so far")
 
         sp = _Spinner("Asking LLM ...").start()
-        action = query_llm(context, broken_tools, available_tools, used_actions)
+        action = query_llm(context, broken_tools, available_tools, used_actions, timed_out_tools)
         sp.stop()
         tool   = action.get("tool", "none")
         args   = action.get("args", "")
@@ -6680,7 +6709,7 @@ async def main_async():
             # multi-service hosts where the model is stuck but other ports are untouched.
             if _consecutive_dupes == 1:
                 fallback_action = _untested_service_fallback(
-                    context.get("services", []), target, used_actions, broken_tools, available_tools
+                    context.get("services", []), target, used_actions, broken_tools, available_tools, timed_out_tools
                 )
                 if fallback_action:
                     fb_key = f"{fallback_action['tool']}:{str(fallback_action['args'])}"
@@ -6751,10 +6780,16 @@ async def main_async():
         _save_tool_kb(tool_kb)
         context["tool_kb_text"] = _tool_kb_summary(tool_kb)
 
-        if broken or (timed_out and not findings and tool not in output_only_tools):
-            reason = "timed out with no findings" if (timed_out and not broken) else "appears broken"
-            print(f"[!] '{tool}' {reason} — disabling for this session.")
+        if broken:
+            print(f"[!] '{tool}' appears broken — disabling for this session.")
             broken_tools.add(tool)
+        elif timed_out and not findings and tool not in output_only_tools:
+            # Per-service ban only: record the service type that this tool timed out on
+            # so it can still be used against other service types later in the scan.
+            _ban_key = _svc_key(tool, args, services)
+            timed_out_tools.setdefault(tool, set()).add(_ban_key)
+            print(f"[!] '{tool}' timed out with no findings on '{_ban_key}' — "
+                  f"skipping this service type (still usable on others).")
         else:
             preview = output.strip()[:300].replace("\n", " | ")
             print(f"\n[>] Result: {preview}")
