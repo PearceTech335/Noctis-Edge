@@ -500,8 +500,6 @@ The worker is already deployed at `https://noctis-kb-relay.pearcetechnologies1.w
 - **LLM tool-selection guidance now conditional and lean:** The TOOL REFERENCE block (manifest capability guide) is only injected into the LLM planning prompt when there are services with `status == NOT_YET_TESTED` or no `recommended_tools` entry. For well-explored targets where every service already has KB history, the block is omitted entirely — keeping prompts shorter and faster to process. Rule 5 in the LLM prompt was updated to reflect this: *"Prefer tools from each service's `recommended_tools` list — use higher KB success rate tools first. For NOT_YET_TESTED services, consult the TOOL REFERENCE block."*
 - **LLM prompt hardened against stale service dicts:** service fields `status` and `recommended_tools` are now accessed via `.get()` throughout `query_llm()`, so partial service records (e.g. services that completed nmap Phase 2 but did not reach Phase 3 enrichment) no longer raise `KeyError` and silently abort the iteration.
 - **Bug fix — Dockerfile EPSS step incorrectly fails the build:** `build_epss_db.py` was returning a non-zero exit code when the FIRST.org CDN returns HTTP 403 (rate-limiting). Although the `||` fallback catches the failure at the shell level, Docker's BuildKit was still recording exit code 1 and marking the build as failed. Fixed by appending `; true` to the fallback branch to guarantee the layer always exits 0.
-- **`.gitignore` updated:** added `scripts/build_tool_manifest.py`, `scripts/add_tool_manifest.py`, `scripts/submit_tool_manifest.py` (subscriber-only operator scripts); `tool_manifest.json.bak` (backup of subscriber artefact); `build.log` (Docker build output).
-- **Version bumped to v0.8.0.**
 
 ## What's New in v0.7.8
 
