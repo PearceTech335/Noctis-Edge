@@ -2540,15 +2540,47 @@ def run_nmap_discovery(target: str) -> tuple:
     nmap_meta["phase2_raw"] = p2_xml
 
     p2_services = _parse_nmap_xml(p2_xml) if p2_xml.strip() else []
-    # Merge Phase-2 version info back onto Phase-1 records
+
+    # Retry once with a lighter scan if Phase 2 returned nothing at all
+    # (full timeout on high-latency targets, or -sC scripts hung).
+    if not p2_services:
+        print("[!] Phase 2: no version data returned — retrying with lighter scan (no -sC, intensity 5)")
+        p2_xml = _nmap_run([
+            "-Pn", "-sV",
+            "-T4",
+            "-p", ports_arg,
+            "--version-intensity", "5",
+            "-oX", "-",
+            target,
+        ], timeout=120)
+        nmap_meta["phase2_raw"] = p2_xml
+        p2_services = _parse_nmap_xml(p2_xml) if p2_xml.strip() else []
+        if not p2_services:
+            print("[!] Phase 2 retry also returned nothing — continuing with port-only data")
+
+    # Merge Phase-2 version info back onto Phase-1 records.
+    # Any port that Phase 2 did not enrich gets flagged with version_unknown=True
+    # so downstream (CVE lookup, LLM prompt, tool selection) can treat it explicitly.
     p2_by_port: dict = {s["port"]: s for s in p2_services}
     for svc in p1_services:
         p2 = p2_by_port.get(svc["port"])
         if p2:
-            svc["name"]      = p2["name"]      or svc["name"]
-            svc["product"]   = p2["product"]   or svc.get("product", "")
-            svc["version"]   = p2["version"]   or svc.get("version", "")
-            svc["extrainfo"] = p2["extrainfo"] or svc.get("extrainfo", "")
+            svc["name"]            = p2["name"]      or svc["name"]
+            svc["product"]         = p2["product"]   or svc.get("product", "")
+            svc["version"]         = p2["version"]   or svc.get("version", "")
+            svc["extrainfo"]       = p2["extrainfo"] or svc.get("extrainfo", "")
+            svc["version_unknown"] = False
+        else:
+            svc.setdefault("name",      "")
+            svc.setdefault("product",   "")
+            svc.setdefault("version",   "")
+            svc.setdefault("extrainfo", "")
+            svc["version_unknown"] = True
+
+    unenriched = [s["port"] for s in p1_services if s.get("version_unknown")]
+    if unenriched:
+        print(f"[!] Phase 2: {len(unenriched)} port(s) not enriched — "
+              f"CVE matching may be incomplete: {', '.join(unenriched)}")
 
     print(f"[+] Phase 2 complete — version data enriched on {len(p2_services)} port(s)")
 
@@ -2841,7 +2873,8 @@ def query_llm(context, broken_tools=None, available_tools=None, used_actions=Non
     ctx_summary = {
         "target":         context["target"],
         "services":       [
-            f"{s['port']}/{s.get('name','')} {s.get('product','').split()[0] if s.get('product') else ''}".strip()
+            f"{s['port']}/{s.get('name','unknown')} {s.get('product','').split()[0] if s.get('product') else ''}".strip()
+            + (" [VERSION UNKNOWN — probe with curl or nmap]" if s.get("version_unknown") else "")
             for s in context["services"]
         ],
         "last_3_actions": context.get("history", [])[-3:],
