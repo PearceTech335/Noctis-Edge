@@ -5604,6 +5604,10 @@ async def run_cve_tests(cve_matches: list, target: str,
             "attempts":             attempts,
         })
 
+        # Persist KB progress after every CVE so partial results survive
+        # container restarts or early operator stops.
+        _save_cve_kb(kb)
+
         # ------------------------------------------------------------------
         # Batch continuation prompt (runaway guard)
         # ------------------------------------------------------------------
@@ -5887,8 +5891,13 @@ async def _run_cve_test_phase(report: dict, target: str, session_dir: str) -> di
             return report
 
     kb = _load_cve_kb()
-    cve_test_results, updated_kb = await run_cve_tests(cve_matches, target, session_dir, kb)
-    _save_cve_kb(updated_kb)
+    try:
+        cve_test_results, updated_kb = await run_cve_tests(cve_matches, target, session_dir, kb)
+    finally:
+        # Ensure KB is persisted even if the scan is interrupted mid-loop.
+        # `kb` is mutated in-place by run_cve_tests, so this captures any
+        # partial progress (incremental saves also happen per-CVE inside the loop).
+        _save_cve_kb(kb)
     print(f"[+] CVE knowledge base updated → {CVE_KB_PATH}")
 
     # Generate LLM remediation suggestions for each confirmed/vulnerable CVE
