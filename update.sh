@@ -460,11 +460,56 @@ fi
 ok "Tool KB sync done"
 
 # =============================================================================
+# 11. Tool Manifest pull (subscribers only)
+# =============================================================================
+header "11/11  Tool Manifest pull"
+
+MANIFEST_LOCAL="$SCRIPT_DIR/tool_manifest.json"
+
+if [[ -z "$KB_LICENSE_KEY" ]]; then
+    promo "Tool manifest pull skipped — KB_LICENSE_KEY not set in noctis.conf"
+    promo "  Subscribe at: https://noctisedge.lemonsqueezy.com to receive the"
+    promo "  tool_manifest.json with per-tool flag guidance and service routing."
+else
+    info "Pulling tool manifest (license key found) ..."
+    _MANIFEST_RELAY="https://noctis-kb-relay.pearcetechnologies1.workers.dev"
+    _TMP_MANIFEST="/tmp/_noctis_tool_manifest_$$.json"
+    HTTP_CODE=$(curl -sS -w "%{http_code}" -o "$_TMP_MANIFEST" \
+        --max-time 30 \
+        -X POST "$_MANIFEST_RELAY/tool-manifest" \
+        -H "Content-Type: application/json" \
+        -d "{\"license_key\":\"$KB_LICENSE_KEY\"}" 2>/dev/null)
+    CURL_EXIT=$?
+    if [[ "$CURL_EXIT" != "0" ]]; then
+        err "Tool manifest download failed (curl error $CURL_EXIT) — will retry on next update"
+        rm -f "$_TMP_MANIFEST"
+    elif [[ "$HTTP_CODE" == "200" ]]; then
+        # Validate it looks like JSON before replacing the local copy
+        if python3 -c "import json,sys; json.load(open('$_TMP_MANIFEST'))" 2>/dev/null; then
+            mv "$_TMP_MANIFEST" "$MANIFEST_LOCAL"
+            TOOL_COUNT=$(python3 -c "import json; d=json.load(open('$MANIFEST_LOCAL')); print(sum(1 for k in d if not k.startswith('_')))")
+            ok "Tool manifest updated ($TOOL_COUNT tools) at $MANIFEST_LOCAL"
+        else
+            err "Downloaded manifest is not valid JSON — keeping existing copy"
+            rm -f "$_TMP_MANIFEST"
+        fi
+    elif [[ "$HTTP_CODE" == "403" ]]; then
+        err "License key rejected — check your subscription at https://noctisedge.lemonsqueezy.com"
+        rm -f "$_TMP_MANIFEST"
+    else
+        err "Tool manifest download failed (HTTP $HTTP_CODE) — will retry on next update"
+        rm -f "$_TMP_MANIFEST"
+    fi
+fi
+
+ok "Tool manifest sync done"
+
+# =============================================================================
 # Done
 # =============================================================================
 echo ""
 echo "============================================================"
-echo "  All updates complete (10/10 steps)."
+echo "  All updates complete (11/11 steps)."
 echo "  Remember to restart Ollama if it was already running:"
 echo "    sudo systemctl restart ollama"
 echo "============================================================"

@@ -543,6 +543,22 @@ fi
 info "KB submission runs automatically on ./update.sh — no token required"
 
 # =============================================================================
+# Tool Manifest notice
+# =============================================================================
+MANIFEST_FILE="$SCRIPT_DIR/tool_manifest.json"
+if [[ -f "$MANIFEST_FILE" ]]; then
+    TOOL_COUNT=$(python3 -c "import json; d=json.load(open('$MANIFEST_FILE')); print(sum(1 for k in d if not k.startswith('_')))" 2>/dev/null || echo "?")
+    ok "Tool manifest found — $TOOL_COUNT tools loaded ($MANIFEST_FILE)"
+else
+    echo ""
+    echo -e "${YELLOW}[i] Tool manifest not found.${NC}"
+    echo "    tool_manifest.json contains per-tool flag guidance and improves service routing."
+    echo "    It is delivered to subscribers via ./update.sh (requires KB_LICENSE_KEY in noctis.conf)."
+    echo "    Subscribe at: https://noctisedge.lemonsqueezy.com"
+    echo "    Or generate a local manifest: python3 scripts/build_tool_manifest.py"
+fi
+
+# =============================================================================
 # Done
 # =============================================================================
 echo ""

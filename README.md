@@ -494,6 +494,26 @@ The worker is already deployed at `https://noctis-kb-relay.pearcetechnologies1.w
 
 ## Version History
 
+## What's New in v0.8.0
+
+- **Bug fix — `NameError: _svc_list` crash at first LLM iteration:** `query_llm()` referenced `_svc_list` in the tool-reference block comprehension but never defined it. This caused every scan to crash silently at the start of iteration 1 after Phase 1 tools finished — session directories were created but all files (including `session.json`) were never written. Fixed by assigning `_svc_list = context.get("services", [])` immediately before the check. Also hardened the loop to use `.get()` instead of direct key access so missing `status` or `recommended_tools` fields on a service dict no longer raise `KeyError`.
+- **Bug fix — Dockerfile EPSS step incorrectly fails the build:** `build_epss_db.py` was returning a non-zero exit code when the FIRST.org CDN returns HTTP 403 (rate-limiting). Although the `||` fallback catches the failure at the shell level, Docker's BuildKit was still recording exit code 1 and marking the build as failed. Fixed by appending `|| true` to guarantee the layer always exits 0.
+- **Version bumped to v0.8.0.**
+
+## What's New in v0.7.8
+
+- **Tool manifest system (`tool_manifest.json`):** New subscriber artifact that gives the LLM per-tool capability guidance, service routing keywords, and flag examples for every scanning tool. `_tools_for_service()` is now manifest-driven — service keywords are matched against nmap service names, with `curl` as the automatic catch-all for unrecognised ports. Delivered via `update.sh` step 11 (license-key gated). Build or extend locally with `scripts/build_tool_manifest.py` and `scripts/add_tool_manifest.py`. The manifest is gitignored and never submitted to the community pipeline.
+- **LLM stuck-on-duplicate fix (`_untested_service_fallback()`):** A new rule-based function intercepts the first consecutive duplicate action before burning 90-second LLM retries. It scans the service list for the first port with no prior `used_actions` entry and returns the best tool for that port (from `recommended_tools` or curl). This eliminates the pattern where a multi-service scan (e.g. SSH + VNC + HTTP) kept looping `ssh_enum` because VNC and unknown services returned `[]` from `_tools_for_service()` and were silently excluded from Phase 1.
+- **`_tools_for_service()` catch-all fixed:** Previously returned `[]` for unknown services, causing the Phase-1 parallel scan filter to silently skip VNC, Kerberos, NetAssistant, and any other unrecognised port. Now returns `["curl"]` as a safe fallback with a logged advisory message.
+- **`_FAST_PATH` extended:** Added `curl` fast-path entries for `vnc`, `rfb`, `kerberos`, `netassistant`, and `apple-remote` services so Phase 1 immediately probes these ports rather than waiting for LLM guidance.
+- **Nikto severity triage:** `parse_nikto_output()` previously assigned `severity="info"` to every finding regardless of content. A new `_NIKTO_SEVERITY_UPGRADES` table (~40 pattern rules) now upgrades findings to `critical`/`high`/`medium`/`low` based on content keywords (CVEs → high, HTTP TRACE/XST → high, directory listing → medium, security header absence → low, etc.). The cap on returned findings increased from 15 → 30.
+- **`manual_review` flag on findings:** `Finding` dataclass gains a `manual_review: bool` field. Nikto sets it to `True` on any finding upgraded above `info`. HTML report cards for these findings display an orange **⚠ MANUAL REVIEW** badge in the finding summary line.
+- **LLM prompt enriched with service coverage status:** `query_llm()` now passes each service as a structured dict including `recommended_tools` and `status: NOT_YET_TESTED / tested` — previously the LLM saw only bare port/service strings and could not tell which ports had been exercised. A TOOL REFERENCE block (from the manifest) is injected into the prompt when untested or no-recommendation services are present.
+- **`num_ctx` 1024 → 2048 for planning calls:** `_OLLAMA_PLAN_OPTIONS` `num_ctx` increased to accommodate the richer prompt with the TOOL REFERENCE block (~300 extra tokens). RAM impact is minimal (~100 MB).
+- **`update.sh` step 11 — tool manifest pull:** New update step downloads `tool_manifest.json` from the relay endpoint (`/tool-manifest`) for subscribers. Validates JSON before overwriting the local copy. Existing step count updated to 11/11.
+- **Docker bind-mount for `tool_manifest.json`:** `docker-compose.yml` now bind-mounts `./tool_manifest.json:/app/tool_manifest.json`. If the file is absent on the host, Docker creates a directory; `docker-entrypoint.sh` detects and removes the directory without creating a `{}` placeholder, so the scanner starts cleanly with a logged advisory.
+- **New public scripts:** `scripts/build_tool_manifest.py` (Ollama-powered full-manifest generation), `scripts/add_tool_manifest.py` (single-tool CLI helper), `scripts/submit_tool_manifest.py` (operator manifest push to relay).
+
 ## What's New in v0.7.7
 
 - **Script model upgraded to `qwen2.5-coder:7b-instruct`:** `SCRIPT_MODEL` and `CVE_SCRIPT_MODEL` default changed from `qwen2.5-coder:3b-instruct` to `qwen2.5-coder:7b-instruct` for improved CVE probe and verification script quality. Peak concurrent RAM during `--cve-test` increases to ~7.7 GB; 16 GB recommended.

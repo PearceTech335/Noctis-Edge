@@ -161,7 +161,7 @@ RUN python3 -m venv .venv && \
 #     Best-effort: build succeeds even if the CDN is unreachable.
 # ---------------------------------------------------------------------------
 RUN .venv/bin/python3 scripts/build_epss_db.py || \
-    echo "[!] EPSS pre-fetch failed (network unavailable at build time) — will retry at first run"
+    { echo "[!] EPSS pre-fetch failed (network unavailable at build time) — will retry at first run"; true; }
 
 # ---------------------------------------------------------------------------
 # 8. Entrypoint + runtime directories

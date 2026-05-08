@@ -30,7 +30,17 @@ for KB_FILE in /app/cve_knowledge_base.json /app/tool_knowledge_base.json; do
         echo '{}' > "$KB_FILE"
     fi
 done
-
+# ---------------------------------------------------------------------------
+# Tool manifest is a subscriber artifact \u2014 do NOT create a placeholder.
+# If Docker created it as a directory (because the host file was missing at
+# compose-up time), remove the directory so the scanner can start cleanly.
+# The scanner gracefully runs without the manifest (curl catch-all routing).
+# ---------------------------------------------------------------------------
+if [[ -d "/app/tool_manifest.json" ]]; then
+    echo "[!] tool_manifest.json was created as a directory by Docker \u2014 removing."
+    echo "    It is an optional subscriber artifact; the scanner will run without it."
+    rm -rf "/app/tool_manifest.json"
+fi
 # ---------------------------------------------------------------------------
 # Generate noctis.conf if not present
 # A named Docker volume keeps this persistent across container restarts.

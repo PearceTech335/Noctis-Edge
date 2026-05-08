@@ -48,6 +48,9 @@ reconotron.db
 
 # Noctis Edge local config — may contain git tokens; never commit
 .noctis_config
+
+# Tool manifest — subscriber artifact delivered via update.sh; never commit
+tool_manifest.json
 noctis.conf
 
 # Tool performance knowledge base — runtime-generated, machine-specific
@@ -59,6 +62,17 @@ ForYouToDo.md
 .noctis_config.example
 cloudflare/PAID_TIER_PLAN.md
 generate_kb_scripts.py
+
+# Subscriber-only / operator tool manifest scripts — delivered via paid update channel
+scripts/build_tool_manifest.py
+scripts/add_tool_manifest.py
+scripts/submit_tool_manifest.py
+
+# Tool manifest backup — created when update.sh overwrites with a new subscriber download
+tool_manifest.json.bak
+
+# Docker build artefact — not source
+build.log
 
 # IDE / tool config
 .continue/

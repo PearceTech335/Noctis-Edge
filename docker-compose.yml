@@ -88,6 +88,9 @@ services:
       - ./cve_knowledge_base.json:/app/cve_knowledge_base.json
       # Persist tool knowledge base (accumulates tool usage data over time)
       - ./tool_knowledge_base.json:/app/tool_knowledge_base.json
+      # Tool manifest — subscriber artifact with per-tool flag guidance (gitignored).
+      # If this file does not exist on the host, the scanner runs without it (curl catch-all).
+      - ./tool_manifest.json:/app/tool_manifest.json
       # Persist per-user config (installation UUID, license key, etc.)
       - ./noctis.conf:/app/noctis.conf
       # Bind-mount CVE dir so host update.sh refreshes EPSS/NVD data in-container

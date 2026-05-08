@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Noctis Edge — Security Through Exposure  v0.7.7
+Noctis Edge — Security Through Exposure  v0.8.0
 Implements: structured findings, verification,
 approval gates, async execution, HTML reports,
 service-specific enumerations, risk scoring,
@@ -9,7 +9,7 @@ EPSS exploit-probability scoring, NVD CVSS offline database,
 NIST CSF 2.0 compliance mapping, and OT/ICS asset classification.
 """
 
-VERSION = "v0.7.7"
+VERSION = "v0.8.0"
 
 import asyncio
 import dataclasses
@@ -88,11 +88,12 @@ REPORT_MODEL     = os.getenv("NOCTIS_OLLAMA_REPORT_MODEL",     "gemma3:4b")
 OLLAMA_TIMEOUT = int(os.getenv("NOCTIS_OLLAMA_TIMEOUT", "360"))   # seconds — 360s covers cold model reload (~3 min) after RAM eviction
 
 # Ollama inference options applied to all planning/decision calls.
-# num_ctx:     1024 — caps KV cache; prompts are <700 tokens; reduces resident RAM ~400MB vs 2048
+# num_ctx:     2048 — bumped from 1024 to accommodate richer prompts when the
+#              tool manifest TOOL REFERENCE block is injected (~300 extra tokens).
 # temperature: 0    — deterministic; no creativity needed for tool selection JSON
 # top_p:       1    — with temp=0 this is irrelevant, set explicitly for clarity
 # num_thread:  0    — let Ollama auto-detect optimal thread count for the CPU
-_OLLAMA_PLAN_OPTIONS = {"num_ctx": 1024, "temperature": 0, "top_p": 1, "num_thread": 0}
+_OLLAMA_PLAN_OPTIONS = {"num_ctx": 2048, "temperature": 0, "top_p": 1, "num_thread": 0}
 # keep_alive value sent with every request — keeps model weights resident between scan phases.
 # "1h" is a valid Go time.Duration string accepted by all Ollama versions.
 # Override via NOCTIS_OLLAMA_KEEP_ALIVE env var (e.g. "30m", "2h").
@@ -108,8 +109,10 @@ AIRGAP_MODE     = True   # default on; --dns opts in to internet-dependent DNS e
 MSF_VALIDATE    = False  # set via --msf-validate; runs safe MSF check probes for each CVE match
 CVE_TEST        = False  # set via --cve-test; LLM generates test scripts per matched CVE
 UNATTENDED      = False  # set via --unattended; auto-approves all prompts (no user input required)
-CVE_KB_PATH     = os.path.join(BASE_DIR, "cve_knowledge_base.json")
-TOOL_KB_PATH    = os.path.join(BASE_DIR, "tool_knowledge_base.json")
+CVE_KB_PATH          = os.path.join(BASE_DIR, "cve_knowledge_base.json")
+TOOL_KB_PATH         = os.path.join(BASE_DIR, "tool_knowledge_base.json")
+TOOL_MANIFEST_PATH   = os.path.join(BASE_DIR, "tool_manifest.json")
+_TOOL_MANIFEST: "dict | None" = None  # lazy-loaded on first call to _load_tool_manifest()
 
 # Offline threat-intelligence databases (built by scripts/build_epss_db.py
 # and scripts/build_nvd_cvss.py, refreshed by update.sh steps 5a/5b)
@@ -468,6 +471,7 @@ class Finding:
     vuln_type:           str  = ""  # Inferred vulnerability type (e.g. RCE, XSS)
     cwe_id:              str  = ""  # CWE identifier (e.g. CWE-89)
     compliance_controls: list = field(default_factory=list)  # PCI-DSS, SOC2, ISO 27001
+    manual_review:       bool = False  # True when nikto/scanner flags a finding that warrants manual verification
 
     def to_dict(self):
         return dataclasses.asdict(self)
@@ -1008,6 +1012,56 @@ _NIKTO_ADMIN_PHRASES = (
     "host summary:",
 )
 
+# Nikto severity upgrades: (substring_to_match, new_severity, title_prefix)
+# Evaluated in order — first match wins.  All findings default to 'info' unless matched.
+# Patterns are matched case-insensitively against the full finding text.
+_NIKTO_SEVERITY_UPGRADES: list[tuple[str, str, str]] = [
+    # Critical — direct exploitation / authentication bypass
+    ("cve-",                        "high",   "CVE:"),
+    ("remote code execution",        "critical", "RCE:"),
+    ("command injection",            "critical", "Injection:"),
+    ("sql injection",                "critical", "SQLi:"),
+    ("shellshock",                   "critical", "Shellshock:"),
+    # High — dangerous misconfigs and active exploitable conditions
+    ("http trace",                   "high",   "XST:"),
+    ("trace method",                 "high",   "XST:"),
+    ("allowed method",               "medium", "Methods:"),
+    ("put method",                   "high",   "Upload:"),
+    ("delete method",                "high",   "Dangerous:"),
+    ("directory indexing",           "medium", "Dir-Listing:"),
+    ("directory listing",            "medium", "Dir-Listing:"),
+    ("index of /",                   "medium", "Dir-Listing:"),
+    ("basic authentication",         "medium", "Weak-Auth:"),
+    ("default password",             "high",   "Default-Creds:"),
+    ("default credential",           "high",   "Default-Creds:"),
+    ("default login",                "high",   "Default-Creds:"),
+    ("admin interface",              "medium", "Admin:"),
+    ("/admin",                       "medium", "Admin:"),
+    ("phpinfo()",                    "medium", "Info-Leak:"),
+    ("phpinfo",                      "medium", "Info-Leak:"),
+    ("server-status",                "medium", "Info-Leak:"),
+    ("server-info",                  "medium", "Info-Leak:"),
+    ("web.config",                   "high",   "Config-Leak:"),
+    (".git/",                        "high",   "Source-Leak:"),
+    (".svn/",                        "high",   "Source-Leak:"),
+    ("backup file",                  "medium", "Backup:"),
+    (".bak",                         "low",    "Backup:"),
+    ("x-powered-by",                 "low",    "Header:"),
+    ("server header",                "low",    "Header:"),
+    ("anti-clickjacking",            "low",    "Header:"),
+    ("x-content-type-options",       "low",    "Header:"),
+    ("x-xss-protection",             "low",    "Header:"),
+    ("content-security-policy",      "low",    "Header:"),
+    ("cross-site scripting",         "high",   "XSS:"),
+    ("xss",                          "high",   "XSS:"),
+    ("path traversal",               "high",   "Traversal:"),
+    ("file inclusion",               "high",   "LFI:"),
+    ("ssrf",                         "high",   "SSRF:"),
+    ("open redirect",                "medium", "Redirect:"),
+    ("robots.txt",                   "low",    "Recon:"),
+    ("sitemap.xml",                  "low",    "Recon:"),
+]
+
 
 def parse_nikto_output(output, target):
     findings = []
@@ -1023,23 +1077,36 @@ def parse_nikto_output(output, target):
         # Skip Nikto admin/meta messages — they are printed to terminal by run_nikto_async
         if any(p in text.lower() for p in _NIKTO_ADMIN_PHRASES):
             continue
+        # Apply severity upgrades — first matching pattern wins
+        severity = "info"
+        title_prefix = ""
+        text_lower = text.lower()
+        for pattern, new_sev, prefix in _NIKTO_SEVERITY_UPGRADES:
+            if pattern in text_lower:
+                severity = new_sev
+                title_prefix = prefix
+                break
+        # Prefix the title so the severity is self-evident in reports
+        display_title = f"{title_prefix} {text[:120]}".strip() if title_prefix else text[:120]
+        manual_review = severity != "info"  # flag anything above info for human follow-up
         f = Finding(
             finding_id=make_finding_id("nikto", target, text[:50]),
             tool="nikto",
             target=target,
             service="http",
-            severity="info",
-            title=text[:120],
+            severity=severity,
+            title=display_title,
             evidence=text[:400],
             confidence=TOOL_CONFIDENCE.get("nikto", 0.4),
             verified=False,
             timestamp=datetime.now(timezone.utc).isoformat(),
             tags=[],
             verification_status="discovered",
+            manual_review=manual_review,
         )
         f.tags = auto_tag(f)
         findings.append(f)
-    return findings[:15]
+    return findings[:30]
 
 
 # ---------------------------------------------------------------------------
@@ -2630,11 +2697,46 @@ def _service_priority(service):
     return 1
 
 
-def _tools_for_service(service_name):
+def _tools_for_service(service_name, port=None):
+    """Return the list of tools appropriate for *service_name*.
+
+    Stage 1: consult the tool manifest (if loaded) for any tool whose
+    service_keywords contain *service_name* as a substring (case-insensitive).
+    A keyword of "*" matches every service.
+
+    Stage 2 (fallback): built-in if/elif rules, retained for backward
+    compatibility when the manifest is absent.
+
+    Stage 3 (catch-all): if nothing matched, return ["curl"] so the LLM
+    always has *something* to try on unknown ports.  Previously this returned
+    [], which caused Phase-1 parallel scan to silently skip those services.
+    """
     name = service_name.lower()
+    manifest = _load_tool_manifest()
+
+    if manifest:
+        matched_tools = []
+        for tool_name, entry in manifest.items():
+            if tool_name.startswith("_"):
+                continue
+            for kw in entry.get("service_keywords", []):
+                if kw == "*" or kw.lower() in name or name in kw.lower():
+                    if tool_name not in matched_tools:
+                        matched_tools.append(tool_name)
+                    break
+        if matched_tools:
+            return matched_tools
+        # Manifest present but no entry matched
+        port_str = f" (port {port})" if port else ""
+        print(
+            f"[*] No manifest entry matched service '{service_name}'{port_str} — "
+            f"defaulting to curl probe.  Add a matching service_keyword to "
+            f"tool_manifest.json to improve routing."
+        )
+        return ["curl"]
+
+    # ── Manifest absent: built-in rules ──────────────────────────────────
     # ffuf is a directory fuzzer — only useful on real HTTP/HTTPS services.
-    # IPP (CUPS) responds on HTTP but does not serve directory listings; ffuf
-    # wastes its full timeout budget and returns nothing useful.
     if "http" in name or "ssl" in name:
         return ["curl", "nikto", "nuclei", "ffuf"]
     if "ipp" in name:
@@ -2651,7 +2753,8 @@ def _tools_for_service(service_name):
         return ["dns_enum"]
     if "ftp" in name or "smtp" in name:
         return ["curl"]
-    return []
+    # Catch-all — curl is always better than nothing
+    return ["curl"]
 
 
 def rank_and_annotate_services(services):
@@ -2752,6 +2855,26 @@ def query_llm(context, broken_tools=None, available_tools=None, used_actions=Non
     nse_block = context.get("nse_context", "")
     nse_section = f"\nNSE SCRIPT RESULTS (from nmap Phase 3 — use to prioritise paths):\n{nse_block}\n" if nse_block else ""
 
+    # Inject a TOOL REFERENCE block only when the manifest is loaded AND there are
+    # services that are untested or have no recommended_tools.  This keeps the
+    # prompt lean for normal iterations where the LLM already has context.
+    manifest = _load_tool_manifest()
+    _svc_list = context.get("services", [])
+    _needs_guidance = any(
+        s.get("status") == "NOT_YET_TESTED" or not s.get("recommended_tools")
+        for s in _svc_list
+    )
+    if manifest and _needs_guidance:
+        _ref_lines = ["TOOL REFERENCE (capability guide — use for NOT_YET_TESTED or no-recommendation services):"]
+        for _tn, _te in manifest.items():
+            if _tn.startswith("_"):
+                continue
+            _kws = ", ".join(_te.get("service_keywords", [])[:6])
+            _ref_lines.append(f"  {_tn}: use_when={_te.get('use_when','')[:80]}  keywords=[{_kws}]")
+        tool_ref_section = "\n" + "\n".join(_ref_lines) + "\n"
+    else:
+        tool_ref_section = ""
+
     # Format already_run as a clear block-list the model can't miss
     already_run_sorted = sorted(used_actions)
     already_run_block = (
@@ -2777,14 +2900,14 @@ You are a penetration testing assistant. Reply with a single JSON object only.
 2. Only use tools listed in AVAILABLE TOOLS.
 3. NEVER suggest a tool+args pair from ALREADY RUN above.
 4. NEVER suggest a tool from DISABLED TOOLS above.
-5. Prefer tools from each service's "recommended_tools" — use higher KB success rate tools first.
+5. Prefer tools from each service's "recommended_tools" list — use higher KB success rate tools first.  For NOT_YET_TESTED services, consult the TOOL REFERENCE block to select the most appropriate tool.
 6. Use NSE SCRIPT RESULTS to choose specific URLs, paths, or auth methods to test.
 7. If all recommended tools are exhausted, try a general tool (curl, nmap) with a new endpoint or argument.
 8. If there is nothing new to try, return {{"tool": "none"}}.
 
 AVAILABLE TOOLS:
 {tools_block}
-{kb_section}{nse_section}
+{kb_section}{nse_section}{tool_ref_section}
 CURRENT FINDINGS:
 {json.dumps(ctx_summary, indent=2)}
 
@@ -2855,6 +2978,11 @@ _FAST_PATH: list[tuple[str, str, dict]] = [
     ("http-alt",        "nikto",      {"url": "http://{target}:{port}", "ssl": False}),
     ("http",            "nikto",      {"url": "http://{target}:{port}", "ssl": False}),
     ("ipp",             "curl",       {"url": "http://{target}:{port}"}),
+    ("vnc",             "curl",       {"url": "http://{target}:{port}"}),
+    ("rfb",             "curl",       {"url": "http://{target}:{port}"}),
+    ("kerberos",        "curl",       {"url": "http://{target}:{port}"}),
+    ("netassistant",    "curl",       {"url": "http://{target}:{port}"}),
+    ("apple-remote",    "curl",       {"url": "http://{target}:{port}"}),
     ("ssh",             "ssh_enum",   {"host": "{target}", "port": "{port}"}),
     ("rdp",             "rdp_enum",   {"host": "{target}", "port": "{port}"}),
     ("ftp",             "curl",       {"url": "ftp://{target}:{port}"}),
@@ -2913,6 +3041,65 @@ def _fast_path_actions(
             actions.append({"tool": tool, "args": resolved_args})
             break  # one tool per service
     return actions
+
+
+def _untested_service_fallback(
+    services: list,
+    target: str,
+    used_actions: set,
+    broken_tools: set,
+    available_tools: dict | None = None,
+) -> "dict | None":
+    """Rule-based escape hatch for when the LLM is stuck repeating the same action.
+
+    Scans the service list for the first port that has no entry in *used_actions*,
+    then returns an appropriate tool action for it.  Priority:
+      1. Service's recommended_tools (from manifest-driven routing)
+      2. curl as universal catch-all
+
+    Returns an action dict like {\"tool\": ..., \"args\": ...} or None if every
+    service has been touched already.  Never makes an LLM call.
+    """
+    if available_tools is None:
+        available_tools = {}
+    for svc in services:
+        port     = str(svc.get("port", ""))
+        svc_name = svc.get("name", "")
+        # Has any tool been run against this port yet?
+        if any(port in ak for ak in used_actions):
+            continue
+        # Pick the best tool from the service's recommended list
+        rec_tools = svc.get("recommended_tools", []) or ["curl"]
+        for tool in rec_tools:
+            if tool in broken_tools:
+                continue
+            if tool == "ssh_enum"  and "ssh-audit" not in available_tools:
+                continue
+            if tool == "rdp_enum"  and "rdpscan"   not in available_tools:
+                continue
+            if tool in ("nxc_smb", "nxc_ldap") and "nxc" not in available_tools:
+                continue
+            # Build minimal args for the chosen tool
+            proto = "https" if ("ssl" in svc_name.lower() or "https" in svc_name.lower()) else "http"
+            if tool in ("nikto", "nikto_cgi", "nuclei", "ffuf", "curl"):
+                args = {"url": f"{proto}://{target}:{port}"}
+            elif tool == "ssh_enum":
+                args = {"host": target, "port": port}
+            elif tool == "rdp_enum":
+                args = {"host": target, "port": port}
+            elif tool in ("mysql_enum", "mssql_enum"):
+                args = {"host": target, "port": port}
+            elif tool in ("nxc_smb", "nxc_ldap"):
+                args = {"host": target, "port": port}
+            elif tool == "dns_enum":
+                args = {"domain": target}
+            else:
+                args = {"url": f"http://{target}:{port}"}
+            action_key = f"{tool}:{str(args)}"
+            if action_key not in used_actions:
+                print(f"[*] Fallback: pivoting to untested service {svc_name} port {port} with {tool}")
+                return {"tool": tool, "args": args}
+    return None  # all services tested
 
 
 def query_llm_parallel(context, broken_tools=None, available_tools=None, used_actions=None):
@@ -3590,6 +3777,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       <span style="color:#888;font-size:.82em">{{ f.service }}</span>
       <span style="color:#aaa;font-size:.82em">Risk:&nbsp;<strong>{{ "%.2f"|format(f.risk_score) }}</strong></span>
       <span class="{{ 'ok' if f.verified else 'pend' }}" style="font-size:.82em">{{ f.verification_status }}</span>
+      {% if f.manual_review %}<span style="background:#ff9800;color:#000;padding:.2em .5em;border-radius:3px;font-size:.75em;font-weight:700;white-space:nowrap">&#9888; MANUAL REVIEW</span>{% endif %}
     </summary>
     <div style="padding:12px 16px;border-top:1px solid #0f3460">
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:.8em;margin-bottom:1em;font-size:.88em">
@@ -4469,6 +4657,53 @@ def _migrate_tool_kb_v1(kb: dict) -> dict:
         kb.setdefault("_meta", {})["version"] = 2
         print("[*] Tool KB migrated from v1 (port-keyed) to v2 (product/service-keyed)")
     return kb
+
+
+def _load_tool_manifest() -> dict:
+    """Lazy-load tool_manifest.json.  Returns {} if the file is absent.
+
+    The manifest is a subscriber artifact delivered via update.sh step 11.
+    Free users will see a one-time advisory at scan start; the scanner
+    degrades gracefully to rule-based defaults (curl catch-all).
+    """
+    global _TOOL_MANIFEST
+    if _TOOL_MANIFEST is not None:
+        return _TOOL_MANIFEST
+    if not os.path.exists(TOOL_MANIFEST_PATH):
+        _TOOL_MANIFEST = {}
+        return _TOOL_MANIFEST
+    try:
+        with open(TOOL_MANIFEST_PATH, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        # Drop the _meta sentinel so callers only iterate real tool entries
+        tool_count = sum(1 for k in data if not k.startswith("_"))
+        _TOOL_MANIFEST = data
+        print(f"[+] Tool manifest loaded \u2014 {tool_count} tool(s) ({TOOL_MANIFEST_PATH})")
+    except Exception as e:
+        print(f"[!] Tool manifest load error ({e}) \u2014 falling back to built-in service routing.")
+        _TOOL_MANIFEST = {}
+    return _TOOL_MANIFEST
+
+
+def _validate_manifest_coverage(all_tool_names: list) -> None:
+    """Warn about tools in all_tool_names that have no manifest entry.
+
+    Called once at scan start after the manifest is loaded.  Helps operators
+    identify gaps so they can run scripts/add_tool_manifest.py.
+    """
+    manifest = _load_tool_manifest()
+    if not manifest:
+        print(
+            "[*] No tool_manifest.json found.  Service routing will use built-in rules.\n"
+            "    To improve routing for unusual services, subscribe at:\n"
+            "    https://noctisedge.lemonsqueezy.com  (KB_LICENSE_KEY in noctis.conf)\n"
+            "    or generate a local manifest:  python3 scripts/build_tool_manifest.py"
+        )
+        return
+    missing = [t for t in all_tool_names if t not in manifest]
+    if missing:
+        print(f"[*] Manifest missing entries for: {', '.join(missing)} "
+              f"\u2014 run scripts/add_tool_manifest.py to add them.")
 
 
 def _load_tool_kb() -> dict:
@@ -6288,6 +6523,13 @@ async def main_async():
     else:
         print("[+] Tool KB: no prior data — will start building from this scan")
 
+    # Validate manifest coverage against the tool list and warn on gaps
+    _validate_manifest_coverage([
+        "curl", "nikto", "nikto_cgi", "nuclei", "ffuf",
+        "ssh_enum", "rdp_enum", "dns_enum", "mysql_enum", "mssql_enum",
+        "nxc_smb", "nxc_ldap",
+    ])
+
     broken_tools = set()
     nmap_phase_cmd = (
         f"nmap -Pn -T4 --open -p- --min-rate 2000 {target} | "
@@ -6386,15 +6628,44 @@ async def main_async():
         if action_key in used_actions:
             _consecutive_dupes += 1
             print(f"[!] '{tool}' with same args already ran — skipping duplicate ({_consecutive_dupes}/{_MAX_CONSECUTIVE_DUPES}).")
-            if _consecutive_dupes >= _MAX_CONSECUTIVE_DUPES:
+            # On the first duplicate, attempt a rule-based pivot to an untested service
+            # before burning more LLM iterations.  This breaks ssh_enum/curl loops on
+            # multi-service hosts where the model is stuck but other ports are untouched.
+            if _consecutive_dupes == 1:
+                fallback_action = _untested_service_fallback(
+                    context.get("services", []), target, used_actions, broken_tools, available_tools
+                )
+                if fallback_action:
+                    fb_key = f"{fallback_action['tool']}:{str(fallback_action['args'])}"
+                    used_actions.add(fb_key)
+                    action      = fallback_action
+                    action_key  = fb_key
+                    tool        = action["tool"]
+                    args        = action["args"]
+                    _consecutive_dupes = 0
+                    # Fall through to normal execution below
+                    print(f"[*] Fallback action selected — continuing with {tool}")
+                else:
+                    # No untested services remain
+                    if _consecutive_dupes >= _MAX_CONSECUTIVE_DUPES:
+                        print("[!] Too many consecutive duplicates — LLM has exhausted useful actions.")
+                        break
+                    context["history"].append({
+                        "action": action,
+                        "result": "[skipped: duplicate action]",
+                    })
+                    i += 1
+                    continue
+            elif _consecutive_dupes >= _MAX_CONSECUTIVE_DUPES:
                 print("[!] Too many consecutive duplicates — LLM has exhausted useful actions.")
                 break
-            context["history"].append({
-                "action": action,
-                "result": "[skipped: duplicate action]",
-            })
-            i += 1
-            continue
+            else:
+                context["history"].append({
+                    "action": action,
+                    "result": "[skipped: duplicate action]",
+                })
+                i += 1
+                continue
         _consecutive_dupes = 0  # reset on a fresh action
         used_actions.add(action_key)
 
