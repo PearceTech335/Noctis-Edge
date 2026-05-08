@@ -35,7 +35,7 @@ done
 # Generate noctis.conf if not present
 # A named Docker volume keeps this persistent across container restarts.
 # ---------------------------------------------------------------------------
-if [[ ! -f "$CONF_FILE" ]]; then
+if [[ ! -f "$CONF_FILE" ]] || [[ ! -s "$CONF_FILE" ]]; then
     UUID=$(python3 -c "import uuid; print(str(uuid.uuid4()))")
     cat > "$CONF_FILE" <<EOF
 # Noctis Edge -- per-user configuration (Docker)
