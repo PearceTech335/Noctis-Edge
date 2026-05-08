@@ -99,9 +99,12 @@ _OLLAMA_PLAN_OPTIONS = {"num_ctx": 2048, "temperature": 0, "top_p": 1, "num_thre
 # Override via NOCTIS_OLLAMA_KEEP_ALIVE env var (e.g. "30m", "2h").
 _OLLAMA_KEEP_ALIVE: str = os.getenv("NOCTIS_OLLAMA_KEEP_ALIVE", "1h")
 
-MAX_OUTPUT          = 3000
-MAX_ITERATIONS      = 10   # minimum base iteration count (used when few services found)
-MAX_ITERATIONS_CAP  = 40   # hard ceiling — loop can never exceed this regardless of findings
+MAX_OUTPUT           = 3000
+MAX_ITERATIONS       = 10  # floor — minimum iterations regardless of target size
+MAX_ITERATIONS_CAP   = 40  # hard ceiling — dynamic budget and extensions cannot exceed this
+MAX_EXTEND_ONCE      = 20  # one-time operator-approved overage above hard ceiling (interactive only)
+MAX_EXTENSION_BUDGET = 8   # max extra iterations auto-granted from uninvestigated findings
+                           # rate: +2 per uninvestigated finding, consumed until this budget runs out
 MAX_PARALLEL_ACTIONS = int(os.getenv("NOCTIS_MAX_PARALLEL_ACTIONS", "4"))
 MAX_LLM_RETRIES     = 3
 SAFE_MODE       = True   # can also be used with --aggressive flag for aggressive scanning an enumeration
@@ -6625,10 +6628,21 @@ async def main_async():
 
     loop_start = time.monotonic()
 
-    # Dynamic iteration budget: at least MAX_ITERATIONS, one slot per service, capped hard
-    effective_max = min(max(MAX_ITERATIONS, len(services)), MAX_ITERATIONS_CAP)
-    print(f"[+] Iteration budget: {effective_max} (services: {len(services)}, cap: {MAX_ITERATIONS_CAP})")
-    _extension_granted = False  # only grant one finding-based extension
+    def _compute_budget(n_services: int) -> int:
+        """5 iterations per service, floored at MAX_ITERATIONS, capped at MAX_ITERATIONS_CAP.
+
+        5 slots per service gives each port an initial probe plus 4 follow-ups
+        without letting one noisy scanner on a single port consume the entire
+        budget on a multi-service host.  Finding-based scaling is handled
+        separately by the extension mechanic (+2 per uninvestigated finding).
+        """
+        return min(max(MAX_ITERATIONS, n_services * 5), MAX_ITERATIONS_CAP)
+
+    effective_max    = _compute_budget(len(services))
+    _extension_total = 0  # cumulative auto-granted extensions; bounded by MAX_EXTENSION_BUDGET
+    print(f"[+] Iteration budget: {effective_max} "
+          f"(services: {len(services)} × 5 = {len(services) * 5}, "
+          f"floor: {MAX_ITERATIONS}, cap: {MAX_ITERATIONS_CAP})")
 
     # Main LLM-driven loop
     i = 0
@@ -6776,36 +6790,54 @@ async def main_async():
             "findings": len(findings) if not broken else 0,
         })
 
-        # After base budget is exhausted, grant one automatic extension for uninvestigated findings
+        # After base budget is exhausted, grant automatic extensions for uninvestigated findings
         i += 1
-        if i >= effective_max and not _extension_granted:
-            # Count findings whose title/host hasn't had a follow-up tool run
+
+        # All-tools-disabled early exit — every remaining iteration would skip; stop and report.
+        active_tools = set(available_tools.keys()) - broken_tools
+        if not active_tools:
+            print("[!] All available tools disabled — stopping early.")
+            break
+
+        # Proactive finding-based extension.
+        # Fires whenever we hit the current budget limit with extension budget remaining.
+        # Rate: +2 iterations per uninvestigated finding.
+        # Total auto-extensions bounded by MAX_EXTENSION_BUDGET (8).
+        if i >= effective_max and _extension_total < MAX_EXTENSION_BUDGET:
             investigated = {str(r.get("args", "")) for r in scan_records if r["tool"] not in {"nmap"}}
             uninvestigated = [
                 f for f in all_findings
                 if not any(str(f.host) in inv or str(f.port) in inv for inv in investigated)
             ]
             if uninvestigated:
-                extension = min(len(uninvestigated), MAX_ITERATIONS_CAP - effective_max)
-                if extension > 0:
-                    _extension_granted = True
-                    effective_max += extension
-                    print(f"\n[+] {len(uninvestigated)} finding(s) have no follow-up — extending budget by {extension} (new cap: {effective_max}/{MAX_ITERATIONS_CAP})")
+                wanted    = len(uninvestigated) * 2
+                headroom  = MAX_ITERATIONS_CAP - effective_max
+                can_grant = min(wanted, MAX_EXTENSION_BUDGET - _extension_total, headroom)
+                if can_grant > 0:
+                    _extension_total += can_grant
+                    effective_max    += can_grant
+                    print(f"\n[+] {len(uninvestigated)} uninvestigated finding(s) — "
+                          f"+{can_grant} iterations granted "
+                          f"(total auto-extensions: {_extension_total}/{MAX_EXTENSION_BUDGET}, "
+                          f"new cap: {effective_max}/{MAX_ITERATIONS_CAP})")
 
-        # When the hard cap is reached, ask the user whether to extend by 20 more
+        # Hard ceiling — one operator-approved overage of MAX_EXTEND_ONCE, then permanent stop.
         if i >= effective_max and i >= MAX_ITERATIONS_CAP:
             print(f"\n{'=' * 52}")
             print(f"  Scan ceiling reached ({i} iterations).")
             print(f"  Findings so far : {len(all_findings)}")
             print(f"  Elapsed         : {_fmt_dur(time.monotonic() - loop_start)}")
             print(f"{'=' * 52}")
+            if UNATTENDED:
+                print("[*] UNATTENDED: stopping at ceiling.")
+                break
             try:
-                answer = input("  Extend scan by 20 more iterations? [y/n]: ").strip().lower()
+                answer = input(f"  Extend scan by {MAX_EXTEND_ONCE} more iterations? [y/n]: ").strip().lower()
             except (EOFError, KeyboardInterrupt):
                 answer = "n"
             if answer in ("y", "yes"):
-                effective_max += 20
-                print(f"[+] Extended — continuing to iteration {effective_max}.")
+                effective_max = MAX_ITERATIONS_CAP + MAX_EXTEND_ONCE  # exactly one overage
+                print(f"[+] Extended to {effective_max} — no further extensions will be granted.")
             else:
                 print("[+] Finalising report.")
                 break
