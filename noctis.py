@@ -201,6 +201,24 @@ TOOL_CONFIDENCE: dict = {
 # Require explicit operator approval before running these
 AGGRESSIVE_TOOLS = {"ffuf", "hydra", "nuclei_aggressive"}
 
+# Keywords expected in an HTTP response body to confirm each vuln type.
+# Used by verify_finding() to avoid marking a finding "verified" just because
+# any curl response came back.  vuln_type values not listed here fall back to
+# the legacy heuristic (any response > 20 chars = verified).
+_VULN_BODY_KEYWORDS: dict = {
+    "Information Disclosure": ["server:", "x-powered-by:", "version", "powered by", "apache/", "nginx/", "php/", "iis/"],
+    "XSS":                    ["<script", "javascript:", "onerror=", "alert(", "document.cookie"],
+    "SQL Injection":          ["sql syntax", "mysql_fetch", "ora-0", "unclosed quotation", "syntax error"],
+    "Directory Traversal":    ["root:x:", "etc/passwd", "[boot loader]", "win.ini", "[extensions]"],
+    "RCE":                    ["uid=0", "root@", "windows nt", "/bin/sh", "command not found"],
+    "Open Redirect":          ["location:", "moved permanently", "301 moved", "302 found"],
+    "SSRF":                   ["169.254.", "127.0.0.1", "localhost", "internal server"],
+    "File Inclusion":         ["root:x:", "etc/passwd", "<?php", "warning: include", "failed to open stream"],
+    "Authentication Bypass":  ["welcome", "dashboard", "admin panel", "logged in", "access granted"],
+    "Misconfiguration":       ["index of /", "directory listing", "options +indexes", "autoindex on"],
+    "Weak SSL/TLS":           ["tls 1.0", "ssl 2.0", "rc4", "des-cbc", "export cipher"],
+}
+
 # ---------------------------------------------------------------------------
 # SAFE ARG VALIDATION — enumeration-only guardrails
 # ---------------------------------------------------------------------------
@@ -475,6 +493,7 @@ class Finding:
     cwe_id:              str  = ""  # CWE identifier (e.g. CWE-89)
     compliance_controls: list = field(default_factory=list)  # PCI-DSS, SOC2, ISO 27001
     manual_review:       bool = False  # True when nikto/scanner flags a finding that warrants manual verification
+    verifier_tool:       str  = ""   # Tool dispatched to verify this finding (set when probe_inconclusive)
 
     def to_dict(self):
         return dataclasses.asdict(self)
@@ -2818,14 +2837,45 @@ def rank_and_annotate_services(services):
 # ---------------------------------------------------------------------------
 
 async def verify_finding(finding):
-    """Auto-verify via HTTP check or evidence length heuristic."""
+    """Verify a finding via HTTP keyword check or evidence heuristic.
+
+    Low-confidence tool findings (TOOL_CONFIDENCE < 0.65: nikto, ffuf) that
+    cannot be confirmed are marked probe_inconclusive so the LLM can re-probe
+    with a better tool and the report can flag them for manual inspection.
+    """
+    # Already confirmed by the tool itself (e.g. confirmed ssh-audit paths)
+    if finding.verification_status == "confirmed":
+        finding.verified = True
+        return finding
+
+    tool_conf      = TOOL_CONFIDENCE.get(finding.tool, 0.5)
+    low_confidence = tool_conf < 0.65
+
     if finding.matched_url and finding.matched_url.startswith("http"):
         output = await run_curl_async(finding.matched_url)
         if output and not output.startswith("[!]") and len(output) > 20:
-            finding.verified            = True
-            finding.verification_status = "verified"
-            finding.confidence          = min(finding.confidence + 0.1, 1.0)
+            keywords   = _VULN_BODY_KEYWORDS.get(finding.vuln_type, [])
+            body_lower = output.lower()
+            if not keywords or any(kw.lower() in body_lower for kw in keywords):
+                finding.verified            = True
+                finding.verification_status = "verified"
+                finding.confidence          = min(finding.confidence + 0.1, 1.0)
+            else:
+                # Response came back but no confirming keyword — inconclusive
+                finding.verification_status = "probe_inconclusive"
+                finding.verifier_tool       = "curl"
+                finding.manual_review       = True
+        elif low_confidence:
+            # No usable response AND low-confidence tool — cannot verify
+            finding.verification_status = "probe_inconclusive"
+            finding.verifier_tool       = "curl"
+            finding.manual_review       = True
+    elif low_confidence:
+        # No matched_url and low-confidence tool — flag for manual follow-up
+        finding.verification_status = "probe_inconclusive"
+        finding.manual_review       = True
     elif finding.verification_status == "discovered" and len(finding.evidence) > 80:
+        # High-confidence tool with substantial evidence — accept as verified
         finding.verified            = True
         finding.verification_status = "verified"
     return finding
@@ -2883,6 +2933,17 @@ def query_llm(context, broken_tools=None, available_tools=None, used_actions=Non
         ],
         "last_3_actions": context.get("history", [])[-3:],
         "findings_count": len(context.get("findings", [])),
+        "needs_verification": [
+            {
+                "title":     f.get("title", ""),
+                "service":   f.get("service", ""),
+                "tool":      f.get("tool", ""),
+                "vuln_type": f.get("vuln_type", ""),
+                "evidence":  f.get("evidence", "")[:120],
+            }
+            for f in context.get("findings", [])
+            if f.get("verification_status") == "probe_inconclusive"
+        ],
         "already_run":    sorted(used_actions),
     }
 
@@ -2950,6 +3011,7 @@ You are a penetration testing assistant. Reply with a single JSON object only.
 6. Use NSE SCRIPT RESULTS to choose specific URLs, paths, or auth methods to test.
 7. If all recommended tools are exhausted, try a general tool (curl, nmap) with a new endpoint or argument.
 8. If there is nothing new to try, return {{"tool": "none"}}.
+9. If NEEDS_VERIFICATION findings appear in CURRENT FINDINGS, prioritise re-probing each with a different higher-confidence tool matched to its vuln_type and service (e.g. curl for HTTP header issues, nuclei for web vulns, ssh-audit for SSH) before exploring new areas.
 
 AVAILABLE TOOLS:
 {tools_block}
@@ -3702,7 +3764,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       max-height:90px;overflow-y:auto;white-space:pre-wrap;word-break:break-all}
   .tag{background:#0f3460;color:#00d4ff;padding:1px 6px;border-radius:8px;font-size:.75em;
        margin:1px;display:inline-block}
-  .ok{color:#2ed573}.pend{color:#ffa502}
+  .ok{color:#2ed573}.pend{color:#ffa502}.probe-inc{color:#ff9800;font-weight:600}
   .conclusion{background:#16213e;border-left:4px solid #00d4ff;padding:15px 20px;
               border-radius:0 8px 8px 0;margin:20px 0}
   footer{margin-top:40px;color:#555;font-size:.85em;text-align:center}
@@ -3757,6 +3819,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <div class="box"><div class="num medium">{{ counts.medium }}</div><div>Medium</div></div>
   <div class="box"><div class="num low">{{ counts.low + counts.info }}</div><div>Low / Info</div></div>
 </div>
+<div class="conclusion">{{ conclusion }}</div>
 
 {% if compliance_summary %}
 <h2>Compliance Impact</h2>
@@ -3833,7 +3896,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       <span style="color:#aaa;font-size:.82em">{{ f.tool }}</span>
       <span style="color:#888;font-size:.82em">{{ f.service }}</span>
       <span style="color:#aaa;font-size:.82em">Risk:&nbsp;<strong>{{ "%.2f"|format(f.risk_score) }}</strong></span>
-      <span class="{{ 'ok' if f.verified else 'pend' }}" style="font-size:.82em">{{ f.verification_status }}</span>
+      <span class="{{ 'ok' if f.verified else ('probe-inc' if f.verification_status == 'probe_inconclusive' else 'pend') }}" style="font-size:.82em">{% if f.verification_status == 'probe_inconclusive' %}&#9888; probe inconclusive{% else %}{{ f.verification_status }}{% endif %}</span>
       {% if f.manual_review %}<span style="background:#ff9800;color:#000;padding:.2em .5em;border-radius:3px;font-size:.75em;font-weight:700;white-space:nowrap">&#9888; MANUAL REVIEW</span>{% endif %}
     </summary>
     <div style="padding:12px 16px;border-top:1px solid #0f3460">
@@ -3847,6 +3910,15 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         <strong style="color:#00d4ff;display:block;margin-bottom:.3em">Evidence</strong>
         <div class="ev">{{ f.evidence[:400] }}</div>
       </div>
+      {% if f.verification_status == 'probe_inconclusive' %}
+      <div style="margin-bottom:.8em;background:#1a1200;border-left:3px solid #ff9800;border-radius:0 4px 4px 0;padding:.7em 1em">
+        <strong style="color:#ff9800">&#9888; Probe Inconclusive</strong>
+        <div style="font-size:.85em;color:#ffe082;margin-top:.3em;line-height:1.5">
+          {% if f.verifier_tool %}Probed with <code style="background:#0d1117;padding:.1em .4em;border-radius:3px">{{ f.verifier_tool }}</code> — no confirming evidence found.{% else %}Could not be confirmed by automated verification.{% endif %}
+          Manual inspection recommended before treating as a confirmed finding.
+        </div>
+      </div>
+      {% endif %}
       {% if f.http_response %}
       <details style="margin-bottom:.8em">
         <summary style="cursor:pointer;color:#90caf9;font-size:.88em">&#9654; Raw HTTP Response</summary>
@@ -4201,9 +4273,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 {% else %}
 <p style="color:#aaa;font-size:.9em">CVE testing was not run. Re-scan with <code>--cve-test</code> to enable.</p>
 {% endif %}
-
-<h2>Conclusion</h2>
-<div class="conclusion">{{ conclusion }}</div>
 
 <h2>Execution Log</h2>
 <table>
