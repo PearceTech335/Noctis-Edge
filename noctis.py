@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Noctis Edge — Security Through Exposure  v0.8.0
+Noctis Edge — Security Through Exposure  v0.8.1
 Implements: structured findings, verification,
 approval gates, async execution, HTML reports,
 service-specific enumerations, risk scoring,
@@ -9,7 +9,7 @@ EPSS exploit-probability scoring, NVD CVSS offline database,
 NIST CSF 2.0 compliance mapping, and OT/ICS asset classification.
 """
 
-VERSION = "v0.8.0"
+VERSION = "v0.8.1"
 
 import asyncio
 import dataclasses
