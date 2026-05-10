@@ -4984,6 +4984,68 @@ def _run_script(script: str, language: str, cwd: str, timeout: int = 30) -> dict
             pass
 
 
+def _sanitise_script(obj: dict) -> dict | None:
+    """Post-process a parsed {language, strategy, script} dict.
+
+    Fixes the most common LLM output defect: bare (unescaped) newlines/carriage-returns
+    inside string or byte literals, which produce a SyntaxError at runtime.
+    For Python scripts a compile() check is run after fixing; if it still fails the
+    result is discarded (None) so the caller can retry the LLM.
+    Bash scripts pass through unchanged.
+    """
+    script   = obj.get("script", "")
+    language = obj.get("language", "python")
+
+    if language == "python":
+        # Walk the source character-by-character, tracking whether we are inside
+        # a string literal.  Any bare newline or carriage-return found inside a
+        # literal is replaced with its two-character escape sequence.
+        def _fix_literal_newlines(src: str) -> str:
+            result: list[str] = []
+            in_str = False
+            str_ch = ""
+            i = 0
+            while i < len(src):
+                ch = src[i]
+                if not in_str:
+                    if ch in ('"', "'"):
+                        in_str = True
+                        str_ch = ch
+                    result.append(ch)
+                else:
+                    if ch == "\\":          # escape sequence — keep both chars verbatim
+                        result.append(ch)
+                        i += 1
+                        if i < len(src):
+                            result.append(src[i])
+                    elif ch == str_ch:      # closing quote
+                        in_str = False
+                        result.append(ch)
+                    elif ch == "\n":        # bare newline INSIDE a literal
+                        result.append("\\n")
+                    elif ch == "\r":        # bare carriage-return INSIDE a literal
+                        result.append("\\r")
+                    else:
+                        result.append(ch)
+                i += 1
+            return "".join(result)
+
+        fixed = _fix_literal_newlines(script)
+        if fixed != script:
+            print(f"\n  [Script] Sanitiser fixed bare newline(s) in string literal(s)")
+        script = fixed
+
+        try:
+            compile(script, "<llm_script>", "exec")
+        except SyntaxError as exc:
+            print(f"\n  [Script] SyntaxError in LLM output ({exc}) — discarding attempt")
+            return None
+
+    result_obj = dict(obj)
+    result_obj["script"] = script
+    return result_obj
+
+
 def _parse_llm_script_response(raw: str) -> dict | None:
     """Parse an LLM response that should be a JSON object with language/strategy/script keys.
 
@@ -4992,6 +5054,7 @@ def _parse_llm_script_response(raw: str) -> dict | None:
       1. Standard json.loads (handles well-formed JSON)
       2. Strip markdown fences then json.loads
       3. Regex extraction of language/strategy/script fields directly from the raw text
+    All successfully parsed objects pass through _sanitise_script() before being returned.
     Returns {language, strategy, script} or None if all strategies fail.
     """
     def _valid(obj):
@@ -5009,7 +5072,7 @@ def _parse_llm_script_response(raw: str) -> dict | None:
     try:
         obj = json.loads(text)
         if _valid(obj):
-            return obj
+            return _sanitise_script(obj)
     except Exception:
         pass
 
@@ -5020,7 +5083,7 @@ def _parse_llm_script_response(raw: str) -> dict | None:
     try:
         obj = json.loads(text)
         if _valid(obj):
-            return obj
+            return _sanitise_script(obj)
     except Exception:
         pass
 
@@ -5039,7 +5102,7 @@ def _parse_llm_script_response(raw: str) -> dict | None:
             if _valid(obj):
                 # Unescape \\n back to real newlines in the script so it runs properly
                 obj["script"] = obj["script"].replace("\\n", "\n")
-                return obj
+                return _sanitise_script(obj)
         except Exception:
             pass
 
@@ -5052,11 +5115,11 @@ def _parse_llm_script_response(raw: str) -> dict | None:
     if lang_m and strategy_m and script_m:
         script = script_m.group(1).replace("\\n", "\n").replace('\\"', '"')
         if len(script) > 20:
-            return {
+            return _sanitise_script({
                 "language": lang_m.group(1),
                 "strategy": strategy_m.group(1),
                 "script":   script,
-            }
+            })
 
     # Strategy 5: the model output a bare Python/bash code block with no JSON.
     # Wrap it in a minimal dict so it can still be executed.
@@ -5067,16 +5130,16 @@ def _parse_llm_script_response(raw: str) -> dict | None:
     if code_m:
         script = code_m.group(1).strip()
         if len(script) > 20 and "VERDICT:" in script:
-            return {
+            return _sanitise_script({
                 "language": "python",
                 "strategy": "model-generated script (unwrapped)",
                 "script":   script,
-            }
+            })
 
     return None
 
 
-def _generate_known_exploit_script(cve: dict, target: str) -> dict | None:
+def _generate_known_exploit_script(cve: dict, target: str, msf_hint: dict | None = None) -> dict | None:
     """
     Phase 0: Ask the LLM to implement the specific known safe test method described
     in the CVE data (safe_validation_method / proof_of_impact) rather than generating
@@ -5091,12 +5154,26 @@ def _generate_known_exploit_script(cve: dict, target: str) -> dict | None:
     if proof:
         guidance += (". " if guidance else "") + f"Proof: {proof}"
 
+    if msf_hint and msf_hint.get("module"):
+        _msf_verdict = (
+            "CONFIRMED VULNERABLE by MSF check" if msf_hint.get("vulnerable") is True
+            else "UNCONFIRMED (MSF check ran but could not confirm)"
+        )
+        msf_block = (
+            f"\nMSF MODULE HINT: Metasploit module '{msf_hint['module']}' exists for this CVE.\n"
+            f"MSF CHECK RESULT: {_msf_verdict}\n"
+            f"MSF OUTPUT: {(msf_hint.get('result') or '')[:120]}\n"
+            f"Use this as a mechanism hint only. Write an independent probe using requests/socket/curl. "
+            f"Do NOT call msfconsole or metasploit.\n"
+        )
+    else:
+        msf_block = ""
+
     prompt = f"""Write a Python 3 or bash vulnerability test script. Reply with JSON only.
 
 CVE: {cve.get('cve_id', '')} on {target}:{cve.get('service', '')}
 Product: {cve.get('product', '')} — {cve.get('summary', '')[:150]}
-{guidance}
-
+{guidance}{msf_block}
 ### PYTHON RULES (if language=python):
 - USE ONLY: requests, socket, re, and Python standard library.
 - FORBIDDEN: beautifulsoup4, bs4, lxml, or any non-stdlib package.
@@ -5147,7 +5224,8 @@ Reply with ONLY this JSON (no markdown, no code fences):
 
 
 def _generate_cve_test_script(cve: dict, target: str, previous_attempts: list,
-                               kb_entry: dict | None, iteration: int) -> dict | None:
+                               kb_entry: dict | None, iteration: int,
+                               msf_hint: dict | None = None) -> dict | None:
     """
     Ask the LLM to generate a single safe test script for the given CVE.
     Returns {language, strategy, script} or None on failure.
@@ -5185,6 +5263,21 @@ def _generate_cve_test_script(cve: dict, target: str, previous_attempts: list,
             kb_lines.append(f"  Prior script ({s['verdict']}): {s['strategy']}")
     kb_block = ("\nKB techniques (adapt):\n" + "\n".join(kb_lines)) if kb_lines else ""
 
+    if msf_hint and msf_hint.get("module"):
+        _msf_verdict = (
+            "CONFIRMED VULNERABLE by MSF check" if msf_hint.get("vulnerable") is True
+            else "UNCONFIRMED (MSF check ran but could not confirm)"
+        )
+        msf_block = (
+            f"\nMSF MODULE HINT: Metasploit module '{msf_hint['module']}' exists for this CVE.\n"
+            f"MSF CHECK RESULT: {_msf_verdict}\n"
+            f"MSF OUTPUT: {(msf_hint.get('result') or '')[:120]}\n"
+            f"Use this as a mechanism hint only. Write an independent probe using requests/socket/curl. "
+            f"Do NOT call msfconsole or metasploit.\n"
+        )
+    else:
+        msf_block = ""
+
     prompt = f"""Write a Python 3 or bash vulnerability test script. Reply with JSON only.
 
 CVE: {cve.get('cve_id', '')} on {target}:{cve.get('service', '')}
@@ -5192,7 +5285,7 @@ Product: {cve.get('product', '')} — {cve.get('summary', '')[:150]}
 Safe method: {cve.get('safe_validation_method', '')}
 
 ### ATTEMPTS SO FAR:
-{prior_block}{kb_block}{_banned_clause}
+{prior_block}{kb_block}{msf_block}{_banned_clause}
 ### PYTHON RULES (if language=python):
 - USE ONLY: requests, socket, re, and Python standard library.
 - FORBIDDEN: beautifulsoup4, bs4, lxml, or any non-stdlib package.
@@ -5588,10 +5681,46 @@ async def run_cve_tests(cve_matches: list, target: str,
         # Phase 0: Targeted known-exploit attempt (implements the documented
         #           safe_validation_method / proof_of_impact specifically)
         # ------------------------------------------------------------------
+
+        # Extract MSF validation result for this CVE (populated by run_msf_validation,
+        # which runs before _run_cve_test_phase).
+        msf_hint: dict | None = cve.get("msf_validation") or None
+
+        # Short-circuit: MSF already confirmed this CVE as vulnerable — no need to run
+        # any LLM probes.  Record the result and move to the next CVE.
+        if msf_hint and msf_hint.get("vulnerable") is True:
+            print(f"  [MSF] {cve_id} — CONFIRMED VULNERABLE by MSF check, skipping LLM probe phase")
+            attempts.append({
+                "attempt_num": 1,
+                "source":      "msf_confirmed",
+                "strategy":    f"[MSF] {msf_hint.get('module', 'unknown module')} check confirmed vulnerable",
+                "language":    "msf",
+                "script":      "",
+                "script_path": "",
+                "output":      (msf_hint.get("result") or "")[:600],
+                "verdict":     "VULNERABLE",
+            })
+            cve_test_results.append({
+                "cve_id":               cve_id,
+                "vulnerability_type":   cve.get("vulnerability_type", ""),
+                "service":              cve.get("service", ""),
+                "overall_verdict":      "CONFIRMED_VULNERABLE",
+                "verdict_counts":       {"VULNERABLE": 1, "NOT_VULNERABLE": 0, "INCONCLUSIVE": 0},
+                "attempts_run":         1,
+                "kb_replayed":          0,
+                "kb_pool_size":         kb_count,
+                "verified":             True,
+                "verification_results": [],
+                "inconclusive_reason":  "",
+                "attempts":             attempts,
+            })
+            _save_cve_kb(kb)
+            continue
+
         has_method = bool(cve.get("safe_validation_method") or cve.get("proof_of_impact"))
         if has_method:
             print(f"  [P0] Attempting known test method ...")
-            p0_gen = _generate_known_exploit_script(cve, target)
+            p0_gen = _generate_known_exploit_script(cve, target, msf_hint=msf_hint)
             if p0_gen:
                 language = p0_gen["language"]
                 strategy = p0_gen["strategy"]
@@ -5717,7 +5846,7 @@ async def run_cve_tests(cve_matches: list, target: str,
             attempt_num = len(attempts) + 1
             sp = _Spinner(f"[{i:02d}/{new_slots:02d}] Generating script ...").start()
             generated = _generate_cve_test_script(
-                cve, target, attempts, kb_entry, attempt_num
+                cve, target, attempts, kb_entry, attempt_num, msf_hint=msf_hint
             )
             sp.stop(" OK" if generated else " SKIPPED (parse failure)")
 
