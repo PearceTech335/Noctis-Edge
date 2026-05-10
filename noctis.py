@@ -385,35 +385,20 @@ def _safe_tool_args(tool: str, raw) -> dict:
 # ---------------------------------------------------------------------------
 
 PROFILES = {
-    "web": {
-        "name":            "Web Application Assessment",
-        "tools":           ["curl", "nikto", "nuclei", "ffuf"],
+    "standard": {
+        "name":            "Standard Assessment",
+        "tools":           ["curl", "nikto", "nuclei", "ffuf", "dns_enum",
+                            "ssh_enum", "rdp_enum", "mysql_enum", "mssql_enum"],
         "escalation":      ["nikto_full", "nuclei_aggressive"],
         "report_template": "web",
     },
-    "internal_ad": {
-        "name":            "Internal AD Assessment",
-        "tools":           ["nmap", "nxc_smb", "nxc_ldap", "impacket"],
-        "escalation":      ["hydra"],
-        "report_template": "ad",
-    },
-    "external": {
-        "name":            "External Perimeter Review",
-        "tools":           ["nmap", "curl", "nuclei", "ffuf", "dns_enum"],
-        "escalation":      ["nuclei_aggressive"],
-        "report_template": "external",
-    },
-    "api": {
-        "name":            "API Assessment",
-        "tools":           ["curl", "nuclei", "ffuf"],
-        "escalation":      ["nuclei_aggressive"],
-        "report_template": "api",
-    },
-    "cloud": {
-        "name":            "Cloud Exposure Review",
-        "tools":           ["curl", "nuclei", "dns_enum"],
-        "escalation":      [],
-        "report_template": "cloud",
+    "full": {
+        "name":            "Full Authorised Assessment",
+        "tools":           ["curl", "nikto", "nuclei", "ffuf", "dns_enum",
+                            "ssh_enum", "rdp_enum", "mysql_enum", "mssql_enum",
+                            "nxc_smb", "nxc_ldap", "impacket"],
+        "escalation":      ["nikto_full", "nuclei_aggressive", "hydra"],
+        "report_template": "web",
     },
     "ot": {
         "name":            "Industrial / OT Assessment",
@@ -7813,7 +7798,7 @@ async def main_async():
         sys.exit(1)
 
     if not profile_names:
-        profile_names = ["web"]
+        profile_names = ["standard"]
 
     # Merge selected profiles (deduplicated union of tools + escalation)
     _merged_tools:      list = []

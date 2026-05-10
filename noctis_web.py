@@ -60,14 +60,24 @@ def _read_noctis_version() -> str:
 
 VERSION  = _read_noctis_version()
 
-PROFILES = ["web", "external", "internal_ad", "api", "cloud"]
+PROFILES = ["standard", "full", "ot"]
 
 PROFILE_DESCRIPTIONS = {
-    "web":         "Web Application Assessment — curl, nikto, nuclei, gobuster, ffuf",
-    "external":    "External Perimeter Review — nmap, curl, nuclei, gobuster, dns_enum",
-    "internal_ad": "Internal AD Assessment — nmap, nxc (SMB/LDAP)",
-    "api":         "API Assessment — curl, nuclei, ffuf",
-    "cloud":       "Cloud Exposure Review — curl, nuclei, dns_enum",
+    "standard": (
+        "Standard Assessment — Use for most engagements: web apps, APIs, external perimeters, "
+        "cloud-exposed services. Runs curl, nikto, nuclei, ffuf, dns_enum and service-specific "
+        "enumerators (SSH, RDP, MySQL, MSSQL). The LLM selects tools per service automatically."
+    ),
+    "full": (
+        "Full Authorised Assessment — Use when you have explicit written authorisation for "
+        "credential testing and Active Directory enumeration. Adds nxc (SMB/LDAP), Impacket "
+        "and Hydra on top of the Standard toolset. Do not run without a signed scope document."
+    ),
+    "ot": (
+        "Industrial / OT Assessment — Use only on OT/ICS/SCADA networks. Runs passive "
+        "Nmap NSE probes only — no active scanners that could crash PLCs or disrupt "
+        "safety systems. Requires dedicated OT authorisation."
+    ),
 }
 
 # Regex to strip ANSI/VT100 escape sequences from PTY output before sending to browser
@@ -209,11 +219,18 @@ def _self_restart():
 
 # ── Routes ───────────────────────────────────────────────────────────────────
 
+_PROFILE_DISPLAY = {
+    "standard": "Standard",
+    "full":     "Full Authorised",
+    "ot":       "Industrial / OT",
+}
+
 @app.route("/")
 def index():
     return render_template_string(
         _HTML_TEMPLATE,
         profiles=PROFILES,
+        profiles_display=_PROFILE_DISPLAY,
         profile_descriptions=PROFILE_DESCRIPTIONS,
         flags=FLAGS,
         version=VERSION,
@@ -232,7 +249,7 @@ def api_start():
         if _running:
             return jsonify({"ok": False, "error": "A scan is already running"}), 409
 
-    profiles   = [p for p in data.get("profiles", []) if p in PROFILES] or ["web"]
+    profiles   = [p for p in data.get("profiles", []) if p in PROFILES] or ["standard"]
     flags      = [f for f, _ in FLAGS if f in data.get("flags", [])]
     session_dir = (data.get("session_dir") or "").strip()
 
@@ -578,7 +595,7 @@ body {
   position: relative;
 }
 .cb-row label:hover .tip { display: block; }
-input[type=checkbox] {
+input[type=checkbox], input[type=radio] {
   accent-color: var(--accent);
   width: 13px;
   height: 13px;
@@ -816,12 +833,12 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 
   <!-- Profiles -->
   <fieldset class="group">
-    <legend>Profiles (select one or more)</legend>
+    <legend>Assessment Profile</legend>
     <div class="cb-row" id="profiles-row">
       {% for p in profiles %}
-      <label>
-        <input type="checkbox" class="profile-cb" value="{{ p }}"{% if p == 'web' %} checked{% endif %}>
-        {{ p }}
+      <label title="{{ profile_descriptions[p] }}">
+        <input type="radio" class="profile-rb" name="profile" value="{{ p }}"{% if p == 'standard' %} checked{% endif %}>
+        {{ profiles_display[p] }}
         <span class="tip">{{ profile_descriptions[p] }}</span>
       </label>
       {% endfor %}
@@ -1065,8 +1082,9 @@ function startScan() {
   const target = document.getElementById('target-input').value.trim();
   if (!target) { alert('Please enter a target hostname or IP address.'); return; }
 
-  const profiles = [...document.querySelectorAll('.profile-cb:checked')].map(cb => cb.value);
-  const flags    = [...document.querySelectorAll('.flag-cb:checked')].map(cb => cb.value);
+  const profileEl = document.querySelector('.profile-rb:checked');
+  const profiles  = profileEl ? [profileEl.value] : ['standard'];
+  const flags      = [...document.querySelectorAll('.flag-cb:checked')].map(cb => cb.value);
 
   fetch('/api/start', {
     method: 'POST',
@@ -1159,8 +1177,9 @@ function submitResume() {
   if (!path) { alert('Please select a session to resume.'); return; }
   closeResumeModal();
   const target   = document.getElementById('target-input').value.trim();
-  const profiles = [...document.querySelectorAll('.profile-cb:checked')].map(cb => cb.value);
-  const flags    = [...document.querySelectorAll('.flag-cb:checked')].map(cb => cb.value);
+  const profileEl = document.querySelector('.profile-rb:checked');
+  const profiles   = profileEl ? [profileEl.value] : ['standard'];
+  const flags      = [...document.querySelectorAll('.flag-cb:checked')].map(cb => cb.value);
   // Always inject --resume since the checkbox no longer exists
   const allFlags = flags.includes('--resume') ? flags : ['--resume', ...flags];
   fetch('/api/start', {
