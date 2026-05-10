@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026 Pearce Technologies Pty Ltd
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# <https://www.gnu.org/licenses/agpl-3.0.html>
 """Download NVD JSON 2.0 feeds and extract CVSS v3.1/v4.0 scores to a lean CSV.
 
 NVD publishes per-year gzipped JSON feeds at:

@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026 Pearce Technologies Pty Ltd
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# <https://www.gnu.org/licenses/agpl-3.0.html>
 """Download the latest EPSS scores CSV and store it at CVE/epss-scores.csv.
 
 The EPSS project (FIRST.org / Empirical Security) publishes a daily gzipped CSV

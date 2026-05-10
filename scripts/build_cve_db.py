@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026 Pearce Technologies Pty Ltd
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# <https://www.gnu.org/licenses/agpl-3.0.html>
 """Build the offline CVE summary database from NVD JSON 2.0 feeds.
 
 Downloads per-year NVD feeds and extracts CVE IDs, severities, and English

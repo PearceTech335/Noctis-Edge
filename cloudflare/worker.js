@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Pearce Technologies Pty Ltd
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// <https://www.gnu.org/licenses/agpl-3.0.html>
 /**
  * Noctis Edge — CVE KB Submission Relay
  * Cloudflare Worker
