@@ -6319,7 +6319,9 @@ Product: {cve.get('product', '')} — {cve.get('summary', '')[:150]}
 Reply with ONLY this JSON (no markdown, no code fences):
 {{"language": "python", "strategy": "<one sentence>", "script": "import requests\\ntry:\\n  r = requests.get('http://{target}/', timeout=10)\\n  if 'version' in r.text:\\n    print('VERDICT: VULNERABLE')\\n  else:\\n    print('VERDICT: NOT_VULNERABLE')\\nexcept Exception:\\n  print('VERDICT: INCONCLUSIVE')"}}"""  # language may also be "bash"
 
-    _t0 = time.monotonic()
+    _t0       = time.monotonic()
+    _timed_out = False
+    _parse_fail_raw = ""
     _sp = _Spinner(f"[ LLM ]  Generating known-exploit script for {cve.get('cve_id', 'CVE')} ...").start()
     try:
         for attempt in range(MAX_LLM_RETRIES):
@@ -6331,7 +6333,7 @@ Reply with ONLY this JSON (no markdown, no code fences):
                         "prompt":     prompt,
                         "stream":     False,
                         "keep_alive": _OLLAMA_KEEP_ALIVE,
-                        "options":    {"num_ctx": 2048, "temperature": 0},
+                        "options":    {"num_ctx": 4096, "temperature": 0},
                     },
                     timeout=180,
                 )
@@ -6340,8 +6342,9 @@ Reply with ONLY this JSON (no markdown, no code fences):
                 obj = _parse_llm_script_response(raw)
                 if obj:
                     return obj
-                print(f"\n  [LLM] Known-exploit parse failure. Raw (first 200): {raw[:200]!r}")
+                _parse_fail_raw = raw[:300]
             except requests.exceptions.Timeout:
+                _timed_out = True
                 break
             except requests.exceptions.ConnectionError as exc:
                 print(f"\n  [LLM] Ollama connection error: {exc}")
@@ -6349,7 +6352,13 @@ Reply with ONLY this JSON (no markdown, no code fences):
             except Exception as exc:
                 print(f"\n  [LLM] Unexpected error: {exc}")
     finally:
-        _sp.stop(f" done ({_fmt_dur(time.monotonic() - _t0)})")
+        _elapsed = _fmt_dur(time.monotonic() - _t0)
+        if _timed_out:
+            _sp.stop(f" TIMED OUT ({_elapsed}) — try a faster model or raise OLLAMA_TIMEOUT")
+        else:
+            _sp.stop(f" done ({_elapsed})")
+        if _parse_fail_raw:
+            print(f"  [LLM] Parse failure — raw response (first 300 chars): {_parse_fail_raw!r}")
     return None
 
 
@@ -6431,7 +6440,9 @@ Safe method: {cve.get('safe_validation_method', '')}
 Reply with ONLY this JSON (no markdown, no code fences):
 {{"language": "python", "strategy": "<one sentence describing your unique approach NOT in the banned list>", "script": "import socket\\ntry:\\n  s = socket.create_connection(('{target}', PORT), timeout=10)\\n  s.send(b'PROBE\\r\\n')\\n  data = s.recv(512)\\n  print('VERDICT: VULNERABLE' if b'SIGNATURE' in data else 'VERDICT: NOT_VULNERABLE')\\n  s.close()\\nexcept Exception:\\n  print('VERDICT: INCONCLUSIVE')"}}"""  # language may also be "bash"
 
-    _t0 = time.monotonic()
+    _t0        = time.monotonic()
+    _timed_out  = False
+    _parse_fail_raw = ""
     _sp = _Spinner(f"[ LLM ]  Generating test script for {cve.get('cve_id', 'CVE')} ...").start()
     try:
         for attempt in range(MAX_LLM_RETRIES):
@@ -6452,9 +6463,9 @@ Reply with ONLY this JSON (no markdown, no code fences):
                 obj = _parse_llm_script_response(raw)
                 if obj:
                     return obj
-                # Response received but unparseable — log raw output for diagnosis
-                print(f"\n  [LLM] Parse failure. Raw response (first 200 chars): {raw[:200]!r}")
+                _parse_fail_raw = raw[:300]
             except requests.exceptions.Timeout:
+                _timed_out = True
                 break  # no point retrying a timeout — LLM is too slow right now
             except requests.exceptions.ConnectionError as exc:
                 print(f"\n  [LLM] Ollama connection error: {exc}")
@@ -6462,7 +6473,13 @@ Reply with ONLY this JSON (no markdown, no code fences):
             except Exception as exc:
                 print(f"\n  [LLM] Unexpected error: {exc}")
     finally:
-        _sp.stop(f" done ({_fmt_dur(time.monotonic() - _t0)})")
+        _elapsed = _fmt_dur(time.monotonic() - _t0)
+        if _timed_out:
+            _sp.stop(f" TIMED OUT ({_elapsed}) — try a faster model or raise OLLAMA_TIMEOUT")
+        else:
+            _sp.stop(f" done ({_elapsed})")
+        if _parse_fail_raw:
+            print(f"  [LLM] Parse failure — raw response (first 300 chars): {_parse_fail_raw!r}")
     return None
 
 
@@ -6498,7 +6515,9 @@ DO NOT REUSE THAT LOGIC. Use a different endpoint, different response field, or 
 Reply with ONLY this JSON (no markdown, no code fences):
 {{"language": "python", "strategy": "<different strategy>", "script": "import requests\\ntry:\\n  r = requests.get('http://{target}/', timeout=10, headers={{'User-Agent': 'NoctisVerify/1.0'}})\\n  print('VERDICT: VULNERABLE' if 'CUPS' in r.headers.get('Server', '') else 'VERDICT: NOT_VULNERABLE')\\nexcept Exception:\\n  print('VERDICT: INCONCLUSIVE')"}}"""  # language may also be "bash"
 
-    _t0 = time.monotonic()
+    _t0        = time.monotonic()
+    _timed_out  = False
+    _parse_fail_raw = ""
     _sp = _Spinner("[ LLM ]  Generating verification script ...").start()
     try:
         for attempt in range(MAX_LLM_RETRIES):
@@ -6519,8 +6538,9 @@ Reply with ONLY this JSON (no markdown, no code fences):
                 obj = _parse_llm_script_response(raw)
                 if obj:
                     return obj
-                print(f"\n  [LLM] Verifier parse failure. Raw (first 200 chars): {raw[:200]!r}")
+                _parse_fail_raw = raw[:300]
             except requests.exceptions.Timeout:
+                _timed_out = True
                 break
             except requests.exceptions.ConnectionError as exc:
                 print(f"\n  [LLM] Ollama connection error: {exc}")
@@ -6528,7 +6548,13 @@ Reply with ONLY this JSON (no markdown, no code fences):
             except Exception as exc:
                 print(f"\n  [LLM] Unexpected error: {exc}")
     finally:
-        _sp.stop(f" done ({_fmt_dur(time.monotonic() - _t0)})")
+        _elapsed = _fmt_dur(time.monotonic() - _t0)
+        if _timed_out:
+            _sp.stop(f" TIMED OUT ({_elapsed}) — try a faster model or raise OLLAMA_TIMEOUT")
+        else:
+            _sp.stop(f" done ({_elapsed})")
+        if _parse_fail_raw:
+            print(f"  [LLM] Parse failure — raw response (first 300 chars): {_parse_fail_raw!r}")
     return None
 
 
