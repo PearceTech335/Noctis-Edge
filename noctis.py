@@ -105,8 +105,12 @@ MAX_ITERATIONS_CAP   = 40  # hard ceiling — dynamic budget and extensions cann
 MAX_EXTEND_ONCE      = 20  # one-time operator-approved overage above hard ceiling (interactive only)
 MAX_EXTENSION_BUDGET = 8   # max extra iterations auto-granted from uninvestigated findings
                            # rate: +2 per uninvestigated finding, consumed until this budget runs out
-MAX_PARALLEL_ACTIONS = int(os.getenv("NOCTIS_MAX_PARALLEL_ACTIONS", "4"))
-MAX_LLM_RETRIES     = 3
+MAX_PARALLEL_ACTIONS      = int(os.getenv("NOCTIS_MAX_PARALLEL_ACTIONS",      "4"))
+PROBE_BATCH_SIZE          = int(os.getenv("NOCTIS_PROBE_BATCH_SIZE",          "4"))  # services per concurrent batch
+MAX_ROUNDS_PER_SERVICE    = int(os.getenv("NOCTIS_MAX_ROUNDS_PER_SERVICE",    "5"))  # probe rounds per service
+EXTRA_ROUNDS_PER_FINDING  = 2   # extension rounds granted per uninvestigated finding
+MAX_EXTRA_ROUNDS          = 4   # per-service cap on auto-granted extra rounds
+MAX_LLM_RETRIES           = 3
 SAFE_MODE       = True   # can also be used with --aggressive flag for aggressive scanning an enumeration
 AIRGAP_MODE     = True   # default on; --dns opts in to internet-dependent DNS enumeration tools
 MSF_VALIDATE    = False  # set via --msf-validate; runs safe MSF check probes for each CVE match
@@ -3625,6 +3629,339 @@ async def execute_async(action, available_tools, session_dir=None):
         return output, []
 
     return "[!] Unknown tool", []
+
+
+def query_llm_for_service(
+    svc: dict,
+    target: str,
+    svc_history: list,
+    svc_findings: list,
+    shared_findings: list,
+    broken_tools: set,
+    available_tools: dict,
+    used_actions: set,
+    timed_out_tools: dict,
+) -> dict:
+    """Plan the next action for a single service during the batched probe loop.
+
+    Returns a single validated action dict, or {"tool": "none"} when exhausted.
+    Uses the fast planning model (PLANNING_MODEL / gemma3:4b) for low latency.
+    """
+    port    = svc.get("port", "?")
+    name    = svc.get("name", "unknown")
+    product = svc.get("product", "")
+    version = svc.get("version", "")
+    svc_label = f"{port}/{name}" + (f" ({product} {version})".rstrip() if product else "")
+
+    all_tool_descs = {
+        "curl":       'curl: {"url": "http://target:port/path", "method": "GET", "headers": {}}  — optional: method, headers dict',
+        "nikto":      'nikto: {"url": "http://target:port", "ssl": false}  — optional: ssl:true',
+        "nikto_cgi":  'nikto_cgi: {"url": "http://target:port", "ssl": false}  — nikto with -C all',
+        "nuclei":     f'nuclei: {{"url": "http://target:port", "tags": "cve,lfi,sqli", "severity": "medium,high,critical"}}',
+        "ffuf":       f'ffuf: {{"url": "http://target:port", "wordlist": "{WORDLIST}", "extensions": "php,html", "method": "GET", "match_codes": "200,301,302,401,403", "maxtime": 300}}',
+        "ssh_enum":   'ssh_enum: {"host": "...", "port": "22"}',
+        "rdp_enum":   'rdp_enum: {"host": "...", "port": "3389"}',
+        "dns_enum":   'dns_enum: {"domain": "..."}',
+        "mysql_enum": 'mysql_enum: {"host": "...", "port": "3306"}',
+        "mssql_enum": 'mssql_enum: {"host": "...", "port": "1433"}',
+    }
+    available_descs = [
+        f"- {desc}" for tname, desc in all_tool_descs.items()
+        if tname not in broken_tools
+        and not (tname == "ssh_enum" and "ssh-audit"  not in available_tools)
+        and not (tname == "rdp_enum" and "rdpscan"    not in available_tools)
+    ]
+    tools_block = "\n".join(available_descs)
+
+    # Build already-run block scoped to this service's port
+    svc_run = sorted(
+        a for a in used_actions
+        if f":{port}" in a or f":{target}" in a
+    )
+    already_run_block = (
+        "ALREADY RUN ON THIS SERVICE — DO NOT REPEAT:\n"
+        + "\n".join(f"  - {a}" for a in svc_run)
+        if svc_run else "ALREADY RUN ON THIS SERVICE: (none yet)"
+    )
+    disabled_block = (
+        "DISABLED TOOLS — DO NOT USE: " + ", ".join(sorted(broken_tools))
+        if broken_tools else ""
+    )
+
+    # Compact history for this service (last 3 actions)
+    history_lines = []
+    for h in svc_history[-3:]:
+        act    = h.get("action", {})
+        result = h.get("result", "")[:150]
+        nf     = h.get("findings", 0)
+        history_lines.append(f"  {act.get('tool','?')} → {result} [{nf} finding(s)]")
+    history_block = "\n".join(history_lines) if history_lines else "  (no history yet)"
+
+    # Compact findings for this service
+    svc_findings_lines = [
+        f"  [{f.get('severity','?').upper()}] {f.get('title','')} — {f.get('verification_status','')}"
+        for f in svc_findings[-5:]
+    ]
+    svc_findings_block = "\n".join(svc_findings_lines) if svc_findings_lines else "  (none yet)"
+
+    # Cross-service context (findings from other services)
+    shared_lines = [
+        f"  [{f.get('severity','?').upper()}] {f.get('service','')} — {f.get('title','')}"
+        for f in shared_findings[-5:]
+    ]
+    shared_block = (
+        "FINDINGS FROM OTHER SERVICES (context only — do not repeat these probes):\n"
+        + "\n".join(shared_lines)
+        if shared_lines else ""
+    )
+
+    # Recommended tools from manifest
+    rec_tools = svc.get("recommended_tools", [])
+    rec_block  = ("RECOMMENDED TOOLS (ordered by KB success rate): "
+                  + ", ".join(t["tool"] for t in rec_tools[:4])
+                  if rec_tools else "")
+
+    prompt = f"""### SERVICE PROBE — Reply with ONE JSON object only.
+
+{already_run_block}
+{disabled_block}
+
+TARGET SERVICE: {svc_label}  (host: {target})
+{rec_block}
+
+RECENT ACTIONS ON THIS SERVICE:
+{history_block}
+
+FINDINGS ON THIS SERVICE SO FAR:
+{svc_findings_block}
+
+{shared_block}
+
+AVAILABLE TOOLS:
+{tools_block}
+
+RULES:
+1. JSON only — no prose, no markdown.
+2. Choose the single most useful next action for THIS SERVICE.
+3. Never repeat a tool+args from ALREADY RUN ON THIS SERVICE.
+4. If you have exhausted all useful actions for this service, return {{"tool": "none"}}.
+5. Prefer recommended tools; use higher success-rate tools first.
+
+Return EXACTLY:
+{{"tool": "<name>", "args": <value>}}
+or
+{{"tool": "none"}}"""
+
+    raw = ""
+    _t0 = time.monotonic()
+    _sp = _Spinner(f"[ LLM ]  Planning {svc_label} ...").start()
+    try:
+        for attempt in range(MAX_LLM_RETRIES):
+            try:
+                response = requests.post(
+                    OLLAMA_URL,
+                    json={
+                        "model":      MODEL,
+                        "prompt":     prompt,
+                        "stream":     False,
+                        "format":     "json",
+                        "keep_alive": _OLLAMA_KEEP_ALIVE,
+                        "options":    _OLLAMA_PLAN_OPTIONS,
+                    },
+                    timeout=OLLAMA_TIMEOUT,
+                )
+                payload = response.json()
+                if "error" in payload or "response" not in payload:
+                    continue
+                raw = payload["response"]
+                stripped = raw.strip()
+                if stripped.startswith("```"):
+                    stripped = stripped.split("\n", 1)[-1]
+                    stripped = stripped.rsplit("```", 1)[0]
+                action = json.loads(stripped.strip())
+                if validate_action(action):
+                    return action
+            except json.JSONDecodeError:
+                pass
+            except Exception as exc:
+                print(f"  [hc] LLM error for {svc_label} (attempt {attempt + 1}): {exc}")
+    finally:
+        _sp.stop(f" done ({_fmt_dur(time.monotonic() - _t0)})")
+
+    return {"tool": "none"}
+
+
+async def run_service_probe_batch(
+    services_batch: list,
+    target: str,
+    all_findings: list,
+    used_actions: set,
+    tool_kb: dict,
+    available_tools: dict,
+    session_dir: str,
+    broken_tools: set,
+    timed_out_tools: dict,
+    scan_records: list,
+    batch_idx: int,
+    total_batches: int,
+) -> list:
+    """Run concurrent per-service probing for a batch of services.
+
+    Each service gets its own LLM query each round.  Services are dropped when
+    the LLM returns 'none' or they exhaust their round budget.  Shared findings
+    are passed into every per-service prompt so cross-port correlation is preserved.
+
+    Returns a list of Finding objects discovered during this batch.
+    """
+    # Per-service state
+    class _SvcState:
+        __slots__ = ("svc", "history", "findings", "rounds_left", "extra_used", "label")
+        def __init__(self, svc):
+            self.svc        = svc
+            self.history    = []
+            self.findings   = []
+            self.rounds_left = MAX_ROUNDS_PER_SERVICE
+            self.extra_used  = 0
+            port    = svc.get("port", "?")
+            name    = svc.get("name", "")
+            product = svc.get("product", "")
+            self.label = f"{port}/{name}" + (f" ({product.split()[0]})" if product else "")
+
+    active = [_SvcState(s) for s in services_batch]
+    batch_findings: list = []
+    round_num = 0
+
+    while active:
+        round_num += 1
+
+        # --- Print batch/round header -------------------------------------------
+        svc_labels = "  ·  ".join(st.label for st in active)
+        print(f"\n{'=' * 52}")
+        print(f"  Batch {batch_idx + 1}/{total_batches}  Round {round_num}  |  "
+              f"Target: {target}  |  Services: {len(active)}")
+        print(f"  Probing: {svc_labels}")
+        print(f"{'=' * 52}")
+
+        # Shared findings summary for cross-service context (max 5, most recent)
+        shared_summary = [dataclasses.asdict(f) for f in all_findings[-5:]] if all_findings else []
+
+        # --- Concurrent LLM queries for all active services ---------------------
+        loop = asyncio.get_event_loop()
+        llm_futures = [
+            loop.run_in_executor(
+                None,
+                query_llm_for_service,
+                st.svc, target, st.history, st.findings, shared_summary,
+                broken_tools, available_tools, used_actions, timed_out_tools,
+            )
+            for st in active
+        ]
+        actions_raw = await asyncio.gather(*llm_futures, return_exceptions=True)
+
+        # --- Collect non-none actions, print per-service decision ---------------
+        wave_actions  = []
+        active_states = []
+        none_states   = []
+
+        for st, action in zip(active, actions_raw):
+            if isinstance(action, Exception):
+                action = {"tool": "none"}
+            tool = action.get("tool", "none")
+            if tool == "none":
+                print(f"  [{st.label:<18}]  none — exhausted")
+                none_states.append(st)
+                continue
+            action_key = f"{tool}:{str(action.get('args', ''))}"
+            if action_key in used_actions:
+                print(f"  [{st.label:<18}]  {tool} — duplicate, skipping")
+                st.rounds_left -= 1
+                if st.rounds_left > 0:
+                    active_states.append(st)
+                continue
+            used_actions.add(action_key)
+            # Tag the action with the service so we can route results back
+            action["_svc_label"] = st.label
+            action["_svc_state"] = st
+            wave_actions.append(action)
+            active_states.append(st)
+            args_preview = str(action.get("args", ""))[:60]
+            print(f"  [{st.label:<18}]  {tool} → {args_preview}")
+
+        # --- Execute all planned actions in a parallel wave ---------------------
+        if wave_actions:
+            # Strip internal routing keys before passing to execute_async
+            clean_actions = [
+                {k: v for k, v in a.items() if not k.startswith("_")}
+                for a in wave_actions
+            ]
+            wave_results, wave_scan_records = await run_parallel_wave(
+                clean_actions, available_tools, session_dir
+            )
+            scan_records.extend(wave_scan_records)
+
+            # Route results back to the correct per-service state
+            # wave_results is list of (action, output, findings, broken)
+            for orig_action, (_, output, findings, broken) in zip(wave_actions, wave_results):
+                tool = orig_action.get("tool", "?")
+                st   = orig_action["_svc_state"]
+
+                timed_out_w = "Command timed out" in (output or "")
+                _record_tool_outcome(
+                    tool_kb, tool,
+                    _svc_key(tool, orig_action.get("args", ""), services_batch),
+                    len(findings) if findings else 0,
+                    broken, timed_out_w,
+                )
+
+                if broken:
+                    broken_tools.add(tool)
+                    print(f"  [!] '{tool}' appears broken — disabling.")
+                elif timed_out_w and not findings and tool not in {"ffuf", "nikto"}:
+                    _ban_key = _svc_key(tool, orig_action.get("args", ""), services_batch)
+                    timed_out_tools.setdefault(tool, set()).add(_ban_key)
+
+                st.history.append({
+                    "action":   orig_action,
+                    "result":   (output or "")[:200],
+                    "findings": len(findings) if findings else 0,
+                })
+
+                if findings and not broken:
+                    st.findings.extend([dataclasses.asdict(f) for f in findings])
+                    batch_findings.extend(findings)
+                    all_findings.extend(findings)
+                    print(f"  [+] {len(findings)} finding(s) from {tool} on {st.label}")
+
+            # Re-sync active_states based on wave results
+            # (broken tools may have caused some states to need re-evaluation)
+
+        # --- Extension mechanic — grant extra rounds for uninvestigated findings -
+        for st in active_states:
+            uninvestigated = [
+                f for f in st.findings
+                if f.get("verification_status") == "probe_inconclusive"
+            ]
+            if uninvestigated and st.extra_used < MAX_EXTRA_ROUNDS:
+                grant = min(
+                    len(uninvestigated) * EXTRA_ROUNDS_PER_FINDING,
+                    MAX_EXTRA_ROUNDS - st.extra_used,
+                )
+                st.rounds_left += grant
+                st.extra_used  += grant
+                print(f"  [+] {st.label}: +{grant} extra round(s) for {len(uninvestigated)} uninvestigated finding(s)")
+
+        # --- Decrement rounds and drop exhausted services -----------------------
+        next_active = []
+        for st in active_states:
+            st.rounds_left -= 1
+            if st.rounds_left > 0:
+                next_active.append(st)
+            else:
+                print(f"  [~] {st.label}: round budget exhausted — moving on")
+
+        active = next_active
+
+    return batch_findings
 
 
 async def run_parallel_wave(actions, available_tools, session_dir):
@@ -7724,231 +8061,62 @@ async def main_async():
 
     loop_start = time.monotonic()
 
-    def _compute_budget(n_services: int) -> int:
-        """5 iterations per service, floored at MAX_ITERATIONS, capped at MAX_ITERATIONS_CAP.
+    # ---------------------------------------------------------------------------
+    # Phase 2 — Service-batched concurrent deep probe loop
+    # Services are grouped into batches of PROBE_BATCH_SIZE.  Within each batch
+    # every service gets its own LLM query per round; all non-none actions run
+    # concurrently via run_parallel_wave.  Services drop out when the LLM returns
+    # 'none' or they exhaust MAX_ROUNDS_PER_SERVICE rounds.
+    # ---------------------------------------------------------------------------
+    def _chunks(lst, n):
+        for k in range(0, len(lst), n):
+            yield lst[k : k + n]
 
-        5 slots per service gives each port an initial probe plus 4 follow-ups
-        without letting one noisy scanner on a single port consume the entire
-        budget on a multi-service host.  Finding-based scaling is handled
-        separately by the extension mechanic (+2 per uninvestigated finding).
-        """
-        return min(max(MAX_ITERATIONS, n_services * 5), MAX_ITERATIONS_CAP)
+    total_batches = max(1, -(-len(services) // PROBE_BATCH_SIZE))  # ceiling div
+    print(f"\n{'=' * 52}")
+    print(f"  Phase 2 — Batched Service Probe Loop")
+    print(f"  Services: {len(services)}  |  "
+          f"Batch size: {PROBE_BATCH_SIZE}  |  "
+          f"Batches: {total_batches}  |  "
+          f"Max rounds/service: {MAX_ROUNDS_PER_SERVICE}")
+    print(f"{'=' * 52}")
 
-    effective_max    = _compute_budget(len(services))
-    _extension_total = 0  # cumulative auto-granted extensions; bounded by MAX_EXTENSION_BUDGET
-    print(f"[+] Iteration budget: {effective_max} "
-          f"(services: {len(services)} × 5 = {len(services) * 5}, "
-          f"floor: {MAX_ITERATIONS}, cap: {MAX_ITERATIONS_CAP})")
-
-    # Main LLM-driven loop
-    i = 0
-    _consecutive_dupes = 0
-    _MAX_CONSECUTIVE_DUPES = 3  # stop early if model is stuck in a loop
-    while i < effective_max:
-        _ifrac = 0.20 + (i / max(effective_max, 1)) * 0.50
-        _ielap = (datetime.now() - scan_start).total_seconds()
-        _ieta  = (scan_start + timedelta(seconds=_ielap / _ifrac)).strftime("%H:%M") if _ifrac > 0.02 else "…"
-        print(f"\n{'=' * 52}")
-        print(f"  Iteration {i + 1} / {effective_max}  |  Target: {target}  |  Elapsed: {_fmt_dur(time.monotonic() - loop_start)}  |  Est. completion: {_ieta}")
-        print(f"{'=' * 52}")
-        if broken_tools:
-            print(f"  Disabled : {', '.join(sorted(broken_tools))}")
-        if timed_out_tools:
-            print(f"  Timed out (per-svc): {', '.join(sorted(timed_out_tools))}")
-        if all_findings:
-            print(f"  Findings : {len(all_findings)} so far")
-
-        sp = _Spinner("Asking LLM ...").start()
-        action = query_llm(context, broken_tools, available_tools, used_actions, timed_out_tools)
-        sp.stop()
-        tool   = action.get("tool", "none")
-        args   = action.get("args", "")
-
-        if tool == "none":
-            print("[LLM] No further actions suggested — stopping.")
-            break
-
-        # Skip exact duplicate tool+args combos
-        action_key = f"{tool}:{str(args)}"
-        if action_key in used_actions:
-            _consecutive_dupes += 1
-            print(f"[!] '{tool}' with same args already ran — skipping duplicate ({_consecutive_dupes}/{_MAX_CONSECUTIVE_DUPES}).")
-            # On the first duplicate, attempt a rule-based pivot to an untested service
-            # before burning more LLM iterations.  This breaks ssh_enum/curl loops on
-            # multi-service hosts where the model is stuck but other ports are untouched.
-            if _consecutive_dupes == 1:
-                fallback_action = _untested_service_fallback(
-                    context.get("services", []), target, used_actions, broken_tools, available_tools, timed_out_tools
-                )
-                if fallback_action:
-                    fb_key = f"{fallback_action['tool']}:{str(fallback_action['args'])}"
-                    used_actions.add(fb_key)
-                    action      = fallback_action
-                    action_key  = fb_key
-                    tool        = action["tool"]
-                    args        = action["args"]
-                    _consecutive_dupes = 0
-                    # Fall through to normal execution below
-                    print(f"[*] Fallback action selected — continuing with {tool}")
-                else:
-                    # No untested services remain
-                    if _consecutive_dupes >= _MAX_CONSECUTIVE_DUPES:
-                        print("[!] Too many consecutive duplicates — LLM has exhausted useful actions.")
-                        break
-                    context["history"].append({
-                        "action": action,
-                        "result": "[skipped: duplicate action]",
-                    })
-                    i += 1
-                    continue
-            elif _consecutive_dupes >= _MAX_CONSECUTIVE_DUPES:
-                print("[!] Too many consecutive duplicates — LLM has exhausted useful actions.")
-                break
-            else:
-                context["history"].append({
-                    "action": action,
-                    "result": "[skipped: duplicate action]",
-                })
-                i += 1
-                continue
-        _consecutive_dupes = 0  # reset on a fresh action
-        used_actions.add(action_key)
-
-        print(f"[LLM] Tool : {tool}")
-        print(f"      Args : {args}")
-
-        save_session({
-            "target":         target,
-            "profile":        profile_name,
-            "iteration":      i + 1,
-            "history_len":    len(context["history"]),
-            "findings_count": len(all_findings),
-        })
-
-        start_time           = time.time()
-        output, findings     = await execute_async(action, available_tools, session_dir=session_dir)
-        duration             = time.time() - start_time
-
-        if output is None:
-            print("[+] Stopping.")
-            break
-
-        timed_out = "Command timed out" in output
-        broken = is_tool_broken(output)
-        # ffuf/nikto may time out on slow targets but still produce results;
-        # only disable them if they're actually broken (error signals), not just slow.
-        output_only_tools = {"ffuf", "nikto"}
-
-        # Record outcome in tool KB before deciding broken status
-        _record_tool_outcome(
-            tool_kb, tool,
-            _svc_key(tool, args, services),
-            len(findings) if findings else 0,
-            broken, timed_out,
+    for batch_idx, svc_batch in enumerate(_chunks(services, PROBE_BATCH_SIZE)):
+        print(f"\n[+] Starting batch {batch_idx + 1}/{total_batches} "
+              f"({len(svc_batch)} service(s)): "
+              + "  ·  ".join(
+                  f"{s.get('port','?')}/{s.get('name','?')}" for s in svc_batch
+              ))
+        batch_findings = await run_service_probe_batch(
+            services_batch  = svc_batch,
+            target          = target,
+            all_findings    = all_findings,
+            used_actions    = used_actions,
+            tool_kb         = tool_kb,
+            available_tools = available_tools,
+            session_dir     = session_dir,
+            broken_tools    = broken_tools,
+            timed_out_tools = timed_out_tools,
+            scan_records    = scan_records,
+            batch_idx       = batch_idx,
+            total_batches   = total_batches,
         )
+        # Persist KB after each batch so partial results survive interruptions
         _save_tool_kb(tool_kb)
         context["tool_kb_text"] = _tool_kb_summary(tool_kb)
+        context["findings"] = [dataclasses.asdict(f) for f in all_findings[-5:]]
+        print(f"[+] Batch {batch_idx + 1}/{total_batches} complete — "
+              f"{len(batch_findings)} finding(s) this batch, "
+              f"{len(all_findings)} total so far")
 
-        if broken:
-            print(f"[!] '{tool}' appears broken — disabling for this session.")
-            broken_tools.add(tool)
-        elif timed_out and not findings and tool not in output_only_tools:
-            # Per-service ban only: record the service type that this tool timed out on
-            # so it can still be used against other service types later in the scan.
-            _ban_key = _svc_key(tool, args, services)
-            timed_out_tools.setdefault(tool, set()).add(_ban_key)
-            print(f"[!] '{tool}' timed out with no findings on '{_ban_key}' — "
-                  f"skipping this service type (still usable on others).")
-        else:
-            preview = output.strip()[:300].replace("\n", " | ")
-            print(f"\n[>] Result: {preview}")
-            if findings:
-                print(f"[+] {len(findings)} structured finding(s) extracted")
-
-        # Verification stage
-        if findings and not broken:
-            for f in findings:
-                if not f.vuln_type:
-                    f.vuln_type, f.cwe_id, f.compliance_controls = _enrich_finding_metadata(
-                        f.title, f.evidence, f.service
-                    )
-            findings = await verify_findings_batch(findings)
-            all_findings.extend(findings)
-            for f in findings:
-                f.tags = list(set(f.tags + auto_tag(f)))
-            context["findings"] = [dataclasses.asdict(f) for f in all_findings[-5:]]
-
-        scan_records.append({
-            "iteration":      i + 1,
-            "tool":           tool,
-            "args":           args,
-            "cmd":            _describe_cmd(tool, args, available_tools),
-            "status":         "broken" if broken else "ok",
-            "output":         output,
-            "findings_count": len(findings) if not broken else 0,
-        })
-
-        context["history"].append({
-            "action":   action,
-            "result":   output[:300],
-            "findings": len(findings) if not broken else 0,
-        })
-
-        # After base budget is exhausted, grant automatic extensions for uninvestigated findings
-        i += 1
-
-        # All-tools-disabled early exit — every remaining iteration would skip; stop and report.
+        # Early exit if all tools are broken
         active_tools = set(available_tools.keys()) - broken_tools
         if not active_tools:
             print("[!] All available tools disabled — stopping early.")
             break
 
-        # Proactive finding-based extension.
-        # Fires whenever we hit the current budget limit with extension budget remaining.
-        # Rate: +2 iterations per uninvestigated finding.
-        # Total auto-extensions bounded by MAX_EXTENSION_BUDGET (8).
-        if i >= effective_max and _extension_total < MAX_EXTENSION_BUDGET:
-            investigated = {str(r.get("args", "")) for r in scan_records if r["tool"] not in {"nmap"}}
-            uninvestigated = [
-                f for f in all_findings
-                if not any(str(f.host) in inv or str(f.port) in inv for inv in investigated)
-            ]
-            if uninvestigated:
-                wanted    = len(uninvestigated) * 2
-                headroom  = MAX_ITERATIONS_CAP - effective_max
-                can_grant = min(wanted, MAX_EXTENSION_BUDGET - _extension_total, headroom)
-                if can_grant > 0:
-                    _extension_total += can_grant
-                    effective_max    += can_grant
-                    print(f"\n[+] {len(uninvestigated)} uninvestigated finding(s) — "
-                          f"+{can_grant} iterations granted "
-                          f"(total auto-extensions: {_extension_total}/{MAX_EXTENSION_BUDGET}, "
-                          f"new cap: {effective_max}/{MAX_ITERATIONS_CAP})")
-
-        # Hard ceiling — one operator-approved overage of MAX_EXTEND_ONCE, then permanent stop.
-        if i >= effective_max and i >= MAX_ITERATIONS_CAP:
-            print(f"\n{'=' * 52}")
-            print(f"  Scan ceiling reached ({i} iterations).")
-            print(f"  Findings so far : {len(all_findings)}")
-            print(f"  Elapsed         : {_fmt_dur(time.monotonic() - loop_start)}")
-            print(f"{'=' * 52}")
-            if UNATTENDED:
-                print("[*] UNATTENDED: stopping at ceiling.")
-                break
-            try:
-                answer = input(f"  Extend scan by {MAX_EXTEND_ONCE} more iterations? [y/n]: ").strip().lower()
-            except (EOFError, KeyboardInterrupt):
-                answer = "n"
-            if answer in ("y", "yes"):
-                effective_max = MAX_ITERATIONS_CAP + MAX_EXTEND_ONCE  # exactly one overage
-                print(f"[+] Extended to {effective_max} — no further extensions will be granted.")
-            else:
-                print("[+] Finalising report.")
-                break
-
     print(f"\n{'=' * 52}")
-    print(f"[+] Done — {len(context['history'])} action(s) on {target}")
-    print(f"[+] {len(all_findings)} total findings collected")
+    print(f"[+] Phase 2 complete — {len(all_findings)} total finding(s) on {target}")
     print(f"[+] Total scan time: {_fmt_dur(time.monotonic() - loop_start)}")
     print(f"{'=' * 52}")
     _print_scan_eta("Iterations complete", scan_start, 0.70)
