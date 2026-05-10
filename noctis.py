@@ -3910,6 +3910,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         <strong style="color:#00d4ff;display:block;margin-bottom:.3em">Evidence</strong>
         <div class="ev">{{ f.evidence[:400] }}</div>
       </div>
+      {% if f.description %}
+      <div style="margin-bottom:.8em;background:#1a0d00;border-left:3px solid #ff9800;border-radius:0 4px 4px 0;padding:.8em 1em">
+        <strong style="color:#ff9800">&#9760; Security Risk &amp; Recommendation</strong>
+        <div style="color:#ffe0b2;margin-top:.45em;white-space:pre-wrap;line-height:1.55">{{ f.description }}</div>
+      </div>
+      {% endif %}
       {% if f.verification_status == 'probe_inconclusive' %}
       <div style="margin-bottom:.8em;background:#1a1200;border-left:3px solid #ff9800;border-radius:0 4px 4px 0;padding:.7em 1em">
         <strong style="color:#ff9800">&#9888; Probe Inconclusive</strong>
@@ -4952,6 +4958,805 @@ def _tool_kb_summary(tool_kb: dict) -> str:
     blocks += ["", "TOOL KB — best tools per service/infrastructure type:"]
     blocks += svc_lines
     return "\n".join(blocks)
+
+
+# ===========================================================================
+# SERVICE HEALTH CHECKS
+# Parse NSE output already collected during nmap Phase 3 into structured
+# Finding objects, covering low-hanging-fruit misconfigurations that a
+# security tester would flag before any CVE lookup.
+# ===========================================================================
+
+def _hc_finding(svc: dict, target: str, title: str, severity: str,
+                evidence: str, vuln_type: str = "Configuration Issue",
+                cwe_id: str = "", tags: list | None = None) -> Finding:
+    """Construct a health-check Finding with consistent defaults."""
+    port    = svc.get("port", "?")
+    svcname = svc.get("name", "unknown")
+    product = svc.get("product", "")
+    version = svc.get("version", "")
+    label   = f"{product} {version}".strip() or svcname
+    sev_score = {"critical": 9.5, "high": 7.5, "medium": 5.0, "low": 2.5, "info": 0.5}
+    score = sev_score.get(severity, 2.5)
+    return Finding(
+        finding_id          = make_finding_id("svc_health", f"{target}:{port}", title),
+        tool                = "svc_health",
+        target              = f"{target}:{port}",
+        service             = svcname,
+        severity            = severity,
+        title               = title,
+        evidence            = evidence,
+        confidence          = 0.9,
+        verified            = True,
+        timestamp           = datetime.now(timezone.utc).isoformat(),
+        tags                = (tags or []) + ["health_check", "config", svcname],
+        cvss_score          = score,
+        risk_score          = score,
+        vuln_type           = vuln_type,
+        cwe_id              = cwe_id,
+        cmd                 = f"nmap NSE / svc_health probe on port {port}",
+        description         = f"{label} on port {port}",
+    )
+
+
+def _hc_ssh(target: str, port: str, svc: dict) -> list:
+    """Check SSH configuration from NSE output."""
+    findings = []
+    nse: dict = svc.get("nse_output", {})
+    nse_sum: str = svc.get("nse_summary", "").lower()
+
+    # --- Auth methods ---------------------------------------------------------
+    auth_raw = nse.get("ssh-auth-methods", "") or ""
+    if "password" in auth_raw.lower() or "keyboard-interactive" in auth_raw.lower():
+        findings.append(_hc_finding(
+            svc, target,
+            title    = "SSH password authentication enabled",
+            severity = "high",
+            evidence = f"ssh-auth-methods: {auth_raw.strip()[:200]}",
+            vuln_type= "Weak Authentication",
+            cwe_id   = "CWE-521",
+            tags     = ["ssh", "auth"],
+        ))
+
+    # --- Weak key-exchange algorithms -----------------------------------------
+    algos_raw = nse.get("ssh2-enum-algos", "") or ""
+    algos_low = algos_raw.lower()
+    weak_kex  = [k for k in ("diffie-hellman-group1-sha1", "diffie-hellman-group14-sha1",
+                              "diffie-hellman-group-exchange-sha1")
+                 if k in algos_low]
+    if weak_kex:
+        findings.append(_hc_finding(
+            svc, target,
+            title    = "SSH weak Diffie-Hellman key-exchange in use",
+            severity = "medium",
+            evidence = f"Weak kex detected: {', '.join(weak_kex)}",
+            vuln_type= "Weak Cryptography",
+            cwe_id   = "CWE-327",
+            tags     = ["ssh", "crypto"],
+        ))
+
+    # --- CBC ciphers ----------------------------------------------------------
+    weak_ciphers = [c for c in ("aes128-cbc", "aes192-cbc", "aes256-cbc",
+                                 "3des-cbc", "blowfish-cbc", "cast128-cbc",
+                                 "arcfour", "arcfour128", "arcfour256")
+                    if c in algos_low]
+    if weak_ciphers:
+        findings.append(_hc_finding(
+            svc, target,
+            title    = "SSH weak cipher suite in use",
+            severity = "medium",
+            evidence = f"Weak ciphers: {', '.join(weak_ciphers[:4])}",
+            vuln_type= "Weak Cryptography",
+            cwe_id   = "CWE-327",
+            tags     = ["ssh", "crypto"],
+        ))
+
+    # --- Weak MACs ------------------------------------------------------------
+    weak_macs = [m for m in ("hmac-md5", "hmac-sha1-96", "hmac-md5-96",
+                              "hmac-sha1")
+                 if m in algos_low and "hmac-sha1-etm" not in algos_low]
+    if weak_macs:
+        findings.append(_hc_finding(
+            svc, target,
+            title    = "SSH weak MAC algorithm in use",
+            severity = "low",
+            evidence = f"Weak MACs: {', '.join(weak_macs[:4])}",
+            vuln_type= "Weak Cryptography",
+            cwe_id   = "CWE-327",
+            tags     = ["ssh", "crypto"],
+        ))
+
+    # --- Weak host key --------------------------------------------------------
+    hostkey_raw = (nse.get("ssh-hostkey", "") or "").lower()
+    if "1024" in hostkey_raw and "rsa" in hostkey_raw:
+        findings.append(_hc_finding(
+            svc, target,
+            title    = "SSH RSA host key is weak (< 2048 bits)",
+            severity = "high",
+            evidence = f"ssh-hostkey: {hostkey_raw.strip()[:200]}",
+            vuln_type= "Weak Cryptography",
+            cwe_id   = "CWE-326",
+            tags     = ["ssh", "crypto"],
+        ))
+
+    return findings
+
+
+def _hc_http(target: str, port: str, svc: dict) -> list:
+    """Check HTTP/HTTPS service configuration from NSE output."""
+    findings = []
+    nse: dict = svc.get("nse_output", {})
+    is_tls    = any(k in svc.get("name", "").lower() for k in ("ssl", "https"))
+
+    # --- Dangerous HTTP methods -----------------------------------------------
+    methods_raw = (nse.get("http-methods", "") or "").upper()
+    for method, sev in [("PUT", "high"), ("DELETE", "high"), ("TRACE", "medium"), ("TRACK", "medium")]:
+        if re.search(rf'\b{method}\b', methods_raw):
+            findings.append(_hc_finding(
+                svc, target,
+                title    = f"HTTP {method} method enabled",
+                severity = sev,
+                evidence = f"http-methods: {methods_raw[:200]}",
+                vuln_type= "Dangerous HTTP Method",
+                cwe_id   = "CWE-650",
+                tags     = ["http", "method"],
+            ))
+
+    # --- Basic auth over plain HTTP -------------------------------------------
+    auth_raw = (nse.get("http-auth-finder", "") or "").lower()
+    if "basic" in auth_raw and not is_tls:
+        findings.append(_hc_finding(
+            svc, target,
+            title    = "HTTP Basic Auth over cleartext (credentials exposed)",
+            severity = "high",
+            evidence = f"http-auth-finder: {auth_raw.strip()[:200]}",
+            vuln_type= "Cleartext Credentials",
+            cwe_id   = "CWE-319",
+            tags     = ["http", "auth"],
+        ))
+
+    # --- Security headers -----------------------------------------------------
+    sec_raw = (nse.get("http-security-headers", "") or nse.get("http-headers", "") or "").lower()
+    if sec_raw:
+        header_checks = [
+            ("strict-transport-security",  "Missing HSTS header",                "medium", "CWE-319"),
+            ("x-frame-options",            "Missing X-Frame-Options header",      "medium", "CWE-1021"),
+            ("content-security-policy",    "Missing Content-Security-Policy",     "medium", "CWE-693"),
+            ("x-content-type-options",     "Missing X-Content-Type-Options",      "low",    "CWE-693"),
+        ]
+        for header, title, sev, cwe in header_checks:
+            # Only flag HSTS on TLS services
+            if header == "strict-transport-security" and not is_tls:
+                continue
+            if header not in sec_raw:
+                findings.append(_hc_finding(
+                    svc, target,
+                    title    = title,
+                    severity = sev,
+                    evidence = "Header absent from NSE http-security-headers output",
+                    vuln_type= "Missing Security Header",
+                    cwe_id   = cwe,
+                    tags     = ["http", "headers"],
+                ))
+
+    # --- TLS-specific: cipher suites and protocol versions --------------------
+    ssl_raw = (nse.get("ssl-enum-ciphers", "") or "").lower()
+    if ssl_raw:
+        if "sslv2" in ssl_raw or "ssl 2" in ssl_raw:
+            findings.append(_hc_finding(
+                svc, target,
+                title    = "SSLv2 enabled (critically deprecated)",
+                severity = "critical",
+                evidence = ssl_raw[:300],
+                vuln_type= "Weak Cryptography",
+                cwe_id   = "CWE-326",
+                tags     = ["tls", "crypto"],
+            ))
+        elif "sslv3" in ssl_raw or "ssl 3" in ssl_raw:
+            findings.append(_hc_finding(
+                svc, target,
+                title    = "SSLv3 enabled (POODLE risk)",
+                severity = "high",
+                evidence = ssl_raw[:300],
+                vuln_type= "Weak Cryptography",
+                cwe_id   = "CWE-326",
+                tags     = ["tls", "crypto"],
+            ))
+        if "tlsv1.0" in ssl_raw or "tls 1.0" in ssl_raw:
+            findings.append(_hc_finding(
+                svc, target,
+                title    = "TLS 1.0 enabled (deprecated)",
+                severity = "medium",
+                evidence = ssl_raw[:300],
+                vuln_type= "Weak Cryptography",
+                cwe_id   = "CWE-326",
+                tags     = ["tls", "crypto"],
+            ))
+        elif "tlsv1.1" in ssl_raw or "tls 1.1" in ssl_raw:
+            findings.append(_hc_finding(
+                svc, target,
+                title    = "TLS 1.1 enabled (deprecated)",
+                severity = "medium",
+                evidence = ssl_raw[:300],
+                vuln_type= "Weak Cryptography",
+                cwe_id   = "CWE-326",
+                tags     = ["tls", "crypto"],
+            ))
+        weak_ciphers = []
+        for bad in ("null", "_export_", "_rc4_", "_des_", "_3des_", "anon"):
+            if bad in ssl_raw:
+                weak_ciphers.append(bad.strip("_").upper())
+        if weak_ciphers:
+            findings.append(_hc_finding(
+                svc, target,
+                title    = f"Weak TLS cipher suite in use: {', '.join(set(weak_ciphers))}",
+                severity = "high",
+                evidence = ssl_raw[:300],
+                vuln_type= "Weak Cryptography",
+                cwe_id   = "CWE-326",
+                tags     = ["tls", "crypto"],
+            ))
+
+    # --- TLS certificate issues -----------------------------------------------
+    cert_raw = nse.get("ssl-cert", "") or ""
+    if cert_raw:
+        # Self-signed: subject == issuer
+        sub_m  = re.search(r'Subject:(.+)', cert_raw, re.IGNORECASE)
+        iss_m  = re.search(r'Issuer:(.+)',  cert_raw, re.IGNORECASE)
+        if sub_m and iss_m and sub_m.group(1).strip() == iss_m.group(1).strip():
+            findings.append(_hc_finding(
+                svc, target,
+                title    = "TLS certificate is self-signed",
+                severity = "medium",
+                evidence = cert_raw[:300],
+                vuln_type= "Certificate Issue",
+                cwe_id   = "CWE-295",
+                tags     = ["tls", "cert"],
+            ))
+        # Expiry
+        exp_m = re.search(r'Not valid after:\s*(.+)', cert_raw, re.IGNORECASE)
+        if exp_m:
+            try:
+                from datetime import datetime as _dt
+                exp_str = exp_m.group(1).strip()
+                exp_dt  = _dt.strptime(exp_str[:19], "%Y-%m-%dT%H:%M:%S")
+                days_left = (exp_dt - _dt.utcnow()).days
+                if days_left < 0:
+                    findings.append(_hc_finding(
+                        svc, target,
+                        title    = "TLS certificate has expired",
+                        severity = "high",
+                        evidence = f"Expired {-days_left} day(s) ago: {exp_str}",
+                        vuln_type= "Certificate Issue",
+                        cwe_id   = "CWE-298",
+                        tags     = ["tls", "cert"],
+                    ))
+                elif days_left <= 7:
+                    findings.append(_hc_finding(
+                        svc, target,
+                        title    = f"TLS certificate expires in {days_left} day(s)",
+                        severity = "high",
+                        evidence = f"Expiry: {exp_str}",
+                        vuln_type= "Certificate Issue",
+                        cwe_id   = "CWE-298",
+                        tags     = ["tls", "cert"],
+                    ))
+                elif days_left <= 30:
+                    findings.append(_hc_finding(
+                        svc, target,
+                        title    = f"TLS certificate expiring soon ({days_left} days)",
+                        severity = "medium",
+                        evidence = f"Expiry: {exp_str}",
+                        vuln_type= "Certificate Issue",
+                        cwe_id   = "CWE-298",
+                        tags     = ["tls", "cert"],
+                    ))
+            except Exception:
+                pass
+
+    return findings
+
+
+def _hc_ftp(target: str, port: str, svc: dict) -> list:
+    """Check FTP configuration from NSE output."""
+    findings = []
+    nse: dict = svc.get("nse_output", {})
+
+    # Cleartext protocol — always flag
+    findings.append(_hc_finding(
+        svc, target,
+        title    = "FTP uses cleartext protocol — credentials unencrypted",
+        severity = "medium",
+        evidence = f"FTP service detected on port {port}. Use SFTP or FTPS instead.",
+        vuln_type= "Cleartext Credentials",
+        cwe_id   = "CWE-319",
+        tags     = ["ftp"],
+    ))
+
+    # Anonymous login
+    anon_raw = (nse.get("ftp-anon", "") or "").lower()
+    if "anonymous" in anon_raw and "login allowed" in anon_raw:
+        findings.append(_hc_finding(
+            svc, target,
+            title    = "FTP anonymous login accepted",
+            severity = "high",
+            evidence = nse.get("ftp-anon", "")[:300],
+            vuln_type= "Weak Authentication",
+            cwe_id   = "CWE-306",
+            tags     = ["ftp", "auth"],
+        ))
+
+    # FTP bounce
+    bounce_raw = (nse.get("ftp-bounce", "") or "").lower()
+    if "bounce working" in bounce_raw or "server sent address" in bounce_raw:
+        findings.append(_hc_finding(
+            svc, target,
+            title    = "FTP bounce attack possible",
+            severity = "medium",
+            evidence = nse.get("ftp-bounce", "")[:200],
+            vuln_type= "FTP Bounce",
+            cwe_id   = "CWE-441",
+            tags     = ["ftp"],
+        ))
+
+    return findings
+
+
+def _hc_smtp(target: str, port: str, svc: dict) -> list:
+    """Check SMTP configuration from NSE output."""
+    findings = []
+    nse: dict = svc.get("nse_output", {})
+
+    # Open relay
+    relay_raw = (nse.get("smtp-open-relay", "") or "").lower()
+    if "server is an open relay" in relay_raw or "open relay" in relay_raw:
+        findings.append(_hc_finding(
+            svc, target,
+            title    = "SMTP open relay detected",
+            severity = "critical",
+            evidence = nse.get("smtp-open-relay", "")[:300],
+            vuln_type= "Email Relay",
+            cwe_id   = "CWE-183",
+            tags     = ["smtp", "relay"],
+        ))
+
+    # VRFY / EXPN user enumeration
+    cmds_raw = (nse.get("smtp-commands", "") or "").upper()
+    if "VRFY" in cmds_raw:
+        findings.append(_hc_finding(
+            svc, target,
+            title    = "SMTP VRFY command enabled (user enumeration risk)",
+            severity = "medium",
+            evidence = f"SMTP EHLO response includes: VRFY\n{cmds_raw[:200]}",
+            vuln_type= "Information Disclosure",
+            cwe_id   = "CWE-200",
+            tags     = ["smtp", "enum"],
+        ))
+    if "EXPN" in cmds_raw:
+        findings.append(_hc_finding(
+            svc, target,
+            title    = "SMTP EXPN command enabled (mailing list disclosure)",
+            severity = "medium",
+            evidence = f"SMTP EHLO response includes: EXPN\n{cmds_raw[:200]}",
+            vuln_type= "Information Disclosure",
+            cwe_id   = "CWE-200",
+            tags     = ["smtp", "enum"],
+        ))
+
+    # No STARTTLS
+    if cmds_raw and "STARTTLS" not in cmds_raw:
+        findings.append(_hc_finding(
+            svc, target,
+            title    = "SMTP STARTTLS not advertised (credentials sent cleartext)",
+            severity = "high",
+            evidence = f"STARTTLS absent from EHLO commands: {cmds_raw[:200]}",
+            vuln_type= "Cleartext Credentials",
+            cwe_id   = "CWE-319",
+            tags     = ["smtp", "tls"],
+        ))
+
+    # Users found
+    enum_raw = (nse.get("smtp-enum-users", "") or "").strip()
+    if enum_raw and len(enum_raw) > 10:
+        findings.append(_hc_finding(
+            svc, target,
+            title    = "SMTP user enumeration confirmed",
+            severity = "high",
+            evidence = enum_raw[:300],
+            vuln_type= "Information Disclosure",
+            cwe_id   = "CWE-200",
+            tags     = ["smtp", "enum"],
+        ))
+
+    return findings
+
+
+def _hc_smb(target: str, port: str, svc: dict) -> list:
+    """Check SMB configuration from NSE output."""
+    findings = []
+    nse: dict = svc.get("nse_output", {})
+
+    # SMBv1
+    sec_raw = (nse.get("smb-security-mode", "") or "").lower()
+    smb2_raw = (nse.get("smb2-security-mode", "") or "").lower()
+
+    if "smb1_enabled: true" in sec_raw or ("smb" in sec_raw and "message_signing" in sec_raw and "smb2" not in sec_raw):
+        findings.append(_hc_finding(
+            svc, target,
+            title    = "SMBv1 protocol enabled (EternalBlue/WannaCry risk)",
+            severity = "critical",
+            evidence = nse.get("smb-security-mode", "")[:300],
+            vuln_type= "Legacy Protocol",
+            cwe_id   = "CWE-1188",
+            tags     = ["smb"],
+        ))
+
+    # SMB signing
+    if "message_signing: disabled" in sec_raw or "signing: disabled" in sec_raw:
+        findings.append(_hc_finding(
+            svc, target,
+            title    = "SMB signing disabled (relay attack risk)",
+            severity = "high",
+            evidence = nse.get("smb-security-mode", "")[:300],
+            vuln_type= "Weak Authentication",
+            cwe_id   = "CWE-347",
+            tags     = ["smb"],
+        ))
+    elif "signing: optional" in smb2_raw:
+        findings.append(_hc_finding(
+            svc, target,
+            title    = "SMB2 signing not enforced",
+            severity = "medium",
+            evidence = nse.get("smb2-security-mode", "")[:200],
+            vuln_type= "Weak Authentication",
+            cwe_id   = "CWE-347",
+            tags     = ["smb"],
+        ))
+
+    # Shares / null session
+    shares_raw = (nse.get("smb-enum-shares", "") or "").lower()
+    if "access: read/write" in shares_raw or "read/write" in shares_raw:
+        # Check for admin shares
+        for share in ("admin$", "c$", "d$"):
+            if share in shares_raw:
+                findings.append(_hc_finding(
+                    svc, target,
+                    title    = f"SMB admin share accessible ({share.upper()})",
+                    severity = "critical",
+                    evidence = nse.get("smb-enum-shares", "")[:300],
+                    vuln_type= "Weak Access Control",
+                    cwe_id   = "CWE-284",
+                    tags     = ["smb", "shares"],
+                ))
+    if "anonymous" in shares_raw or "guest" in shares_raw:
+        findings.append(_hc_finding(
+            svc, target,
+            title    = "SMB null/guest session access allowed",
+            severity = "high",
+            evidence = nse.get("smb-enum-shares", "")[:300],
+            vuln_type= "Weak Authentication",
+            cwe_id   = "CWE-306",
+            tags     = ["smb", "auth"],
+        ))
+
+    return findings
+
+
+def _hc_mysql(target: str, port: str, svc: dict) -> list:
+    """Check MySQL configuration from NSE output."""
+    findings = []
+    nse: dict = svc.get("nse_output", {})
+
+    empty_raw = (nse.get("mysql-empty-password", "") or "").lower()
+    if "root account has empty password" in empty_raw or "empty password" in empty_raw:
+        findings.append(_hc_finding(
+            svc, target,
+            title    = "MySQL root account has empty password",
+            severity = "critical",
+            evidence = nse.get("mysql-empty-password", "")[:300],
+            vuln_type= "Weak Authentication",
+            cwe_id   = "CWE-521",
+            tags     = ["mysql", "auth"],
+        ))
+
+    enum_raw = (nse.get("mysql-enum", "") or nse.get("mysql-info", "") or "").strip()
+    if enum_raw and len(enum_raw) > 20:
+        findings.append(_hc_finding(
+            svc, target,
+            title    = "MySQL information exposed without authentication",
+            severity = "high",
+            evidence = enum_raw[:300],
+            vuln_type= "Information Disclosure",
+            cwe_id   = "CWE-200",
+            tags     = ["mysql"],
+        ))
+
+    return findings
+
+
+def _hc_mssql(target: str, port: str, svc: dict) -> list:
+    """Check MSSQL configuration from NSE output."""
+    findings = []
+    nse: dict = svc.get("nse_output", {})
+
+    empty_raw = (nse.get("ms-sql-empty-password", "") or "").lower()
+    if "empty password" in empty_raw or "sa account" in empty_raw:
+        findings.append(_hc_finding(
+            svc, target,
+            title    = "MSSQL SA account has empty password",
+            severity = "critical",
+            evidence = nse.get("ms-sql-empty-password", "")[:300],
+            vuln_type= "Weak Authentication",
+            cwe_id   = "CWE-521",
+            tags     = ["mssql", "auth"],
+        ))
+
+    config_raw = (nse.get("ms-sql-config", "") or "").strip()
+    if config_raw and len(config_raw) > 20:
+        findings.append(_hc_finding(
+            svc, target,
+            title    = "MSSQL configuration exposed without authentication",
+            severity = "high",
+            evidence = config_raw[:300],
+            vuln_type= "Information Disclosure",
+            cwe_id   = "CWE-200",
+            tags     = ["mssql"],
+        ))
+
+    return findings
+
+
+def _hc_rdp(target: str, port: str, svc: dict) -> list:
+    """Check RDP configuration from NSE output."""
+    findings = []
+    nse: dict = svc.get("nse_output", {})
+
+    enc_raw = (nse.get("rdp-enum-encryption", "") or "").lower()
+    if enc_raw:
+        if "nla: not required" in enc_raw or "nla_not_required" in enc_raw or "credssp" not in enc_raw:
+            findings.append(_hc_finding(
+                svc, target,
+                title    = "RDP Network Level Authentication (NLA) not required",
+                severity = "high",
+                evidence = nse.get("rdp-enum-encryption", "")[:300],
+                vuln_type= "Weak Authentication",
+                cwe_id   = "CWE-287",
+                tags     = ["rdp", "auth"],
+            ))
+        if "encryption level: none" in enc_raw or "encryption_method_none" in enc_raw:
+            findings.append(_hc_finding(
+                svc, target,
+                title    = "RDP encryption not enforced",
+                severity = "high",
+                evidence = nse.get("rdp-enum-encryption", "")[:300],
+                vuln_type= "Cleartext Credentials",
+                cwe_id   = "CWE-319",
+                tags     = ["rdp", "crypto"],
+            ))
+
+    return findings
+
+
+def _hc_vnc(target: str, port: str, svc: dict) -> list:
+    """Check VNC configuration from NSE output."""
+    findings = []
+    nse: dict = svc.get("nse_output", {})
+
+    vnc_raw = (nse.get("vnc-info", "") or "").lower()
+    if "none" in vnc_raw and "auth" in vnc_raw:
+        findings.append(_hc_finding(
+            svc, target,
+            title    = "VNC authentication disabled",
+            severity = "critical",
+            evidence = nse.get("vnc-info", "")[:300],
+            vuln_type= "Weak Authentication",
+            cwe_id   = "CWE-306",
+            tags     = ["vnc", "auth"],
+        ))
+    elif "protocol version: 3.3" in vnc_raw:
+        findings.append(_hc_finding(
+            svc, target,
+            title    = "Legacy VNC protocol version 3.3 in use",
+            severity = "high",
+            evidence = nse.get("vnc-info", "")[:300],
+            vuln_type= "Legacy Protocol",
+            cwe_id   = "CWE-1188",
+            tags     = ["vnc"],
+        ))
+
+    return findings
+
+
+def _hc_dns(target: str, port: str, svc: dict) -> list:
+    """Check DNS configuration from NSE output."""
+    findings = []
+    nse: dict = svc.get("nse_output", {})
+
+    zt_raw = (nse.get("dns-zone-transfer", "") or "").strip()
+    if zt_raw and len(zt_raw) > 20 and "error" not in zt_raw.lower():
+        findings.append(_hc_finding(
+            svc, target,
+            title    = "DNS zone transfer allowed (full record set exposed)",
+            severity = "high",
+            evidence = zt_raw[:300],
+            vuln_type= "Information Disclosure",
+            cwe_id   = "CWE-200",
+            tags     = ["dns", "enum"],
+        ))
+
+    return findings
+
+
+def _hc_ldap(target: str, port: str, svc: dict) -> list:
+    """Check LDAP configuration from NSE output."""
+    findings = []
+    nse: dict = svc.get("nse_output", {})
+
+    rootdse_raw = (nse.get("ldap-rootdse", "") or "").strip()
+    if rootdse_raw and len(rootdse_raw) > 20:
+        findings.append(_hc_finding(
+            svc, target,
+            title    = "Anonymous LDAP bind exposes directory information",
+            severity = "medium",
+            evidence = rootdse_raw[:300],
+            vuln_type= "Information Disclosure",
+            cwe_id   = "CWE-200",
+            tags     = ["ldap", "auth"],
+        ))
+
+    return findings
+
+
+def _hc_snmp(target: str, port: str, svc: dict) -> list:
+    """Check SNMP configuration from NSE output."""
+    findings = []
+    nse: dict = svc.get("nse_output", {})
+
+    brute_raw = (nse.get("snmp-brute", "") or "").lower()
+    if "valid credentials" in brute_raw or "public" in brute_raw:
+        findings.append(_hc_finding(
+            svc, target,
+            title    = "SNMP default community string 'public' accepted",
+            severity = "high",
+            evidence = nse.get("snmp-brute", "")[:300],
+            vuln_type= "Weak Authentication",
+            cwe_id   = "CWE-521",
+            tags     = ["snmp", "auth"],
+        ))
+
+    info_raw = (nse.get("snmp-sysdescr", "") or nse.get("snmp-info", "") or "").strip()
+    if info_raw and len(info_raw) > 10:
+        findings.append(_hc_finding(
+            svc, target,
+            title    = "SNMP exposes system information without authentication",
+            severity = "medium",
+            evidence = info_raw[:300],
+            vuln_type= "Information Disclosure",
+            cwe_id   = "CWE-200",
+            tags     = ["snmp"],
+        ))
+
+    return findings
+
+
+def _hc_telnet(target: str, port: str, svc: dict) -> list:
+    """Check Telnet — presence alone is a finding."""
+    findings = []
+    nse: dict = svc.get("nse_output", {})
+    enc_raw = (nse.get("telnet-encryption", "") or "").lower()
+    sev = "critical" if enc_raw and "encryption not" in enc_raw else "high"
+    findings.append(_hc_finding(
+        svc, target,
+        title    = "Telnet service enabled (cleartext remote access)",
+        severity = sev,
+        evidence = f"Telnet detected on port {port}. Replace with SSH.",
+        vuln_type= "Cleartext Credentials",
+        cwe_id   = "CWE-319",
+        tags     = ["telnet"],
+    ))
+    return findings
+
+
+def _hc_email_plaintext(target: str, port: str, svc: dict) -> list:
+    """Check POP3 / IMAP for STARTTLS."""
+    findings = []
+    nse: dict = svc.get("nse_output", {})
+    svcname   = svc.get("name", "").lower()
+
+    cap_key = "pop3-capabilities" if "pop3" in svcname else "imap-capabilities"
+    caps_raw = (nse.get(cap_key, "") or "").upper()
+    if caps_raw and "STLS" not in caps_raw and "STARTTLS" not in caps_raw:
+        findings.append(_hc_finding(
+            svc, target,
+            title    = f"{svcname.upper()} STARTTLS not available (credentials sent cleartext)",
+            severity = "high",
+            evidence = f"{cap_key}: {caps_raw[:200]}",
+            vuln_type= "Cleartext Credentials",
+            cwe_id   = "CWE-319",
+            tags     = [svcname, "tls"],
+        ))
+    if caps_raw and ("AUTH=PLAIN" in caps_raw or "AUTH=LOGIN" in caps_raw) and "STLS" not in caps_raw:
+        findings.append(_hc_finding(
+            svc, target,
+            title    = f"{svcname.upper()} advertises plaintext auth without STARTTLS",
+            severity = "high",
+            evidence = f"{cap_key}: {caps_raw[:200]}",
+            vuln_type= "Cleartext Credentials",
+            cwe_id   = "CWE-319",
+            tags     = [svcname, "auth"],
+        ))
+    return findings
+
+
+# Service name fragment → check function (first match wins per service)
+_HC_DISPATCH: list[tuple[str, object]] = [
+    ("ssh",          _hc_ssh),
+    ("ssl/http",     _hc_http),
+    ("https",        _hc_http),
+    ("http",         _hc_http),
+    ("ftp",          _hc_ftp),
+    ("telnet",       _hc_telnet),
+    ("smtp",         _hc_smtp),
+    ("submission",   _hc_smtp),
+    ("smb",          _hc_smb),
+    ("microsoft-ds", _hc_smb),
+    ("netbios-ssn",  _hc_smb),
+    ("mysql",        _hc_mysql),
+    ("ms-sql",       _hc_mssql),
+    ("mssql",        _hc_mssql),
+    ("ms-wbt",       _hc_rdp),
+    ("rdp",          _hc_rdp),
+    ("vnc",          _hc_vnc),
+    ("domain",       _hc_dns),
+    ("ldap",         _hc_ldap),
+    ("snmp",         _hc_snmp),
+    ("pop3",         _hc_email_plaintext),
+    ("imap",         _hc_email_plaintext),
+]
+
+
+def _hc_banner_disclosure(target: str, port: str, svc: dict) -> list[Finding]:
+    """Universal check: version string exposed in nmap banner."""
+    version = svc.get("version", "").strip()
+    product = svc.get("product", "").strip()
+    if not version or not product:
+        return []
+    return [_hc_finding(
+        svc, target,
+        title    = f"Service version exposed in banner: {product} {version}",
+        severity = "info",
+        evidence = f"nmap banner: {product} {version}",
+        vuln_type= "Information Disclosure",
+        cwe_id   = "CWE-200",
+        tags     = ["banner", "info"],
+    )]
+
+
+def _run_service_health_checks(services: list, target: str) -> list[Finding]:
+    """
+    Run deterministic, read-only health checks on every discovered service.
+    Parses NSE output already collected by nmap Phase 3 — no extra connections.
+    Returns a list of Finding objects to be merged into all_findings.
+    """
+    results: list[Finding] = []
+    for svc in services:
+        name = svc.get("name", "").lower()
+        port = svc.get("port", "?")
+        dispatched = False
+        for fragment, fn in _HC_DISPATCH:
+            if fragment in name:
+                try:
+                    results.extend(fn(target, port, svc))
+                except Exception as exc:
+                    print(f"  [hc] {fragment} check error on port {port}: {exc}")
+                dispatched = True
+                break
+        # Universal banner check always runs regardless of dispatch
+        try:
+            results.extend(_hc_banner_disclosure(target, port, svc))
+        except Exception:
+            pass
+    return results
 
 
 def _run_script(script: str, language: str, cwd: str, timeout: int = 30) -> dict:
@@ -6124,6 +6929,52 @@ async def run_cve_tests(cve_matches: list, target: str,
 
 
 # ---------------------------------------------------------------------------
+# SERVICE HEALTH CHECK — LLM ENRICHMENT
+# ---------------------------------------------------------------------------
+
+def _enrich_hc_finding(f) -> None:
+    """
+    Ask the LLM for a 2-paragraph security narrative for a health-check finding.
+    Populates f.description in-place.  Only called for medium/high/critical findings.
+    """
+    port = f.target.split(":")[-1] if ":" in f.target else f.target
+    prompt = (
+        f"You are a senior penetration tester summarising a misconfiguration finding for a client report.\n\n"
+        f"Service:  {f.service} on port {port}\n"
+        f"Finding:  {f.title}  ({f.severity.upper()})\n"
+        f"Evidence: {(f.evidence or '')[:300]}\n\n"
+        "Write two short paragraphs in plain text (no markdown, no bullet points, no headers):\n"
+        "1. Security risk — how an attacker would discover and exploit this misconfiguration, "
+        "what access or data they could gain, and the realistic business impact.\n"
+        "2. Remediation — one specific immediate action (e.g. change a config setting, "
+        "disable a service, enforce a policy) and one permanent architectural recommendation.\n\n"
+        "Be specific to this finding. Keep each paragraph to 2-3 sentences. Plain text only."
+    )
+    _t0 = time.monotonic()
+    _sp = _Spinner(f"[ LLM ]  Enriching health-check finding: {f.title[:50]} ...").start()
+    try:
+        resp = requests.post(
+            OLLAMA_URL,
+            json={
+                "model":      REPORT_MODEL,
+                "prompt":     prompt,
+                "stream":     False,
+                "keep_alive": _OLLAMA_KEEP_ALIVE,
+                "options":    {"num_ctx": 1024, "temperature": 0.2},
+            },
+            timeout=OLLAMA_TIMEOUT,
+        )
+        text = resp.json().get("response", "").strip()
+        if text:
+            f.description = text
+    except Exception as exc:
+        # Non-fatal: finding is useful even without LLM description
+        print(f"  [hc] LLM enrichment failed for '{f.title}': {exc}")
+    finally:
+        _sp.stop(f" done ({_fmt_dur(time.monotonic() - _t0)})")
+
+
+# ---------------------------------------------------------------------------
 # CVE REMEDIATION SUGGESTIONS
 # ---------------------------------------------------------------------------
 
@@ -6794,6 +7645,26 @@ async def main_async():
     scan_records = [{"tool": "nmap", "args": target, "cmd": nmap_phase_cmd, "status": "ok", "findings_count": 0}]
     all_findings = []
     used_actions: set = set()  # deduplicate tool+args combos
+
+    # ---------------------------------------------------------------------------
+    # Service Security Health Checks
+    # Deterministic, read-only analysis of NSE output already collected above.
+    # Runs before the LLM scan loop so findings are visible from the first report.
+    # ---------------------------------------------------------------------------
+    print(f"\n{'=' * 52}")
+    print("  Service Security Health Checks")
+    print(f"{'=' * 52}")
+    hc_findings = _run_service_health_checks(services, target)
+    if hc_findings:
+        print(f"[+] {len(hc_findings)} health-check finding(s) generated")
+        to_enrich = [f for f in hc_findings if f.severity in ("critical", "high", "medium")]
+        if to_enrich:
+            print(f"[+] Generating security narratives for {len(to_enrich)} finding(s) ...")
+            for f in to_enrich:
+                _enrich_hc_finding(f)
+        all_findings.extend(hc_findings)
+    else:
+        print("[+] No misconfigurations detected by automated health checks")
 
     # ---------------------------------------------------------------------------
     # Phase 1 — Parallel initial scan (one tool per service, all concurrent)
