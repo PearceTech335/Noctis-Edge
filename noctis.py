@@ -485,6 +485,8 @@ class Finding:
     compliance_controls: list = field(default_factory=list)  # PCI-DSS, SOC2, ISO 27001
     manual_review:       bool = False  # True when nikto/scanner flags a finding that warrants manual verification
     verifier_tool:       str  = ""   # Tool dispatched to verify this finding (set when probe_inconclusive)
+    llm_remediation_short: str = ""  # LLM-generated immediate workaround (set during report generation for Unknown vuln_type)
+    llm_remediation_long:  str = ""  # LLM-generated permanent fix (set during report generation for Unknown vuln_type)
 
     def to_dict(self):
         return dataclasses.asdict(self)
@@ -4397,11 +4399,11 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:.8em;margin-top:.8em">
         <div style="background:#1a2a0a;border-left:3px solid #8bc34a;border-radius:0 4px 4px 0;padding:.8em">
           <strong style="color:#8bc34a;display:block;margin-bottom:.35em">&#x26A1; Short-term Workaround</strong>
-          <div style="font-size:.87em;color:#dcedc8;line-height:1.55">{{ rem_short_map.get(f.vuln_type, rem_short_map["Unknown"]) }}</div>
+          <div style="font-size:.87em;color:#dcedc8;line-height:1.55">{{ f.get("llm_remediation_short") or rem_short_map.get(f.vuln_type, rem_short_map["Unknown"]) }}</div>
         </div>
         <div style="background:#0d2137;border-left:3px solid #29b6f6;border-radius:0 4px 4px 0;padding:.8em">
           <strong style="color:#29b6f6;display:block;margin-bottom:.35em">&#x1F527; Long-term Fix</strong>
-          <div style="font-size:.87em;color:#b3e5fc;line-height:1.55">{{ rem_long_map.get(f.vuln_type, rem_long_map["Unknown"]) }}</div>
+          <div style="font-size:.87em;color:#b3e5fc;line-height:1.55">{{ f.get("llm_remediation_long") or rem_long_map.get(f.vuln_type, rem_long_map["Unknown"]) }}</div>
         </div>
       </div>
       {% set _ttf = time_to_fix_map.get(f.vuln_type) %}
@@ -4435,7 +4437,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <details style="margin-bottom:1.5em;border:1px solid #333;border-radius:6px;padding:1em;background:#16213e">
     <summary style="cursor:pointer;font-weight:600;color:#00d4ff;font-size:1.05em;display:flex;align-items:center;flex-wrap:wrap;gap:.5em">
       <span style="flex:1;min-width:180px"><a href="https://nvd.nist.gov/vuln/detail/{{ c.cve_id }}" target="_blank" style="color:#00d4ff;text-decoration:none" title="View on NVD">{{ c.cve_id }}</a> — {{ c.vulnerability_type }} on {{ c.service }}{% if c.product and c.product != 'unknown' %} <span style="color:#78909c;font-size:.85em;font-weight:400">({{ c.product }}{% if c.version_affected and c.version_affected != 'unknown' %} {{ c.version_affected }}{% endif %})</span>{% endif %}</span>
-      <span class="badge badge-{{ c.severity|lower }}">{{ c.severity|upper }}</span>
+      {% set _tv = c.cve_test_result.overall_verdict if c.cve_test_result else None %}
+      <span class="badge badge-{{ c.severity|lower }}"{% if _tv == 'NOT_VULNERABLE' %} style="opacity:.4;text-decoration:line-through"{% endif %}>{{ c.severity|upper }}</span>
       {% if c.nvd_cvss_v3_score %}
       <span style="background:#0f3460;color:#00d4ff;padding:3px 10px;border-radius:4px;font-size:.85em;font-weight:700;border:1px solid #00d4ff;min-width:2.5em;text-align:center" title="NVD CVSS v3.1">v3.1&nbsp;{{ c.nvd_cvss_v3_score }}</span>
       {% elif c.cvss_score %}
@@ -4447,6 +4450,30 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     </summary>
     
     <div style="margin-top:1em;padding-top:1em;border-top:1px solid #333">
+
+      {# ── Verification Status Banner ────────────────────────────────────── #}
+      {% set _tv = c.cve_test_result.overall_verdict if c.cve_test_result else None %}
+      {% if _tv == 'CONFIRMED_VULNERABLE' %}
+      <div style="background:#3d0000;border-left:4px solid #ff1744;border-radius:0 6px 6px 0;padding:.7em 1em;margin-bottom:1em;display:flex;align-items:center;gap:.7em">
+        <span style="font-size:1.2em">&#128308;</span>
+        <div><strong style="color:#ff5252;font-size:.92em">CONFIRMED EXPLOITABLE</strong><div style="color:#ef9a9a;font-size:.84em;margin-top:.2em">Active probing confirmed this CVE is exploitable on this host.</div></div>
+      </div>
+      {% elif _tv == 'NOT_VULNERABLE' %}
+      <div style="background:#0a2a12;border-left:4px solid #43a047;border-radius:0 6px 6px 0;padding:.7em 1em;margin-bottom:1em;display:flex;align-items:center;gap:.7em">
+        <span style="font-size:1.2em">&#9989;</span>
+        <div><strong style="color:#66bb6a;font-size:.92em">TESTED: NOT VULNERABLE ON THIS HOST</strong><div style="color:#a5d6a7;font-size:.84em;margin-top:.2em">Active probing found no exploitability. The EPSS score and severity above reflect the general danger of this CVE class &mdash; this host was not confirmed affected.</div></div>
+      </div>
+      {% elif _tv == 'INCONCLUSIVE' %}
+      <div style="background:#1c1a00;border-left:4px solid #f9a825;border-radius:0 6px 6px 0;padding:.7em 1em;margin-bottom:1em;display:flex;align-items:center;gap:.7em">
+        <span style="font-size:1.2em">&#9888;</span>
+        <div><strong style="color:#ffca28;font-size:.92em">TESTING INCONCLUSIVE</strong><div style="color:#ffe082;font-size:.84em;margin-top:.2em">Probes ran but could not confirm or rule out exploitability. Treat as potentially exposed and verify manually.</div></div>
+      </div>
+      {% else %}
+      <div style="background:#111820;border-left:4px solid #546e7a;border-radius:0 6px 6px 0;padding:.7em 1em;margin-bottom:1em;display:flex;align-items:center;gap:.7em">
+        <span style="font-size:1.2em">&#9680;</span>
+        <div><strong style="color:#90a4ae;font-size:.92em">UNVERIFIED</strong><div style="color:#b0bec5;font-size:.84em;margin-top:.2em">Matched by version fingerprint only &mdash; not actively probed. May be a false positive. Re-scan with <code style="background:#0d1117;padding:.05em .3em;border-radius:3px">--cve-test</code> to verify.</div></div>
+      </div>
+      {% endif %}
 
       {# Immediate Remediation Path — prominent quick-win block at the top of the card #}
       {% if c.immediate_remediation or c.remediation_short %}
@@ -4589,6 +4616,95 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         </ul>
       </div>
       {% endif %}
+
+      {# ── Testing Evidence (MSF + active probe results) ─────────────────── #}
+      {% set _tr = c.cve_test_result %}
+      {% set _msf = c.msf_validation if c.get('msf_validation') and c.msf_validation.get('module') else None %}
+      {% if _tr or _msf %}
+      <details style="margin-top:1em">
+        <summary style="cursor:pointer;color:#78909c;font-size:.9em;font-weight:600">&#x1F9EA; Testing Evidence {% if _tr %}&mdash; {{ _tr.overall_verdict }}{% endif %}</summary>
+        <div style="margin-top:.6em">
+
+        {% if _msf %}
+        <div style="background:#1a1428;border-left:3px solid #7c4dff;border-radius:0 4px 4px 0;padding:.65em .9em;margin-bottom:.6em;font-size:.86em">
+          <strong style="color:#b39ddb">&#9658; Metasploit Framework Check</strong>
+          <div style="display:flex;gap:1em;align-items:center;margin-top:.4em;flex-wrap:wrap">
+            <span style="font-family:monospace;color:#ce93d8;font-size:.88em">{{ _msf.module }}</span>
+            {% if _msf.vulnerable is sameas true %}<span class="badge badge-critical" style="font-size:.75em">VULNERABLE</span>
+            {% elif _msf.vulnerable is sameas false %}<span class="badge badge-low" style="font-size:.75em">NOT EXPLOITABLE</span>
+            {% else %}<span class="badge badge-info" style="font-size:.75em">UNCONFIRMED</span>{% endif %}
+          </div>
+          {% if _msf.result %}<div style="color:#9e9e9e;font-size:.82em;margin-top:.35em">{{ _msf.result[:200] }}</div>{% endif %}
+        </div>
+        {% endif %}
+
+        {% if _tr %}
+        {% set _tv = _tr.overall_verdict %}
+        {% if _tv == 'CONFIRMED_VULNERABLE' %}{% set _vbg="#3d0000" %}{% set _vborder="#ff1744" %}
+        {% elif _tv == 'NOT_VULNERABLE' %}{% set _vbg="#0a2a12" %}{% set _vborder="#43a047" %}
+        {% elif _tv == 'VULNERABLE' %}{% set _vbg="#3a1800" %}{% set _vborder="#ff9800" %}
+        {% else %}{% set _vbg="#1c1c1c" %}{% set _vborder="#757575" %}{% endif %}
+        <div style="border-left:3px solid {{ _vborder }};background:{{ _vbg }};border-radius:0 4px 4px 0;padding:.6em .9em;margin-bottom:.5em;font-size:.86em">
+          <div style="display:flex;gap:.8em;align-items:center;flex-wrap:wrap">
+            <strong style="color:#e0e0e0">Active Probe Results</strong>
+            <span style="color:#aaa;font-size:.82em">{{ _tr.attempts_run }} attempts &mdash; V:{{ _tr.verdict_counts.VULNERABLE }} N:{{ _tr.verdict_counts.NOT_VULNERABLE }} I:{{ _tr.verdict_counts.INCONCLUSIVE }} &mdash; KB replayed: {{ _tr.kb_replayed }}</span>
+          </div>
+          {% if _tv == 'INCONCLUSIVE' and _tr.inconclusive_reason %}
+          <div style="color:#ffe082;font-size:.84em;margin-top:.4em">{{ _tr.inconclusive_reason }}</div>
+          {% endif %}
+        </div>
+
+        {% if _tr.verification_results %}
+        <div style="background:#1a2a1a;border-left:3px solid {% if _tr.verified %}#4caf50{% else %}#ff9800{% endif %};padding:.5em .8em;margin-bottom:.5em;border-radius:0 4px 4px 0;font-size:.84em">
+          <strong style="color:{% if _tr.verified %}#4caf50{% else %}#ff9800{% endif %}">{% if _tr.verified %}&#10003; False-Positive Check: CONFIRMED{% else %}&#9888; False-Positive Check: UNCONFIRMED{% endif %}</strong>
+          <div style="margin-top:.3em">
+          {% for v in _tr.verification_results %}
+            <span style="margin-right:.8em">V{{ v.verifier_num }}: <em>{{ v.strategy[:60] }}</em> &rarr;
+              {% if v.verdict == 'VULNERABLE' %}<span style="color:#ef9a9a">VULNERABLE</span>
+              {% elif v.verdict == 'NOT_VULNERABLE' %}<span style="color:#a5d6a7">NOT_VULNERABLE</span>
+              {% else %}<span style="color:#ffcc80">INCONCLUSIVE</span>{% endif %}
+            </span>
+          {% endfor %}
+          </div>
+        </div>
+        {% endif %}
+
+        {% for a in _tr.attempts %}
+        <details style="margin:.3em 0;font-size:.85em">
+          <summary style="cursor:pointer;color:#90caf9">
+            [{{ "%02d"|format(a.attempt_num) }}]
+            {% if a.get('source') == 'kb_replay' %}<span style="color:#ce93d8;font-size:.8em">[KB]</span>{% endif %}
+            {% if a.verdict == 'VULNERABLE' %}<span style="color:#ef9a9a">&#9679;</span>
+            {% elif a.verdict == 'NOT_VULNERABLE' %}<span style="color:#a5d6a7">&#9679;</span>
+            {% else %}<span style="color:#ffcc80">&#9679;</span>{% endif %}
+            {{ a.verdict }} &mdash; {{ a.strategy[:80] }} ({{ a.language }})
+          </summary>
+          <pre style="background:#1a1a1a;color:#ccc;padding:.6em;border-radius:4px;overflow-x:auto;white-space:pre-wrap;font-size:.8em">{{ a.output }}</pre>
+          <details style="margin-top:.3em">
+            <summary style="cursor:pointer;color:#78909c;font-size:.9em">View script</summary>
+            <pre style="background:#111;color:#b2dfdb;padding:.6em;border-radius:4px;overflow-x:auto;white-space:pre-wrap;font-size:.78em">{{ a.script }}</pre>
+          </details>
+        </details>
+        {% endfor %}
+
+        {% if _tr.attacker_perspective %}
+        <div style="background:#1a0a00;border-left:3px solid #ff6d00;padding:.6em .9em;margin-top:.5em;border-radius:0 4px 4px 0;font-size:.86em">
+          <strong style="color:#ff9800">&#9760; Attacker Perspective</strong>
+          <div style="color:#ffe0b2;margin-top:.35em;white-space:pre-wrap;line-height:1.55">{{ _tr.attacker_perspective }}</div>
+        </div>
+        {% endif %}
+        {% if _tr.remediation %}
+        <div style="background:#0d2137;border-left:3px solid #29b6f6;padding:.6em .9em;margin-top:.5em;border-radius:0 4px 4px 0;font-size:.86em">
+          <strong style="color:#29b6f6">&#128295; Suggested Remediation</strong>
+          <div style="color:#cfd8dc;margin-top:.35em;white-space:pre-wrap;line-height:1.55">{{ _tr.remediation }}</div>
+        </div>
+        {% endif %}
+        {% endif %}
+
+        </div>
+      </details>
+      {% endif %}
+
     </div>
   </details>
   {% endfor %}
@@ -4597,159 +4713,10 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 {% else %}<p>No CVE matches found.</p>{% endif %}
 
 <h2>Exploitation Validation</h2>
-{% set msf_run = cve_matches | selectattr("msf_validation", "defined") | list %}
-{% if msf_run %}
-{% set ns = namespace(any_module=false) %}
-{% for c in msf_run %}{% if c.msf_validation.module %}{% set ns.any_module = true %}{% endif %}{% endfor %}
-{% if ns.any_module %}
-<p style="color:#aaa;font-size:.9em;margin-bottom:14px">
-  Each CVE below was probed using Metasploit's <code>check</code> command — a non-destructive test that
-  confirms exploitability without executing a payload. This demonstrates how a malicious actor
-  would verify the vulnerability before launching an attack. Only CVEs with a mapped Metasploit module are shown.
-</p>
-<table>
-  <tr>
-    <th>CVE</th><th>Verdict</th><th>Vuln Type</th><th>MSF Module</th>
-    <th>Test Method</th><th>Proof of Impact</th><th>Business Impact</th>
-  </tr>
-  {% for c in msf_run %}
-  {% if c.msf_validation.module %}
-  {% set v = c.msf_validation %}
-  <tr>
-    <td><strong>{{ c.cve_id }}</strong><br><span style="color:#888;font-size:.8em">{{ c.service }}</span></td>
-    <td>
-      {% if v.vulnerable is sameas true %}
-        <span class="badge badge-critical">VULNERABLE</span>
-      {% elif v.vulnerable is sameas false %}
-        <span class="badge badge-low">NOT EXPLOITABLE</span>
-      {% else %}
-        <span class="badge badge-info">UNCONFIRMED</span>
-      {% endif %}
-      <div style="font-size:.78em;color:#aaa;margin-top:4px">{{ v.result[:120] }}</div>
-    </td>
-    <td>{{ c.vulnerability_type }}</td>
-    <td style="font-family:monospace;font-size:.82em;word-break:break-all">{{ v.module }}</td>
-    <td>{{ v.method }}</td>
-    <td>{{ c.proof_of_impact }}</td>
-    <td>{{ c.business_impact }}</td>
-  </tr>
-  {% endif %}
-  {% endfor %}
-</table>
-{% else %}
-<p style="color:#aaa;font-size:.9em;background:#16213e;border-left:3px solid #546e7a;padding:1em 1.2em;border-radius:0 6px 6px 0;line-height:1.6">
-  <strong style="color:#90a4ae">No Metasploit modules were mapped to the discovered CVEs.</strong><br>
-  Metasploit validation was run with <code>--msf-validate</code>, however none of the CVEs identified in this scan have a corresponding exploit or auxiliary check module in the Metasploit Framework database. This is common for newer CVEs, niche software vulnerabilities, and CVEs that are exploitable only through manual interaction. Manual validation is recommended for any <em>Critical</em> or <em>High</em> severity CVEs listed in the CVE Matches section above.
-</p>
-{% endif %}
-{% else %}
-<p style="color:#aaa;font-size:.9em">MSF validation was not run. Re-scan with <code>--msf-validate</code> to enable.</p>
-{% endif %}
+<p style="color:#546e7a;font-size:.9em">MSF and active probe testing evidence is embedded inside each CVE card in the <strong>CVE Matches</strong> section above.</p>
 
 <h2>CVE Test Results</h2>
-{% if cve_test_results %}
-{% set verdict_order = ["CONFIRMED_VULNERABLE", "VULNERABLE", "NOT_VULNERABLE", "INCONCLUSIVE"] %}
-{% for verdict in verdict_order %}
-{% set group = cve_test_results | selectattr("overall_verdict", "equalto", verdict) | list %}
-{% if group %}
-{% if verdict == "CONFIRMED_VULNERABLE" %}{% set vbg = "#7f0000" %}{% set vborder = "#ff1744" %}{% set vlabel = "CONFIRMED VULNERABLE" %}
-{% elif verdict == "VULNERABLE" %}{% set vbg = "#7a2f00" %}{% set vborder = "#ff9800" %}{% set vlabel = "VULNERABLE (unverified)" %}
-{% elif verdict == "NOT_VULNERABLE" %}{% set vbg = "#0a3d12" %}{% set vborder = "#4caf50" %}{% set vlabel = "NOT VULNERABLE" %}
-{% else %}{% set vbg = "#2a2a2a" %}{% set vborder = "#757575" %}{% set vlabel = "INCONCLUSIVE" %}{% endif %}
-<details {% if verdict in ["CONFIRMED_VULNERABLE", "VULNERABLE"] %}open{% endif %} style="margin-bottom:1.2em;border:2px solid {{ vborder }};border-radius:8px;overflow:hidden">
-  <summary style="cursor:pointer;background:{{ vbg }};padding:.75em 1.2em;display:flex;align-items:center;gap:.8em;user-select:none;list-style:none">
-    <span style="font-weight:700;color:#fff;font-size:.98em">{{ vlabel }}</span>
-    <span style="background:rgba(0,0,0,.35);color:#fff;border-radius:12px;padding:.1em .75em;font-size:.85em;font-weight:600">{{ group | length }}</span>
-    <span style="color:rgba(255,255,255,.5);font-size:.78em;margin-left:auto">&#9660;</span>
-  </summary>
-  <div style="padding:.5em .4em">
-  {% for r in group %}
-  <details style="margin:.4em;border:1px solid #333;border-radius:6px;padding:.6em 1em;background:#16213e">
-  <summary style="cursor:pointer;list-style:none;display:flex;align-items:center;gap:1em;flex-wrap:wrap;padding:.4em 0;user-select:none">
-    <span style="font-size:1.05em;font-weight:600;color:#e0e0e0">{{ r.cve_id }}</span>
-    <span style="font-size:.8em;color:#aaa">{{ r.vulnerability_type }}</span>
-    <span style="font-size:.8em;color:#aaa">{{ r.service }}</span>
-    {% if r.get('evidence_type') %}{% set _et = r.get('evidence_type') %}
-    {% if _et == 'Active Probe' %}<span style="font-size:.75em;background:#0a2a1a;color:#80cbc4;padding:.15em .6em;border-radius:10px;border:1px solid #26a69a;font-weight:600">&#9679; Active Probe</span>
-    {% elif _et == 'Version Match' %}<span style="font-size:.75em;background:#0a1a2a;color:#90caf9;padding:.15em .6em;border-radius:10px;border:1px solid #1565c0;font-weight:600">&#9775; Version Match</span>
-    {% elif _et == 'KB Replay' %}<span style="font-size:.75em;background:#1a0a2a;color:#ce93d8;padding:.15em .6em;border-radius:10px;border:1px solid #7b1fa2;font-weight:600">&#9733; KB Replay</span>
-    {% else %}<span style="font-size:.75em;background:#1a1a1a;color:#bdbdbd;padding:.15em .6em;border-radius:10px;border:1px solid #424242;font-weight:600">&#9632; Banner Analysis</span>
-    {% endif %}{% endif %}
-    <span style="font-size:.78em;color:#777">{{ r.attempts_run }} attempts &mdash; V:{{ r.verdict_counts.VULNERABLE }} N:{{ r.verdict_counts.NOT_VULNERABLE }} I:{{ r.verdict_counts.INCONCLUSIVE }} &mdash; KB replayed:{{ r.kb_replayed }}</span>
-    <span style="font-size:.75em;color:#555;margin-left:auto">&#9660; expand</span>
-  </summary>
-
-  {% if r.overall_verdict == "INCONCLUSIVE" %}
-  <div style="background:#1c1c14;border-left:3px solid #f9a825;padding:.65em .9em;margin-bottom:.7em;border-radius:0 4px 4px 0;font-size:.86em">
-    <strong style="color:#f9a825">&#9888; Why INCONCLUSIVE?</strong>
-    <div style="color:#ffe082;margin-top:.35em;line-height:1.5">{{ r.inconclusive_reason }}</div>
-    <div style="color:#795548;font-size:.8em;margin-top:.4em;font-style:italic">
-      INCONCLUSIVE means the probe scripts ran but could not definitively confirm or rule out the vulnerability.
-      Expand the attempts below to review raw script output, then verify manually if the CVE is relevant to your environment.
-    </div>
-  </div>
-  {% endif %}
-
-  {% if r.verification_results %}
-  <div style="background:#1a2a1a;border-left:3px solid {% if r.verified %}#4caf50{% else %}#ff9800{% endif %};padding:.6em .8em;margin-bottom:.6em;border-radius:0 4px 4px 0;font-size:.85em">
-    <strong style="color:{% if r.verified %}#4caf50{% else %}#ff9800{% endif %}">
-      {% if r.verified %}&#10003; False-Positive Check: CONFIRMED{% else %}&#9888; False-Positive Check: UNCONFIRMED (possible false positive){% endif %}
-    </strong>
-    <div style="margin-top:.4em">
-    {% for v in r.verification_results %}
-      <span style="margin-right:.8em">
-        V{{ v.verifier_num }}: <em>{{ v.strategy[:60] }}</em> &rarr;
-        {% if v.verdict == "VULNERABLE" %}<span style="color:#ef9a9a">VULNERABLE</span>
-        {% elif v.verdict == "NOT_VULNERABLE" %}<span style="color:#a5d6a7">NOT_VULNERABLE</span>
-        {% else %}<span style="color:#ffcc80">INCONCLUSIVE</span>{% endif %}
-      </span>
-    {% endfor %}
-    </div>
-  </div>
-  {% endif %}
-
-  {% for a in r.attempts %}
-  <details style="margin:.4em 0;font-size:.85em">
-    <summary style="cursor:pointer;color:#90caf9">
-      [{{ "%02d"|format(a.attempt_num) }}]
-      {% if a.get('source') == 'kb_replay' %}<span style="color:#ce93d8;font-size:.8em">[KB]</span>{% endif %}
-      {% if a.verdict == "VULNERABLE" %}<span style="color:#ef9a9a">&#9679;</span>
-      {% elif a.verdict == "NOT_VULNERABLE" %}<span style="color:#a5d6a7">&#9679;</span>
-      {% else %}<span style="color:#ffcc80">&#9679;</span>{% endif %}
-      {{ a.verdict }} &mdash; {{ a.strategy[:80] }} ({{ a.language }})
-    </summary>
-    <pre style="background:#1a1a1a;color:#ccc;padding:.6em;border-radius:4px;overflow-x:auto;white-space:pre-wrap;font-size:.8em">{{ a.output }}</pre>
-    <details style="margin-top:.3em">
-      <summary style="cursor:pointer;color:#78909c;font-size:.9em">View script</summary>
-      <pre style="background:#111;color:#b2dfdb;padding:.6em;border-radius:4px;overflow-x:auto;white-space:pre-wrap;font-size:.78em">{{ a.script }}</pre>
-    </details>
-  </details>
-  {% endfor %}
-
-  {% if r.attacker_perspective %}
-  <div style="background:#1a0a00;border-left:3px solid #ff6d00;padding:.7em .9em;margin-top:.6em;border-radius:0 4px 4px 0;font-size:.87em">
-    <strong style="color:#ff9800">&#9760; Attacker Perspective</strong>
-    <div style="color:#ffe0b2;margin-top:.45em;white-space:pre-wrap;line-height:1.55">{{ r.attacker_perspective }}</div>
-    <div style="color:#6d4c41;font-size:.78em;margin-top:.4em;font-style:italic">AI-generated threat narrative — review against current threat intelligence.</div>
-  </div>
-  {% endif %}
-
-  {% if r.remediation %}
-  <div style="background:#0d2137;border-left:3px solid #29b6f6;padding:.7em .9em;margin-top:.6em;border-radius:0 4px 4px 0;font-size:.87em">
-    <strong style="color:#29b6f6">&#128295; Suggested Remediation</strong>
-    <div style="color:#cfd8dc;margin-top:.45em;white-space:pre-wrap;line-height:1.55">{{ r.remediation }}</div>
-    <div style="color:#546e7a;font-size:.78em;margin-top:.4em;font-style:italic">AI-generated guidance — verify against vendor advisories before applying.</div>
-  </div>
-  {% endif %}
-  </details>
-  {% endfor %}
-  </div>
-</details>
-{% endif %}
-{% endfor %}
-{% else %}
-<p style="color:#aaa;font-size:.9em">CVE testing was not run. Re-scan with <code>--cve-test</code> to enable.</p>
-{% endif %}
+<p style="color:#546e7a;font-size:.9em">CVE test results are embedded inside each CVE card in the <strong>CVE Matches</strong> section above.</p>
 
 <h2>Execution Log</h2>
 <table>
@@ -4787,6 +4754,16 @@ def generate_html_report(report_data):
     for r in cve_results:
         if r.get("overall_verdict") == "INCONCLUSIVE" and not r.get("inconclusive_reason"):
             r["inconclusive_reason"] = _derive_inconclusive_reason(r, r.get("attempts", []))
+
+    # Merge CVE test results into each CVE match record so cards can render
+    # testing evidence inline (verdict banner + attempt accordion).
+    _test_lookup = {r["cve_id"]: r for r in cve_results}
+    for match in report_data.get("cve_matches", []):
+        result = _test_lookup.get(match.get("cve_id"))
+        if result:
+            match["cve_test_result"] = result
+        elif "cve_test_result" not in match:
+            match["cve_test_result"] = None
 
     data = dict(
         report_data,
@@ -4961,6 +4938,17 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
                 break
     finally:
         _sp.stop(f" done ({_fmt_dur(time.monotonic() - _t0)})")
+
+    # ── Per-finding LLM remediation for Unknown vuln_type ────────────────────
+    _unknown_findings = [f for f in all_findings if not f.vuln_type or f.vuln_type == "Unknown"]
+    if _unknown_findings:
+        print(f"\n[+] Enriching {len(_unknown_findings)} finding(s) with specific LLM remediation ...")
+        loop = asyncio.get_event_loop()
+        tasks = [
+            loop.run_in_executor(None, _enrich_finding_remediation, f)
+            for f in _unknown_findings
+        ]
+        await asyncio.gather(*tasks)
 
     generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")
 
@@ -8135,6 +8123,54 @@ def _enrich_hc_finding(f) -> None:
     except Exception as exc:
         # Non-fatal: finding is useful even without LLM description
         print(f"  [hc] LLM enrichment failed for '{f.title}': {exc}")
+    finally:
+        _sp.stop(f" done ({_fmt_dur(time.monotonic() - _t0)})")
+
+
+def _enrich_finding_remediation(f) -> None:
+    """
+    Ask the LLM for technology-specific short and long-term remediation for a
+    finding whose vuln_type is Unknown or unrecognised.  Populates
+    f.llm_remediation_short and f.llm_remediation_long in-place.
+    Non-fatal — silently leaves fields empty on any failure.
+    """
+    prompt = (
+        f"You are a senior penetration tester writing remediation advice for a client report.\n\n"
+        f"Finding:   {f.title}  ({f.severity.upper()})\n"
+        f"Service:   {f.service}\n"
+        f"Detail:    {(f.description or f.evidence or '')[:300]}\n\n"
+        'Reply with JSON only, no prose outside the JSON:\n'
+        '{"short": "1-2 sentences: immediate workaround specific to this technology — '
+        'name the exact config file, command, or setting to change", '
+        '"long": "2-3 sentences: permanent architectural fix — reference the specific '
+        'service, protocol, or component by name. No generic patch language."}\n\n'
+        "Be concrete. Name the technology. Do not say 'apply vendor patch' or 'follow best practices'."
+    )
+    _sp = _Spinner(f"[ LLM ]  Enriching finding remediation: {f.title[:50]} ...").start()
+    _t0 = time.monotonic()
+    try:
+        resp = requests.post(
+            OLLAMA_URL,
+            json={
+                "model":      REPORT_MODEL,
+                "prompt":     prompt,
+                "stream":     False,
+                "keep_alive": _OLLAMA_KEEP_ALIVE,
+                "options":    {"num_ctx": 768, "temperature": 0.2},
+            },
+            timeout=OLLAMA_TIMEOUT,
+        )
+        raw = resp.json().get("response", "").strip()
+        # Strip optional <think>...</think> block (qwen3 reasoning models)
+        raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+        # Extract first JSON object
+        m = re.search(r"\{.*\}", raw, re.DOTALL)
+        if m:
+            obj = json.loads(m.group(0))
+            f.llm_remediation_short = obj.get("short", "").strip()
+            f.llm_remediation_long  = obj.get("long",  "").strip()
+    except Exception:
+        pass  # Leave fields empty — template falls back to static map
     finally:
         _sp.stop(f" done ({_fmt_dur(time.monotonic() - _t0)})")
 
