@@ -30,8 +30,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OLLAMA_MODEL="gemma3:4b"
-OLLAMA_SCRIPT_MODEL="qwen3:8b"
-OLLAMA_REPORT_MODEL="qwen3:8b"
+OLLAMA_SCRIPT_MODEL="qwen2.5-coder:7b-instruct"
+OLLAMA_REPORT_MODEL="gemma3:4b"
 
 CVE_REPO="https://github.com/trickest/cve.git"
 CVE_OFFLINE_REPO="https://github.com/trickest/cve-offline.git"
@@ -56,11 +56,94 @@ header()  {
 skip()    { echo -e "${YELLOW}[SKIP]${NC}  $*"; }
 SETUP_INCOMPLETE=0
 
+# ── sudo / root detection ──────────────────────────────────────────────────
+# Docker containers run as root — sudo is not installed and not needed.
+# On a regular host we need sudo for apt/snap. Set SUDO accordingly.
+if [[ "$(id -u)" == "0" ]]; then
+    SUDO=""
+else
+    SUDO="sudo"
+fi
+
 # ── require root for apt/snap steps ────────────────────────────────────────
 need_sudo() {
-    if ! sudo -n true 2>/dev/null; then
+    if [[ -n "$SUDO" ]] && ! sudo -n true 2>/dev/null; then
         echo "This step requires sudo. You may be prompted for your password."
     fi
+}
+
+# Install a single manifest tool's backing binary if absent.
+# Mirrors the same function in update.sh section 1c.
+_ensure_manifest_tool() {
+    local tool="$1"
+    case "$tool" in
+        ssh_enum)
+            command -v ssh-audit &>/dev/null && return 0
+            info "ssh-audit missing — installing ..."
+            $SUDO apt install -y ssh-audit \
+                && ok "ssh-audit installed" \
+                || err "ssh-audit install failed — ssh_enum will be unavailable"
+            ;;
+        ffuf)
+            command -v ffuf &>/dev/null && return 0
+            info "ffuf missing — installing ..."
+            $SUDO apt install -y ffuf 2>/dev/null \
+                || ( command -v go &>/dev/null \
+                     && go install -v github.com/ffuf/ffuf/v2@latest \
+                     && ok "ffuf installed via go install" ) \
+                || err "ffuf install failed — directory fuzzing will be unavailable"
+            ;;
+        rdp_enum)
+            [[ -f "$SCRIPT_DIR/rdpscan/RPDscan.py" ]] && return 0
+            info "rdpscan missing — cloning ..."
+            git clone --depth=1 https://github.com/robertdavidgraham/rdpscan.git \
+                "$SCRIPT_DIR/rdpscan" 2>/dev/null \
+                && ok "rdpscan cloned" \
+                || err "rdpscan clone failed — RDP scanning will be unavailable"
+            ;;
+        nikto|nikto_cgi)
+            [[ -f "$SCRIPT_DIR/nikto/program/nikto.pl" ]] && return 0
+            info "nikto submodule missing — initialising ..."
+            git -C "$SCRIPT_DIR" submodule update --init --recursive \
+                && ok "nikto submodule ready" \
+                || err "nikto submodule init failed"
+            ;;
+        nuclei)
+            ( command -v nuclei &>/dev/null \
+              || [[ -x "$HOME/go/bin/nuclei" ]] ) && return 0
+            info "nuclei missing — installing ..."
+            command -v go &>/dev/null \
+                && go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest \
+                && ok "nuclei installed" \
+                || err "nuclei install failed (go not found)"
+            ;;
+        dns_enum)
+            command -v dnsenum &>/dev/null && command -v dnsrecon &>/dev/null && return 0
+            info "dns tools missing — installing ..."
+            $SUDO apt install -y dnsenum dnsrecon \
+                && ok "dnsenum + dnsrecon installed" \
+                || err "dns tools install failed"
+            ;;
+        nxc_smb|nxc_ldap|mssql_enum)
+            command -v nxc &>/dev/null && return 0
+            info "nxc missing — handled by Python venv step above or run ./update.sh"
+            ;;
+        curl)
+            command -v curl &>/dev/null && return 0
+            info "curl missing — installing ..."
+            $SUDO apt install -y curl \
+                && ok "curl installed" \
+                || err "curl install failed"
+            ;;
+        mysql_enum)
+            command -v nmap &>/dev/null && return 0
+            info "nmap missing — installing ..."
+            $SUDO apt install -y nmap \
+                && ok "nmap installed" \
+                || err "nmap install failed"
+            ;;
+        *) return 0 ;;
+    esac
 }
 
 # =============================================================================
@@ -82,10 +165,10 @@ fi
 header "2/10  System packages (apt)"
 need_sudo
 info "Updating package lists ..."
-sudo apt update -qq
+$SUDO apt update -qq
 
 info "Installing core dependencies ..."
-sudo apt install -y \
+$SUDO apt install -y \
     python3 \
     python3-venv \
     python3-pip \
@@ -124,7 +207,7 @@ done
 header "3/10  SecLists wordlists (snap)"
 if command -v snap &>/dev/null; then
     info "Installing seclists via snap ..."
-    sudo snap install seclists 2>/dev/null \
+    $SUDO snap install seclists 2>/dev/null \
         && ok "seclists installed at /snap/seclists/current/" \
         || { skip "seclists snap already installed or snap unavailable"; }
 else
@@ -241,13 +324,13 @@ if command -v nxc &>/dev/null; then
     ok "NetExec already available at $(command -v nxc)"
 else
     info "Installing NetExec (nxc) ..."
-    if sudo apt install -y netexec 2>/dev/null && command -v nxc &>/dev/null; then
+    if $SUDO apt install -y netexec 2>/dev/null && command -v nxc &>/dev/null; then
         ok "NetExec installed via apt"
     else
         info "Using pipx to install NetExec ..."
-        sudo apt install -y libkrb5-dev 2>/dev/null || true
+        $SUDO apt install -y libkrb5-dev 2>/dev/null || true
         # pipx: apt (Ubuntu 23.04+) or pip fallback for older releases
-        if ! sudo apt install -y pipx 2>/dev/null; then
+        if ! $SUDO apt install -y pipx 2>/dev/null; then
             python3 -m pip install pipx --break-system-packages 2>/dev/null \
                 || python3 -m pip install pipx 2>/dev/null || true
         fi
@@ -404,9 +487,9 @@ if [[ "${NO_OPTIONAL:-0}" != "1" ]]; then
     info "Installing amass ..."
     if command -v amass &>/dev/null; then
         skip "amass already installed at $(command -v amass)"
-    elif sudo apt install -y amass 2>/dev/null; then
+    elif $SUDO apt install -y amass 2>/dev/null; then
         ok "amass installed via apt"
-    elif command -v snap &>/dev/null && sudo snap install amass 2>/dev/null; then
+    elif command -v snap &>/dev/null && $SUDO snap install amass 2>/dev/null; then
         ok "amass installed via snap"
     else
         info "apt/snap failed — trying go install fallback ..."
@@ -421,23 +504,23 @@ if [[ "${NO_OPTIONAL:-0}" != "1" ]]; then
             skip "msfconsole already installed at $(command -v msfconsole)"
         else
             info "Installing metasploit-framework ..."
-            if sudo apt install -y metasploit-framework 2>/dev/null; then
+            if $SUDO apt install -y metasploit-framework 2>/dev/null; then
                 ok "metasploit-framework installed via apt"
             else
                 info "apt package unavailable — adding rapid7 apt repository ..."
                 if curl -fsSL https://apt.metasploit.com/metasploit-framework.gpg.key \
-                       | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/metasploit.gpg 2>/dev/null \
+                       | $SUDO gpg --dearmor -o /etc/apt/trusted.gpg.d/metasploit.gpg 2>/dev/null \
                     && echo "deb [signed-by=/etc/apt/trusted.gpg.d/metasploit.gpg] https://apt.metasploit.com/ buster main" \
-                       | sudo tee /etc/apt/sources.list.d/metasploit-framework.list >/dev/null \
-                    && sudo apt-get update -qq 2>/dev/null \
-                    && sudo apt-get install -y metasploit-framework 2>/dev/null; then
+                       | $SUDO tee /etc/apt/sources.list.d/metasploit-framework.list >/dev/null \
+                    && $SUDO apt-get update -qq 2>/dev/null \
+                    && $SUDO apt-get install -y metasploit-framework 2>/dev/null; then
                     ok "metasploit-framework installed via rapid7 apt repository"
                 else
                     info "rapid7 apt repo failed — trying Metasploit nightly installer ..."
                     curl -fsSL https://raw.githubusercontent.com/rapid7/metasploit-omnibus/master/config/templates/metasploit-framework-wrappers/msfupdate.erb \
                         -o /tmp/msfinstall 2>/dev/null \
                         && chmod 755 /tmp/msfinstall \
-                        && sudo /tmp/msfinstall \
+                        && $SUDO /tmp/msfinstall \
                         && ok "metasploit-framework installed via nightly installer" \
                         || {
                             skip "metasploit-framework could not be installed automatically"
@@ -543,19 +626,42 @@ fi
 info "KB submission runs automatically on ./update.sh — no token required"
 
 # =============================================================================
-# Tool Manifest notice
+# Tool Manifest
 # =============================================================================
 MANIFEST_FILE="$SCRIPT_DIR/tool_manifest.json"
-if [[ -f "$MANIFEST_FILE" ]]; then
-    TOOL_COUNT=$(python3 -c "import json; d=json.load(open('$MANIFEST_FILE')); print(sum(1 for k in d if not k.startswith('_')))" 2>/dev/null || echo "?")
-    ok "Tool manifest found — $TOOL_COUNT tools loaded ($MANIFEST_FILE)"
+if [[ ! -f "$MANIFEST_FILE" ]]; then
+    info "Creating empty tool_manifest.json ..."
+    echo '{}' > "$MANIFEST_FILE"
+    ok "tool_manifest.json created (empty — populate via ./update.sh with a subscription key)"
+fi
+
+TOOL_COUNT=$(python3 -c "import json; d=json.load(open('$MANIFEST_FILE')); print(sum(1 for k in d if not k.startswith('_')))" 2>/dev/null || echo "0")
+if [[ "$TOOL_COUNT" -gt 0 ]] 2>/dev/null; then
+    ok "Tool manifest loaded — $TOOL_COUNT tools ($MANIFEST_FILE)"
 else
-    echo ""
-    echo -e "${YELLOW}[i] Tool manifest not found.${NC}"
-    echo "    tool_manifest.json contains per-tool flag guidance and improves service routing."
-    echo "    It is delivered to subscribers via ./update.sh (requires KB_LICENSE_KEY in noctis.conf)."
-    echo "    Subscribe at: https://noctisedge.lemonsqueezy.com"
-    echo "    Or generate a local manifest: python3 scripts/build_tool_manifest.py"
+    info "Tool manifest is empty — add KB_LICENSE_KEY to noctis.conf and run ./update.sh to receive full manifest"
+    info "  Subscribe at: https://noctisedge.lemonsqueezy.com"
+fi
+
+# =============================================================================
+# Tool manifest verification pass — install any missing manifest-listed binaries
+# =============================================================================
+if [[ -f "$MANIFEST_FILE" ]]; then
+    _MANIFEST_TOOLS=$(python3 -c "
+import json, sys
+try:
+    d = json.load(open('$MANIFEST_FILE'))
+    print(' '.join(k for k in d if not k.startswith('_')))
+except Exception:
+    sys.exit(1)
+" 2>/dev/null || echo "")
+    if [[ -n "$_MANIFEST_TOOLS" ]]; then
+        info "Running manifest tool verification pass ..."
+        for _tool in $_MANIFEST_TOOLS; do
+            _ensure_manifest_tool "$_tool"
+        done
+        ok "Manifest tool verification complete"
+    fi
 fi
 
 # =============================================================================

@@ -13,8 +13,8 @@ set -euo pipefail
 export GIT_TERMINAL_PROMPT=0
 
 OLLAMA_MODEL="gemma3:4b"
-OLLAMA_SCRIPT_MODEL="qwen3:8b"
-OLLAMA_REPORT_MODEL="qwen3:8b"
+OLLAMA_SCRIPT_MODEL="qwen2.5-coder:7b-instruct"
+OLLAMA_REPORT_MODEL="gemma3:4b"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Load per-user configuration (tokens, UUID, paid-tier flag)
@@ -41,29 +41,34 @@ header() {
 }
 
 # =============================================================================
-# 0. Sudo — cache credentials up-front
+# 0. Sudo / root detection
 # =============================================================================
-# Prompt for the sudo password NOW, before any long-running network operation
-# (apt update can take 30-60 s reaching mirrors, which would otherwise delay
-# the password prompt and make the web UI appear frozen).
-info "This script requires sudo for apt and snap steps."
-info "Please enter your sudo password when prompted below."
-if ! sudo -v; then
-    err "sudo authentication failed — aborting"
-    exit 1
+# Inside Docker the container runs as root — sudo is not installed and not
+# needed. On a regular host we need sudo for apt/snap. Set SUDO accordingly.
+if [[ "$(id -u)" == "0" ]]; then
+    SUDO=""
+    ok "Running as root — sudo not required"
+else
+    SUDO="sudo"
+    info "This script requires sudo for apt and snap steps."
+    info "Please enter your sudo password when prompted below."
+    if ! sudo -v; then
+        err "sudo authentication failed — aborting"
+        exit 1
+    fi
+    ok "sudo credentials cached"
 fi
-ok "sudo credentials cached"
 
 # =============================================================================
 # 1. apt — system packages
 # =============================================================================
 header "1/10  System packages (apt)"
 info "Running apt update + upgrade ..."
-sudo apt update -qq      || err "apt update failed — continuing"
-sudo apt upgrade -y      || err "apt upgrade failed — continuing"
+$SUDO apt update -qq      || err "apt update failed — continuing"
+$SUDO apt upgrade -y      || err "apt upgrade failed — continuing"
 info "Ensuring required DNS tools are installed ..."
-sudo apt install -y dnsenum dnsrecon || err "apt install failed — continuing"
-sudo apt autoremove -y   || true
+$SUDO apt install -y dnsenum dnsrecon || err "apt install failed — continuing"
+$SUDO apt autoremove -y   || true
 ok "apt done"
 
 # =============================================================================
@@ -87,9 +92,9 @@ if command -v amass &>/dev/null; then
         ok "amass already installed ($(command -v amass)) — skipping go update (go not found)"
     fi
 else
-    if sudo apt install -y amass 2>/dev/null; then
+    if $SUDO apt install -y amass 2>/dev/null; then
         ok "amass installed via apt"
-    elif command -v snap &>/dev/null && sudo snap install amass 2>/dev/null; then
+    elif command -v snap &>/dev/null && $SUDO snap install amass 2>/dev/null; then
         ok "amass installed via snap"
     elif command -v go &>/dev/null; then
         go install -v github.com/owasp-amass/amass/v4/cmd/amass@latest 2>/dev/null \
@@ -106,12 +111,12 @@ if command -v nxc &>/dev/null; then
         && ok "nxc updated via pipx" \
         || { ok "nxc already up to date (pipx upgrade skipped — not a pipx install)"; }
 else
-    if sudo apt install -y netexec 2>/dev/null && command -v nxc &>/dev/null; then
+    if $SUDO apt install -y netexec 2>/dev/null && command -v nxc &>/dev/null; then
         ok "NetExec installed via apt"
     else
         info "Using pipx to install NetExec ..."
-        sudo apt install -y libkrb5-dev 2>/dev/null || true
-        if ! sudo apt install -y pipx 2>/dev/null; then
+        $SUDO apt install -y libkrb5-dev 2>/dev/null || true
+        if ! $SUDO apt install -y pipx 2>/dev/null; then
             python3 -m pip install pipx --break-system-packages 2>/dev/null \
                 || python3 -m pip install pipx 2>/dev/null || true
         fi
@@ -126,12 +131,117 @@ else
 fi
 
 # =============================================================================
+# 1c. Tool manifest health check — install any missing manifest-listed binaries
+# =============================================================================
+header "1c  Tool manifest health check"
+
+# Install a single manifest tool's backing binary if absent.
+# Called once per tool name found in tool_manifest.json.
+_ensure_manifest_tool() {
+    local tool="$1"
+    case "$tool" in
+        ssh_enum)
+            command -v ssh-audit &>/dev/null && return 0
+            info "ssh-audit missing — installing ..."
+            $SUDO apt install -y ssh-audit \
+                && ok "ssh-audit installed" \
+                || err "ssh-audit install failed — ssh_enum will be unavailable"
+            ;;
+        ffuf)
+            command -v ffuf &>/dev/null && return 0
+            info "ffuf missing — installing ..."
+            $SUDO apt install -y ffuf 2>/dev/null \
+                || ( command -v go &>/dev/null \
+                     && go install -v github.com/ffuf/ffuf/v2@latest \
+                     && ok "ffuf installed via go install" ) \
+                || err "ffuf install failed — directory fuzzing will be unavailable"
+            ;;
+        rdp_enum)
+            [[ -f "$SCRIPT_DIR/rdpscan/RPDscan.py" ]] && return 0
+            info "rdpscan missing — cloning ..."
+            git clone --depth=1 https://github.com/robertdavidgraham/rdpscan.git \
+                "$SCRIPT_DIR/rdpscan" 2>/dev/null \
+                && ok "rdpscan cloned" \
+                || err "rdpscan clone failed — RDP scanning will be unavailable"
+            ;;
+        nikto|nikto_cgi)
+            [[ -f "$SCRIPT_DIR/nikto/program/nikto.pl" ]] && return 0
+            info "nikto submodule missing — initialising ..."
+            git -C "$SCRIPT_DIR" submodule update --init --recursive \
+                && ok "nikto submodule ready" \
+                || err "nikto submodule init failed"
+            ;;
+        nuclei)
+            ( command -v nuclei &>/dev/null \
+              || [[ -x "$HOME/go/bin/nuclei" ]] ) && return 0
+            info "nuclei missing — installing ..."
+            command -v go &>/dev/null \
+                && go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest \
+                && ok "nuclei installed" \
+                || err "nuclei install failed (go not found)"
+            ;;
+        dns_enum)
+            command -v dnsenum &>/dev/null && command -v dnsrecon &>/dev/null && return 0
+            info "dns tools missing — installing ..."
+            $SUDO apt install -y dnsenum dnsrecon \
+                && ok "dnsenum + dnsrecon installed" \
+                || err "dns tools install failed"
+            ;;
+        nxc_smb|nxc_ldap|mssql_enum)
+            # nxc already handled above in section 1b
+            command -v nxc &>/dev/null && return 0
+            info "nxc missing — will be handled by section 1b on next run"
+            ;;
+        curl)
+            command -v curl &>/dev/null && return 0
+            info "curl missing — installing ..."
+            $SUDO apt install -y curl \
+                && ok "curl installed" \
+                || err "curl install failed"
+            ;;
+        mysql_enum)
+            # backed by nmap NSE scripts — nmap is a hard dependency
+            command -v nmap &>/dev/null && return 0
+            info "nmap missing — installing ..."
+            $SUDO apt install -y nmap \
+                && ok "nmap installed" \
+                || err "nmap install failed"
+            ;;
+        # nikto/nuclei/ffuf already covered; remaining tools need no extra binary
+        *) return 0 ;;
+    esac
+}
+
+_MANIFEST_FILE="$SCRIPT_DIR/tool_manifest.json"
+if [[ -f "$_MANIFEST_FILE" ]]; then
+    _MANIFEST_TOOLS=$(python3 -c "
+import json, sys
+try:
+    d = json.load(open('$_MANIFEST_FILE'))
+    print(' '.join(k for k in d if not k.startswith('_')))
+except Exception as e:
+    sys.exit(1)
+" 2>/dev/null || echo "")
+
+    if [[ -n "$_MANIFEST_TOOLS" ]]; then
+        for _tool in $_MANIFEST_TOOLS; do
+            _ensure_manifest_tool "$_tool"
+        done
+        ok "Tool manifest health check complete"
+    else
+        err "Could not parse tool manifest — skipping tool health check"
+    fi
+else
+    info "tool_manifest.json not found — skipping manifest tool check"
+fi
+
+# =============================================================================
 # 2. snap — SecLists
 # =============================================================================
 header "2/10  Snap packages (seclists)"
 if command -v snap &>/dev/null; then
     info "Refreshing snap packages ..."
-    sudo snap refresh || err "snap refresh failed — continuing"
+    $SUDO snap refresh || err "snap refresh failed — continuing"
     ok "snap done"
 else
     err "snap not found — skipping"
@@ -405,6 +515,65 @@ else
 fi
 
 ok "KB sync done"
+
+# =============================================================================
+# 9b. Nuclei Template Knowledge Base sync
+# =============================================================================
+header "9b/10  Nuclei Template Knowledge Base sync"
+
+NUCLEI_KB_LOCAL="$SCRIPT_DIR/nuclei_kb.json"
+
+# Ensure the file exists (created empty on first run)
+if [[ ! -f "$NUCLEI_KB_LOCAL" ]]; then
+    echo '{}' > "$NUCLEI_KB_LOCAL"
+    ok "Created empty nuclei_kb.json"
+fi
+
+# ── Submit (all users) ────────────────────────────────────────────────────────
+if [[ -z "$KB_USER_ID" ]]; then
+    err "Nuclei KB submission skipped — KB_USER_ID missing"
+else
+    info "Submitting Nuclei template KB via community relay ..."
+    NUCLEI_RELAY_ARGS=("$NUCLEI_KB_LOCAL" "$KB_USER_ID")
+    [[ -n "$KB_RELAY_URL" ]] && NUCLEI_RELAY_ARGS+=("$KB_RELAY_URL")
+    "$PYTHON" "$SCRIPT_DIR/scripts/submit_nuclei_kb.py" "${NUCLEI_RELAY_ARGS[@]}" \
+        && ok "Nuclei KB submission complete" \
+        || err "Nuclei KB submission failed — will retry on next update"
+fi
+
+# ── Pull community Nuclei KB (subscribers only) ───────────────────────────────
+if [[ -z "$KB_LICENSE_KEY" ]]; then
+    promo "Community Nuclei KB pull skipped — KB_LICENSE_KEY not set in noctis.conf"
+else
+    info "Pulling community Nuclei template KB (license key found) ..."
+    _NKB_RELAY="https://noctis-kb-relay.pearcetechnologies1.workers.dev"
+    _TMP_NKB="/tmp/_noctis_community_nuclei_kb_$$.json"
+    HTTP_CODE=$(curl -sS -w "%{http_code}" -o "$_TMP_NKB" \
+        --max-time 30 \
+        -X POST "$_NKB_RELAY/community-nuclei-kb" \
+        -H "Content-Type: application/json" \
+        -d "{\"license_key\":\"$KB_LICENSE_KEY\"}" 2>/dev/null)
+    CURL_EXIT=$?
+    if [[ "$CURL_EXIT" != "0" ]]; then
+        err "Community Nuclei KB download failed (curl error $CURL_EXIT) — will retry on next update"
+        rm -f "$_TMP_NKB"
+    elif [[ "$HTTP_CODE" == "200" ]]; then
+        MERGE_OUTPUT=$("$PYTHON" "$SCRIPT_DIR/scripts/merge_nuclei_kb.py" \
+            "$_TMP_NKB" "$NUCLEI_KB_LOCAL" 2>&1)
+        MERGE_EXIT=$?
+        [[ "$MERGE_EXIT" == "0" ]] && ok "Community Nuclei KB merged: $MERGE_OUTPUT" \
+            || err "Nuclei KB merge failed: $MERGE_OUTPUT"
+        rm -f "$_TMP_NKB"
+    elif [[ "$HTTP_CODE" == "403" ]]; then
+        err "License key rejected — check your subscription at https://noctisedge.lemonsqueezy.com"
+        rm -f "$_TMP_NKB"
+    else
+        err "Community Nuclei KB download failed (HTTP $HTTP_CODE) — will retry on next update"
+        rm -f "$_TMP_NKB"
+    fi
+fi
+
+ok "Nuclei KB sync done"
 
 # =============================================================================
 # 10. Tool Knowledge Base sync

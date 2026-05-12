@@ -71,12 +71,11 @@ services:
     environment:
       # Point Noctis at the Ollama sidecar (service name resolves inside compose network)
       - NOCTIS_OLLAMA_URL=http://ollama:11434/api/generate
-      # Planning model — tool decisions, iteration, JSON structured outputs
+      # Planning model (structured JSON decisions, tool selection)
       - NOCTIS_OLLAMA_MODEL=gemma3:4b
-      # Script model — CVE exploit scripts, test scripts, verification scripts
-      - NOCTIS_OLLAMA_SCRIPT_MODEL=qwen3:8b
-      # Report model — conclusion, attacker perspective, remediation prose
-      - NOCTIS_OLLAMA_REPORT_MODEL=qwen3:8b
+      - NOCTIS_OLLAMA_SCRIPT_MODEL=qwen2.5-coder:7b-instruct
+      # Narrative prose model (report writing, attacker perspectives)
+      - NOCTIS_OLLAMA_REPORT_MODEL=gemma3:4b
       # Bind to all interfaces so the host browser can reach port 5000
       - NOCTIS_BIND_HOST=0.0.0.0
     ports:
@@ -95,6 +94,8 @@ services:
       - ./noctis.conf:/app/noctis.conf
       # Bind-mount CVE dir so host update.sh refreshes EPSS/NVD data in-container
       - ./CVE:/app/CVE
+      # Persist Nuclei template knowledge base (accumulated generated templates)
+      - ./nuclei_kb.json:/app/nuclei_kb.json
     # nmap SYN scans need raw socket capabilities
     cap_add:
       - NET_RAW
