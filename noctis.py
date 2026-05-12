@@ -4943,12 +4943,9 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
     _unknown_findings = [f for f in all_findings if not f.vuln_type or f.vuln_type == "Unknown"]
     if _unknown_findings:
         print(f"\n[+] Enriching {len(_unknown_findings)} finding(s) with specific LLM remediation ...")
-        loop = asyncio.get_event_loop()
-        tasks = [
-            loop.run_in_executor(None, _enrich_finding_remediation, f)
-            for f in _unknown_findings
-        ]
-        await asyncio.gather(*tasks)
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as _pool:
+            list(_pool.map(_enrich_finding_remediation, _unknown_findings))
 
     generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")
 
