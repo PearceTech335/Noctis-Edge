@@ -4,9 +4,6 @@ __pycache__/
 *.pyc
 *.pyo
 
-# Git internals (not needed inside image)
-.git/
-
 # Submodule dirs — cloned fresh during build for reproducibility
 nikto/
 # Exclude cve-offline directory but keep the pre-built CSV for the Docker image

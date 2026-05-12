@@ -20,9 +20,9 @@
 
 $ErrorActionPreference = "Stop"
 
-$OLLAMA_MODEL  = "gemma3:4b"  # planning + reasoning (NOCTIS_OLLAMA_MODEL)
-$SCRIPT_MODEL  = "qwen3:8b"   # CVE scripts + tool scripts (NOCTIS_OLLAMA_SCRIPT_MODEL)
-$REPORT_MODEL  = "qwen3:8b"   # narrative prose: conclusion, attacker perspective, remediation (NOCTIS_OLLAMA_REPORT_MODEL)
+$OLLAMA_MODEL  = "gemma3:4b"                      # planning + reasoning (NOCTIS_OLLAMA_MODEL)
+$SCRIPT_MODEL  = "qwen2.5-coder:7b-instruct"   # CVE scripts + tool scripts (NOCTIS_OLLAMA_SCRIPT_MODEL)
+$REPORT_MODEL  = "gemma3:4b"                      # narrative prose: conclusion, attacker perspective, remediation (NOCTIS_OLLAMA_REPORT_MODEL)
 $SCRIPT_DIR    = Split-Path -Parent $MyInvocation.MyCommand.Definition
 
 function Write-Header($msg) {
@@ -136,7 +136,7 @@ foreach ($MODEL in @($OLLAMA_MODEL, $SCRIPT_MODEL, $REPORT_MODEL) | Select-Objec
 Write-Header "5/5  Starting Noctis Edge Web UI"
 # Ensure host-side KB files exist as valid JSON before bind-mounting.
 # If absent, Docker would auto-create them as directories instead of files.
-foreach ($f in @("cve_knowledge_base.json", "tool_knowledge_base.json")) {
+foreach ($f in @("cve_knowledge_base.json", "tool_knowledge_base.json", "nuclei_kb.json")) {
     if (-not (Test-Path (Join-Path $SCRIPT_DIR $f))) {
         [System.IO.File]::WriteAllText((Join-Path $SCRIPT_DIR $f), "{}")
         Write-Info "Created placeholder: $f"
