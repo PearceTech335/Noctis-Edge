@@ -510,7 +510,7 @@ The worker is already deployed at `https://noctis-kb-relay.pearcetechnologies1.w
 - **ETA timing fix:** Phase checkpoint `frac_done` values are now strictly non-decreasing across the full scan pipeline. Previously "Base reports saved" used `frac_done=0.70` after MSF validation done at `0.85`, causing the estimated completion time to jump backwards mid-scan. All checkpoints now form a monotonically increasing sequence.
 - **CVE verdict strictness hardened:** The CVE test LLM prompt now explicitly requires (a) a version string extracted and confirmed within the CVE range, OR (b) the specific vulnerable behaviour directly observed. Product/service name presence alone (e.g. `OpenSSH` in banner, `Apache` in Server header) is explicitly forbidden as a basis for `VULNERABLE`.
 - **`docker-run.sh` macOS compatibility:** Replaced `df --output=avail /` (GNU coreutils only) with `df -k / | awk 'NR==2 {print $4}'` which works identically on macOS (BSD) and Linux.
-- **Model alignment across all deployment files:** `setup.sh`, `update.sh`, `docker-run.sh`, and `docker-compose.yml` now all reference `gemma3:4b` (planning + reporting) and `qwen2.5-coder:7b-instruct` (scripts), matching the actual runtime defaults in `noctis.py`. Previously stale references to `qwen2.5-coder:3b-instruct` and `qwen3:8b` would pull incorrect models on first install or update.
+- **Model alignment across all deployment files:** `setup.sh`, `update.sh`, `docker-run.sh`, and `docker-compose.yml` now all correctly reference `gemma3:4b` for planning and report prose, and `qwen2.5-coder:7b-instruct` for CVE scripts and verification scripts — matching the runtime defaults in `noctis.py`. Fresh installs and `./update.sh` runs now pull the correct models.
 
 ## What's New in v0.8.1
 
