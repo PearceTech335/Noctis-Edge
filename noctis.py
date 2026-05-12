@@ -1439,6 +1439,9 @@ _VULN_TYPE_PATTERNS = [
     (["integer overflow", "integer underflow"],                                     "Integer Overflow"),
     (["open redirect"],                                                              "Open Redirect"),
     (["server-side request forgery", "ssrf"],                                       "SSRF"),
+    (["tls 1.0", "ssl 2.0", "ssl 3.0", "rc4", "des-cbc", "export cipher", "weak cipher", "weak ssl", "weak tls", "deprecated protocol", "poodle", "beast", "drown"],  "Weak SSL/TLS"),
+    (["password authentication", "password-based auth", "brute-force", "weak credential", "default password", "default credential", "default login", "no mfa", "weak password"],  "Weak Authentication"),
+    (["misconfiguration", "insecure configuration", "directory listing", "index of /", "server-status", "server-info", "debug mode", "options +indexes"],  "Misconfiguration"),
 ]
 
 _SAFE_VALIDATION = {
@@ -1458,7 +1461,10 @@ _SAFE_VALIDATION = {
     "Use-After-Free":         "Version banner check only",
     "Integer Overflow":       "Version banner check only",
     "Open Redirect":          "Redirect to benign external host and inspect Location header",
-    "SSRF":                   "Probe with internal address that returns a known response",
+    "SSRF":                    "Probe with internal address that returns a known response",
+    "Weak SSL/TLS":           "Confirm via TLS handshake — connect with a client restricted to the weak protocol/cipher",
+    "Weak Authentication":    "Attempt login with common default credentials or observe authentication mechanism",
+    "Misconfiguration":       "Unauthenticated GET to the misconfigured endpoint and observe response",
     "Unknown":                "Version banner check and manual review",
 }
 
@@ -1480,6 +1486,9 @@ _PROOF_OF_IMPACT = {
     "Integer Overflow":       "Unexpected behaviour or crash observed",
     "Open Redirect":          "Browser redirected to attacker-controlled host",
     "SSRF":                   "Response contains internal resource content",
+    "Weak SSL/TLS":           "Successful handshake using the weak protocol or cipher confirmed",
+    "Weak Authentication":    "Unauthorised access or successful login with guessed/default credentials confirmed",
+    "Misconfiguration":       "Sensitive resource accessible or service configuration exposed without authentication",
     "Unknown":                "Manual verification required",
 }
 
@@ -1505,7 +1514,36 @@ _REMEDIATION_EFFORT = {
     "Integer Overflow":         "High",
     "Open Redirect":            "Low",
     "SSRF":                     "Medium",
+    "Weak SSL/TLS":             "Low",
+    "Weak Authentication":      "Low",
+    "Misconfiguration":         "Low",
     "Unknown":                  "Medium",
+}
+
+# Estimated calendar time to fully remediate (patch + test + deploy).
+# Assumes a typical enterprise with a standard change-management cycle.
+_REMEDIATION_TIME_ESTIMATE = {
+    "Buffer Overflow":          "1–4 weeks (vendor patch + regression testing)",
+    "Path Traversal":           "1–3 days (config hardening or patch application)",
+    "SQL Injection":            "3–5 days (code changes + QA cycle)",
+    "XSS":                      "2–5 days (code changes + CSP deployment)",
+    "RCE":                      "2–4 weeks (vendor patch + full regression testing)",
+    "Command Injection":        "3–7 days (code changes + QA cycle)",
+    "DoS":                      "1–3 days (rate-limiting or patch application)",
+    "Privilege Escalation":     "3–7 days (config audit + policy update)",
+    "Authentication Bypass":    "< 1 day (config change or policy enforcement)",
+    "Information Disclosure":   "< 1 day (config change or endpoint restriction)",
+    "XXE":                      "1–3 days (parser config change + testing)",
+    "Insecure Deserialization": "1–3 weeks (code refactor + safe serialisation migration)",
+    "Format String":            "1–2 weeks (code audit + patch)",
+    "Use-After-Free":           "1–4 weeks (vendor patch + regression testing)",
+    "Integer Overflow":         "1–2 weeks (code changes + vendor patch)",
+    "Open Redirect":            "< 1 day (allowlist config or code change)",
+    "SSRF":                     "2–5 days (egress firewall rules + code changes)",
+    "Weak SSL/TLS":             "< 1 day (server config change + service restart)",
+    "Weak Authentication":      "< 1 day (config change) to 2–3 days (MFA rollout)",
+    "Misconfiguration":         "< 1 day (config change or endpoint restriction)",
+    "Unknown":                  "Varies — consult vendor advisory",
 }
 
 _BUSINESS_IMPACT = {
@@ -1582,6 +1620,9 @@ _CWE_MAPPING = {
     "Integer Overflow":          "CWE-190 (Integer Overflow or Wraparound)",
     "Open Redirect":             "CWE-601 (URL Redirection to Untrusted Site)",
     "SSRF":                      "CWE-918 (Server-Side Request Forgery)",
+    "Weak SSL/TLS":              "CWE-326 (Inadequate Encryption Strength)",
+    "Weak Authentication":       "CWE-521 (Weak Password Requirements) / CWE-308 (Use of Single-factor Authentication)",
+    "Misconfiguration":          "CWE-16 (Configuration)",
     "Unknown":                   "See NVD for CWE information",
 }
 
@@ -1710,6 +1751,9 @@ _REMEDIATION_REFERENCES = {
     "Format String":           ["https://owasp.org/www-community/attacks/Format_string_attack", "https://cwe.mitre.org/data/definitions/134.html"],
     "Use-After-Free":          ["https://owasp.org/www-community/attacks/Use_After_Free", "https://cwe.mitre.org/data/definitions/416.html"],
     "Integer Overflow":        ["https://owasp.org/www-community/attacks/Integer_Overflow", "https://cwe.mitre.org/data/definitions/190.html"],
+    "Weak SSL/TLS":            ["https://cheatsheetseries.owasp.org/cheatsheets/Transport_Layer_Security_Cheat_Sheet.html", "https://cwe.mitre.org/data/definitions/326.html"],
+    "Weak Authentication":     ["https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html", "https://cheatsheetseries.owasp.org/cheatsheets/Credential_Stuffing_Prevention_Cheat_Sheet.html"],
+    "Misconfiguration":        ["https://owasp.org/www-project-top-ten/2017/A6_2017-Security_Misconfiguration", "https://cheatsheetseries.owasp.org/cheatsheets/Infrastructure_as_Code_Security_Cheat_Sheet.html"],
 }
 
 # Short-term workarounds: immediate tactical mitigations (firewall, WAF, config)
@@ -1731,6 +1775,9 @@ _REMEDIATION_SHORT_TERM = {
     "Integer Overflow":         "Validate and clamp all numeric inputs at the application boundary. Apply vendor patch.",
     "Open Redirect":            "Add a redirect-destination allowlist at the web layer. Log and alert on redirect attempts to external hosts.",
     "SSRF":                     "Block outbound requests from the application server using egress firewall rules. Deny access to internal/metadata IP ranges.",
+    "Weak SSL/TLS":             "Disable weak protocols and ciphers in the server configuration immediately. For Apache: set SSLProtocol, SSLCipherSuite. For nginx: set ssl_protocols, ssl_ciphers. Restart the service after changes.",
+    "Weak Authentication":      "Disable password-based authentication where key-based or token-based auth is available (e.g. set PasswordAuthentication no in sshd_config). Force a service restart. Rotate any credentials that may have been exposed.",
+    "Misconfiguration":         "Disable directory listing and remove or restrict access to exposed admin/debug endpoints. Apply the minimum necessary permissions (principle of least exposure) and restart the affected service.",
     "Unknown":                  "Apply the vendor-recommended workaround. If unavailable, restrict network access to the affected service until patched.",
 }
 
@@ -1753,6 +1800,9 @@ _REMEDIATION_LONG_TERM = {
     "Integer Overflow":         "Upgrade to the patched version. Add explicit bounds checking throughout the codebase. Use checked-arithmetic primitives.",
     "Open Redirect":            "Remove dynamic redirect destinations entirely. Use fixed route mappings inside the application. Validate all redirect targets server-side.",
     "SSRF":                     "Upgrade to the patched version. Implement a strict URL allowlist for all outbound requests from the application server.",
+    "Weak SSL/TLS":             "Audit all TLS endpoints and enforce TLS 1.2 as the minimum (TLS 1.3 preferred). Remove all RC4, 3DES, and export-grade ciphers. Implement HSTS and review certificate validity periods.",
+    "Weak Authentication":      "Migrate entirely to public key or token-based authentication. Enforce MFA across all privileged access paths. Establish a credential rotation policy and conduct a periodic access review. Remove or disable all default accounts and credentials.",
+    "Misconfiguration":         "Conduct a full configuration audit against a hardening baseline (CIS Benchmarks or vendor security guides). Disable all non-essential features, endpoints, and services. Integrate configuration drift detection into the CI/CD pipeline.",
     "Unknown":                  "Apply the vendor security update. Review the OWASP guidelines and NVD advisory for the affected component. Conduct a targeted code review.",
 }
 
@@ -1844,6 +1894,7 @@ def enrich_cve(cve: dict, service: dict) -> dict:
         "remote":                remote,
         "compliance_controls":   _COMPLIANCE_MAPPING.get(vuln_type, ["See compliance frameworks"]),
         "effort":                _REMEDIATION_EFFORT.get(vuln_type, "Medium"),
+        "time_to_fix":           _REMEDIATION_TIME_ESTIMATE.get(vuln_type, _REMEDIATION_TIME_ESTIMATE["Unknown"]),
         "references":            _REMEDIATION_REFERENCES.get(vuln_type, ["https://nvd.nist.gov/", "https://owasp.org/"]),
         "safe_validation_method": _SAFE_VALIDATION.get(vuln_type, _SAFE_VALIDATION["Unknown"]),
         "proof_of_impact":       _PROOF_OF_IMPACT.get(vuln_type, _PROOF_OF_IMPACT["Unknown"]),
@@ -4252,7 +4303,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 </table>
 
 {% if nmap_discovery and nmap_discovery.nse_summary %}
-<h2>Nmap NSE Script Results</h2>
+<h2>Nmap NSE Scripts</h2>
 <details style="margin-bottom:1em;border:1px solid #1e4a6e;border-radius:6px;background:#0d1b2a">
   <summary style="cursor:pointer;color:#29b6f6;font-size:.92em;font-weight:600;padding:.65em 1em;user-select:none;display:flex;align-items:center;gap:.6em">
     <span>&#9654;</span>
@@ -4269,7 +4320,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 </details>
 {% endif %}
 
-<h2>Scan Findings ({{ findings|length }})</h2>
+<h2>Nmap NSE Script Findings ({{ findings|length }})</h2>
 {% if findings %}
 <details style="margin-bottom:1.2em;border:1px solid #1e4a6e;border-radius:6px;background:#0d1b2a">
   <summary style="cursor:pointer;color:#29b6f6;font-size:.92em;font-weight:600;padding:.65em 1em;user-select:none;display:flex;align-items:center;gap:.6em">
@@ -4342,17 +4393,21 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         </ul>
       </div>
       {% endif %}
-      {% if f.vuln_type and f.vuln_type != 'Unknown' %}
+      {% if f.vuln_type %}
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:.8em;margin-top:.8em">
         <div style="background:#1a2a0a;border-left:3px solid #8bc34a;border-radius:0 4px 4px 0;padding:.8em">
           <strong style="color:#8bc34a;display:block;margin-bottom:.35em">&#x26A1; Short-term Workaround</strong>
-          <div style="font-size:.87em;color:#dcedc8;line-height:1.55">{{ rem_short_map.get(f.vuln_type, "Apply vendor-recommended workaround or restrict network access.") }}</div>
+          <div style="font-size:.87em;color:#dcedc8;line-height:1.55">{{ rem_short_map.get(f.vuln_type, rem_short_map["Unknown"]) }}</div>
         </div>
         <div style="background:#0d2137;border-left:3px solid #29b6f6;border-radius:0 4px 4px 0;padding:.8em">
           <strong style="color:#29b6f6;display:block;margin-bottom:.35em">&#x1F527; Long-term Fix</strong>
-          <div style="font-size:.87em;color:#b3e5fc;line-height:1.55">{{ rem_long_map.get(f.vuln_type, "Upgrade to the latest patched version and review vendor advisories.") }}</div>
+          <div style="font-size:.87em;color:#b3e5fc;line-height:1.55">{{ rem_long_map.get(f.vuln_type, rem_long_map["Unknown"]) }}</div>
         </div>
       </div>
+      {% set _ttf = time_to_fix_map.get(f.vuln_type) %}
+      {% if _ttf %}
+      <div style="margin-top:.5em;font-size:.84em;color:#9e9e9e">&#x23F1; <strong style="color:#b0bec5">Estimated Time to Fix:</strong> {{ _ttf }}</div>
+      {% endif %}
       {% endif %}
       {% if f.cmd %}
       <div style="margin-top:.8em">
@@ -4379,7 +4434,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   {% for c in cve_matches | sort(attribute='epss_score', reverse=True) %}
   <details style="margin-bottom:1.5em;border:1px solid #333;border-radius:6px;padding:1em;background:#16213e">
     <summary style="cursor:pointer;font-weight:600;color:#00d4ff;font-size:1.05em;display:flex;align-items:center;flex-wrap:wrap;gap:.5em">
-      <span style="flex:1;min-width:180px"><a href="https://nvd.nist.gov/vuln/detail/{{ c.cve_id }}" target="_blank" style="color:#00d4ff;text-decoration:none" title="View on NVD">{{ c.cve_id }}</a> — {{ c.vulnerability_type }} on {{ c.service }}</span>
+      <span style="flex:1;min-width:180px"><a href="https://nvd.nist.gov/vuln/detail/{{ c.cve_id }}" target="_blank" style="color:#00d4ff;text-decoration:none" title="View on NVD">{{ c.cve_id }}</a> — {{ c.vulnerability_type }} on {{ c.service }}{% if c.product and c.product != 'unknown' %} <span style="color:#78909c;font-size:.85em;font-weight:400">({{ c.product }}{% if c.version_affected and c.version_affected != 'unknown' %} {{ c.version_affected }}{% endif %})</span>{% endif %}</span>
       <span class="badge badge-{{ c.severity|lower }}">{{ c.severity|upper }}</span>
       {% if c.nvd_cvss_v3_score %}
       <span style="background:#0f3460;color:#00d4ff;padding:3px 10px;border-radius:4px;font-size:.85em;font-weight:700;border:1px solid #00d4ff;min-width:2.5em;text-align:center" title="NVD CVSS v3.1">v3.1&nbsp;{{ c.nvd_cvss_v3_score }}</span>
@@ -4452,6 +4507,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         <strong style="color:#00d4ff;display:block;margin-bottom:.5em">Exploitation Details</strong>
         <div style="font-size:.9em;line-height:1.8;color:#ccc">
           <div><span style="color:#00d4ff">Type:</span> {{ c.vulnerability_type }}</div>
+          {% if c.product and c.product != 'unknown' %}<div><span style="color:#00d4ff">Detected Service:</span> <strong style="color:#e0e0e0">{{ c.product }}{% if c.version_affected and c.version_affected != 'unknown' %} {{ c.version_affected }}{% endif %}</strong> &mdash; <em style="color:#aaa;font-size:.9em">this version matches the affected range for {{ c.cve_id }}</em></div>{% endif %}
           <div><span style="color:#00d4ff">Remote:</span> {{ "Yes" if c.remote else "No" }}</div>
           <div><span style="color:#00d4ff">Authentication Required:</span> {{ "Yes" if c.requires_auth else "No" }}</div>
           <div><span style="color:#00d4ff">Affected Versions:</span> <code>{{ c.version_range }}</code></div>
@@ -4473,7 +4529,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       </div>
 
       {% if c.effort %}
-      <div style="display:flex;align-items:center;gap:.7em;margin-bottom:.75em;font-size:.88em">
+      <div style="display:flex;flex-wrap:wrap;align-items:center;gap:.7em;margin-bottom:.75em;font-size:.88em">
         <span style="color:#9e9e9e">Remediation Effort:</span>
         {% if c.effort == "Low" %}
         <span style="background:#0d2a0d;color:#a5d6a7;padding:.25em .9em;border-radius:12px;border:1px solid #388e3c;font-weight:600">&#x1F7E2; Low &mdash; Config Change</span>
@@ -4481,6 +4537,10 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         <span style="background:#2a2000;color:#ffe082;padding:.25em .9em;border-radius:12px;border:1px solid #f9a825;font-weight:600">&#x1F7E1; Medium &mdash; Patch Required</span>
         {% else %}
         <span style="background:#2a0d0d;color:#ef9a9a;padding:.25em .9em;border-radius:12px;border:1px solid #c62828;font-weight:600">&#x1F534; High &mdash; Upgrade / Redesign</span>
+        {% endif %}
+        {% if c.time_to_fix %}
+        <span style="color:#9e9e9e;margin-left:.5em">&#x23F1; Estimated Time to Fix:</span>
+        <span style="color:#b0bec5;font-style:italic">{{ c.time_to_fix }}</span>
         {% endif %}
       </div>
       {% endif %}
@@ -4736,6 +4796,7 @@ def generate_html_report(report_data):
         steps_map=_STEPS_TO_REPRODUCE,
         compliance_reasoning=_COMPLIANCE_REASONING,
         remediation_effort=_REMEDIATION_EFFORT,
+        time_to_fix_map=_REMEDIATION_TIME_ESTIMATE,
     )
     return Template(HTML_TEMPLATE).render(**data)
 
@@ -4767,7 +4828,10 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
     all_findings = deduplicate_findings(all_findings)
     for f in all_findings:
         f.risk_score = calculate_risk_score(f)
-    all_findings.sort(key=lambda f: f.risk_score, reverse=True)
+    _SEV_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+    all_findings.sort(
+        key=lambda f: (_SEV_ORDER.get(f.severity.lower(), 5), -f.risk_score)
+    )
 
     counts = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
     for f in all_findings:
@@ -4841,21 +4905,31 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
                     OLLAMA_URL,
                     json={"model": REPORT_MODEL, "stream": False,
                           "keep_alive": _OLLAMA_KEEP_ALIVE,
-                          "options":    {"num_ctx": 2048, "temperature": 0.3},
+                          "options":    {"num_ctx": 4096, "temperature": 0.3},
                           "prompt": (
                               "You are a professional penetration tester writing an executive summary "
                               "for a client-facing security assessment report. "
-                              "Write exactly 2 short paragraphs of professional prose. "
+                              "Write exactly 4 paragraphs of professional prose in plain text. "
                               "No bullet points, no headings, no markdown, no numbered lists. "
-                              "Paragraph 1: Describe the overall security posture and the severity "
-                              "breakdown of findings, and name the key services or protocols that "
-                              "constitute the primary attack surface. "
-                              "Paragraph 2: Identify the 1-3 most critical issues requiring immediate "
-                              "remediation and briefly explain why each poses the greatest risk. "
-                              "Do NOT describe exploitation techniques or attacker steps — those appear "
-                              "later in the report. Do not repeat the opening sentence. "
+                              "Each paragraph must be 3-5 sentences. Use plain business language — "
+                              "avoid marketing terms, acronym soup, and vendor jargon. "
+                              "Paragraph 1: Describe the scope of the assessment — what was tested, "
+                              "what services were discovered, and how many issues were identified overall. "
+                              "Give the reader a clear sense of how exposed this system is without "
+                              "overstating or understating the risk. "
+                              "Paragraph 2: Walk through the finding categories — what types of weaknesses "
+                              "were found (unpatched software, configuration problems, exposed services, "
+                              "weak authentication), which services carry the most risk, and what the "
+                              "spread of severity levels tells us about the overall security posture. "
+                              "Paragraph 3: Identify the 2-3 most serious issues by name and explain in "
+                              "plain terms what an attacker could realistically do if they exploited them "
+                              "and what the business consequence would be. Focus on impact, not technique. "
+                              "Paragraph 4: Summarise the remediation urgency — what needs to be addressed "
+                              "within days versus weeks, and whether any findings represent systemic "
+                              "weaknesses that point to a broader process or policy gap. "
+                              "Do NOT repeat the opening sentence verbatim. "
                               "Do not add disclaimers, questions, or sign-offs. "
-                              f"Opening sentence (do not repeat verbatim): {_anchor} "
+                              f"Opening sentence (incorporate naturally, do not repeat verbatim): {_anchor} "
                               f"Assessment data: {json.dumps(mini_summary, separators=(',', ':'))}"
                           )},
                     timeout=OLLAMA_TIMEOUT,
