@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # <https://www.gnu.org/licenses/agpl-3.0.html>
 """
-Noctis Edge — Security Through Exposure  v0.8.1
+Noctis Edge — Security Through Exposure  v0.8.2
 Implements: structured findings, verification,
 approval gates, async execution, HTML reports,
 service-specific enumerations, risk scoring,
@@ -74,18 +74,18 @@ OLLAMA_URL     = os.getenv("NOCTIS_OLLAMA_URL", "http://localhost:11434/api/gene
 # one loaded model at a time (~2 GB).  Two models can coexist in Ollama's model cache on
 # systems with ≥6 GB free RAM without any swap pressure.
 #
-#   Single-model architecture — all slots default to qwen3:4b.
-#   qwen3:4b: 2.5 GB (Q4), ~15-25 tok/s on CPU, 256K context window.
-#   Thinking mode improves code and prose quality; planning prompts disable it
-#   via /no_think for lower latency on structured JSON tasks.
+#   Two-model architecture:
+#   gemma3:4b (~3.3 GB)                 — planning, structured JSON decisions, report prose
+#   qwen2.5-coder:7b-instruct (~4.4 GB) — CVE probe scripts, verification scripts
+#   Peak concurrent RAM during --cve-test: ~7.7 GB. 16 GB recommended.
 #   MODEL            — structured JSON tool-selection decisions
 #   SCRIPT_MODEL     — Python exploit / verification script generation
 #   CVE_SCRIPT_MODEL — CVE exploit/test script generation (falls back to SCRIPT_MODEL)
 #   REPORT_MODEL     — narrative prose: attacker perspective, remediation
-MODEL            = os.getenv("NOCTIS_OLLAMA_MODEL",            "qwen2.5-coder:3b-instruct")
-SCRIPT_MODEL     = os.getenv("NOCTIS_OLLAMA_SCRIPT_MODEL",     "qwen2.5-coder:3b-instruct")
+MODEL            = os.getenv("NOCTIS_OLLAMA_MODEL",            "gemma3:4b")
+SCRIPT_MODEL     = os.getenv("NOCTIS_OLLAMA_SCRIPT_MODEL",     "qwen2.5-coder:7b-instruct")
 CVE_SCRIPT_MODEL = os.getenv("NOCTIS_OLLAMA_CVE_SCRIPT_MODEL", SCRIPT_MODEL)
-REPORT_MODEL     = os.getenv("NOCTIS_OLLAMA_REPORT_MODEL",     "qwen3:8b")
+REPORT_MODEL     = os.getenv("NOCTIS_OLLAMA_REPORT_MODEL",     "gemma3:4b")
 OLLAMA_TIMEOUT = int(os.getenv("NOCTIS_OLLAMA_TIMEOUT", "360"))   # seconds — 360s covers cold model reload (~3 min) after RAM eviction
 
 # Ollama inference options applied to all planning/decision calls.
