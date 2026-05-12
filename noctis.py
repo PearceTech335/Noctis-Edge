@@ -6326,7 +6326,7 @@ def _run_script(script: str, language: str, cwd: str, timeout: int = 30) -> dict
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(script)
         os.chmod(path, 0o700)
-        runner = ["python3", path] if language == "python" else ["bash", path]
+        runner = [sys.executable, path] if language == "python" else ["bash", path]
         result = subprocess.run(
             runner,
             capture_output=True,
@@ -7400,7 +7400,9 @@ def _derive_inconclusive_reason(cve: dict, attempts: list) -> str:
                 "remaining probes ran but could not confirm the vulnerability.")
 
     # Timeout signals
-    timed_out = sum(1 for a in attempts if "[timed out]" in a.get("output", "").lower())
+    timed_out = sum(1 for a in attempts if
+                    "[timed out]" in a.get("output", "").lower() or
+                    "command timed out" in a.get("output", "").lower())
     if timed_out == len(attempts):
         return ("All probe scripts timed out (30s limit). "
                 "The target service may be slow, filtered, or not responding on the probed port/protocol.")
@@ -7413,7 +7415,7 @@ def _derive_inconclusive_reason(cve: dict, attempts: list) -> str:
     if "connection refused" in all_outputs:
         return ("Probes received 'Connection refused' — the service is not accepting connections "
                 "on the protocol the generated scripts targeted.")
-    if "connection timed out" in all_outputs or "timed out" in all_outputs:
+    if "connection timed out" in all_outputs:
         return "Probes timed out at the network level — the port may be filtered or the host unreachable."
     if "name or service not known" in all_outputs or "nodename nor servname" in all_outputs:
         return "DNS resolution failed for the target — probes could not reach the host."
