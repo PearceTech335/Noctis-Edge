@@ -16,6 +16,9 @@ WordLists/rockyou.txt
 # CVE Knowledge Base (JSON file - machine specific accumulated data)
 cve_knowledge_base.json
 
+# Nuclei KB (same pattern — runtime accumulated data, not source)
+nuclei_kb.json
+
 # CVE database (57 MB CSV — regenerate with CVE/cve-offline/updatecsv.sh)
 CVE/cve-offline/cve-summary.csv
 
@@ -68,11 +71,25 @@ scripts/build_tool_manifest.py
 scripts/add_tool_manifest.py
 scripts/submit_tool_manifest.py
 
+# Subscriber-only / operator nuclei KB scripts — delivered via paid update channel
+scripts/merge_nuclei_kb.py
+scripts/submit_nuclei_kb.py
+
 # Tool manifest backup — created when update.sh overwrites with a new subscriber download
 tool_manifest.json.bak
 
 # Docker build artefact — not source
 build.log
+build_full.log
+
+# Internal development / scratch directories — not for distribution
+improvements/
+
+# VS Code Copilot agent instructions — root-level variant (also .github/instructions/)
+COPILOT_INSTRUCTIONS.md
+
+# Test server (simulates vulnerable host for local testing — not part of the project)
+test-webserver/
 
 # IDE / tool config
 .continue/
