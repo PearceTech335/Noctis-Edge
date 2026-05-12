@@ -111,7 +111,7 @@ chmod +x docker-run.sh && ./docker-run.sh
 .\docker-run.ps1
 ```
 
-The launcher script handles everything automatically: pulls latest source, builds the Docker image (all tools + offline CVE database baked in), starts the Ollama sidecar and downloads the LLM models (~5.2 GB total, one-time, stored in a Docker volume), then starts the Web UI at **http://localhost:5000**.
+The launcher script handles everything automatically: pulls latest source, builds the Docker image (all tools + offline CVE database baked in), starts the Ollama sidecar and downloads the LLM models (~7.7 GB total — `gemma3:4b` ~3.3 GB + `qwen2.5-coder:7b-instruct` ~4.4 GB — one-time download, stored in a Docker volume), then starts the Web UI at **http://localhost:5000**.
 
 **Useful Docker commands:**
 ```bash
