@@ -13,8 +13,8 @@
 #    docker compose build
 #    docker compose up -d
 
-#    docker compose exec ollama ollama pull gemma3:4b
-#    docker compose exec ollama ollama pull qwen2.5-coder:7b-instruct
+#    docker compose exec ollama ollama pull qwen2.5-coder:3b-instruct
+#    docker compose exec ollama ollama pull qwen3:8b
 #    # Open http://localhost:5000
 #
 #  CLI scan (without web UI):
@@ -71,11 +71,11 @@ services:
     environment:
       # Point Noctis at the Ollama sidecar (service name resolves inside compose network)
       - NOCTIS_OLLAMA_URL=http://ollama:11434/api/generate
-      # Planning model (structured JSON decisions, tool selection)
-      - NOCTIS_OLLAMA_MODEL=gemma3:4b
-      - NOCTIS_OLLAMA_SCRIPT_MODEL=qwen2.5-coder:7b-instruct
+      # Planning + scripting model (structured JSON decisions, CVE probe scripts)
+      - NOCTIS_OLLAMA_MODEL=qwen2.5-coder:3b-instruct
+      - NOCTIS_OLLAMA_SCRIPT_MODEL=qwen2.5-coder:3b-instruct
       # Narrative prose model (report writing, attacker perspectives)
-      - NOCTIS_OLLAMA_REPORT_MODEL=gemma3:4b
+      - NOCTIS_OLLAMA_REPORT_MODEL=qwen3:8b
       # Bind to all interfaces so the host browser can reach port 5000
       - NOCTIS_BIND_HOST=0.0.0.0
     ports:

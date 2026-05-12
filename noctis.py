@@ -75,17 +75,17 @@ OLLAMA_URL     = os.getenv("NOCTIS_OLLAMA_URL", "http://localhost:11434/api/gene
 # systems with ≥6 GB free RAM without any swap pressure.
 #
 #   Two-model architecture:
-#   gemma3:4b (~3.3 GB)                 — planning, structured JSON decisions, report prose
-#   qwen2.5-coder:7b-instruct (~4.4 GB) — CVE probe scripts, verification scripts
-#   Peak concurrent RAM during --cve-test: ~7.7 GB. 16 GB recommended.
+#   qwen2.5-coder:3b-instruct (~2 GB)  — planning, structured JSON decisions, CVE probe scripts
+#   qwen3:8b (~5 GB)                   — narrative prose: report conclusion, remediation guidance
+#   Peak concurrent RAM during --cve-test: ~7 GB. 16 GB RAM recommended.
 #   MODEL            — structured JSON tool-selection decisions
 #   SCRIPT_MODEL     — Python exploit / verification script generation
 #   CVE_SCRIPT_MODEL — CVE exploit/test script generation (falls back to SCRIPT_MODEL)
 #   REPORT_MODEL     — narrative prose: attacker perspective, remediation
-MODEL            = os.getenv("NOCTIS_OLLAMA_MODEL",            "gemma3:4b")
-SCRIPT_MODEL     = os.getenv("NOCTIS_OLLAMA_SCRIPT_MODEL",     "qwen2.5-coder:7b-instruct")
+MODEL            = os.getenv("NOCTIS_OLLAMA_MODEL",            "qwen2.5-coder:3b-instruct")
+SCRIPT_MODEL     = os.getenv("NOCTIS_OLLAMA_SCRIPT_MODEL",     "qwen2.5-coder:3b-instruct")
 CVE_SCRIPT_MODEL = os.getenv("NOCTIS_OLLAMA_CVE_SCRIPT_MODEL", SCRIPT_MODEL)
-REPORT_MODEL     = os.getenv("NOCTIS_OLLAMA_REPORT_MODEL",     "gemma3:4b")
+REPORT_MODEL     = os.getenv("NOCTIS_OLLAMA_REPORT_MODEL",     "qwen3:8b")
 OLLAMA_TIMEOUT = int(os.getenv("NOCTIS_OLLAMA_TIMEOUT", "360"))   # seconds — 360s covers cold model reload (~3 min) after RAM eviction
 
 # Ollama inference options applied to all planning/decision calls.

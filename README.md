@@ -66,15 +66,15 @@ Alongside CVE probes, `tooling_knowledge_base.json` accumulates tool-performance
 
 | Item | Size |
 |------|------|
-| Ollama — `gemma3:4b` (planning + prose) | ~3.3 GB |
-| Ollama — `qwen2.5-coder:7b-instruct` (scripts) | ~4.4 GB |
+| Ollama — `qwen2.5-coder:3b-instruct` (planning + scripts) | ~2 GB |
+| Ollama — `qwen3:8b` (report prose) | ~5 GB |
 | Nuclei templates | ~1.5 GB |
 | CVE offline database | ~3–5 GB |
 | SecLists wordlists | ~2 GB |
 | Tool binaries + Python venv | ~1 GB |
 | Scan session outputs | Variable |
 
-> **RAM note:** Only one model is active at a time during the main scan loop. During `--cve-test`, both models may be warm simultaneously — peak concurrent RAM is ~7.7 GB. 16 GB RAM recommended; 32 GB optimal.
+> **RAM note:** Only one model is active at a time during the main scan loop. During `--cve-test`, both models may be warm simultaneously — peak concurrent RAM is ~7 GB. 16 GB RAM recommended; 32 GB optimal.
 
 ---
 
@@ -111,7 +111,7 @@ chmod +x docker-run.sh && ./docker-run.sh
 .\docker-run.ps1
 ```
 
-The launcher script handles everything automatically: pulls latest source, builds the Docker image (all tools + offline CVE database baked in), starts the Ollama sidecar and downloads the LLM models (~7.7 GB total — `gemma3:4b` ~3.3 GB + `qwen2.5-coder:7b-instruct` ~4.4 GB — one-time download, stored in a Docker volume), then starts the Web UI at **http://localhost:5000**.
+The launcher script handles everything automatically: pulls latest source, builds the Docker image (all tools + offline CVE database baked in), starts the Ollama sidecar and downloads the LLM models (~7 GB total — `qwen2.5-coder:3b-instruct` ~2 GB + `qwen3:8b` ~5 GB — one-time download, stored in a Docker volume), then starts the Web UI at **http://localhost:5000**.
 
 **Useful Docker commands:**
 ```bash
@@ -146,7 +146,7 @@ chmod +x setup.sh && ./setup.sh
 | apt packages | `nmap`, `curl`, `ffuf`, `hydra`, `ssh-audit`, `dnsenum`, `dnsrecon`, `perl`, `golang-go`, `python3-tk`, and more |
 | SecLists | Wordlists via `snap install seclists` |
 | Nuclei | Go-based template scanner (`~/go/bin/nuclei`) |
-| Ollama | Local LLM server + `gemma3:4b` + `qwen2.5-coder:7b-instruct` |
+| Ollama | Local LLM server + `qwen2.5-coder:3b-instruct` + `qwen3:8b` |
 | Python venv | `.venv/` with `requests`, `jinja2`, `pycryptodome`, `flask`, `flask-sock` |
 | CVE database | `CVE/cve-offline/` → `cve-summary.csv`; EPSS scores; NVD CVSS data |
 | rdpscan | `rdpscan/` helper |
@@ -338,10 +338,10 @@ Top-of-file constants in `noctis.py` (all overridable via environment variables)
 
 | Constant | Default | Env var | Description |
 |----------|---------|---------|-------------|
-| `MODEL` | `gemma3:4b` | `NOCTIS_OLLAMA_MODEL` | Planning, iteration decisions, structured JSON tool selection |
-| `SCRIPT_MODEL` | `qwen2.5-coder:7b-instruct` | `NOCTIS_OLLAMA_SCRIPT_MODEL` | CVE exploit scripts, verification scripts |
+| `MODEL` | `qwen2.5-coder:3b-instruct` | `NOCTIS_OLLAMA_MODEL` | Planning, iteration decisions, structured JSON tool selection |
+| `SCRIPT_MODEL` | `qwen2.5-coder:3b-instruct` | `NOCTIS_OLLAMA_SCRIPT_MODEL` | CVE exploit scripts, verification scripts |
 | `CVE_SCRIPT_MODEL` | *(same as `SCRIPT_MODEL`)* | `NOCTIS_OLLAMA_CVE_SCRIPT_MODEL` | CVE probe generation — override with a larger model for better pivoting |
-| `REPORT_MODEL` | `gemma3:4b` | `NOCTIS_OLLAMA_REPORT_MODEL` | Report conclusion, attacker perspective, remediation guidance |
+| `REPORT_MODEL` | `qwen3:8b` | `NOCTIS_OLLAMA_REPORT_MODEL` | Report conclusion, attacker perspective, remediation guidance |
 | `OLLAMA_URL` | `http://localhost:11434/api/generate` | — | Ollama API endpoint |
 | `MAX_ITERATIONS` | `10` | — | Minimum (floor) Phase 2 iteration count — applied when few services detected |
 | `MAX_ITERATIONS_CAP` | `40` | — | Hard ceiling — dynamic budget and auto-extensions can never exceed this |
@@ -386,20 +386,20 @@ Install notes: see [Readme/requirements.md](Readme/requirements.md).
 Manual install:
 ```bash
 curl -fsSL https://ollama.com/install.sh | sh
-ollama pull gemma3:4b                       # planning + report prose
-ollama pull qwen2.5-coder:7b-instruct      # CVE probe + verification scripts
+ollama pull qwen2.5-coder:3b-instruct      # planning, CVE probe + verification scripts
+ollama pull qwen3:8b                        # report prose
 ```
 
 ### Model Roles
 
 | Model | Env var | Purpose |
 |-------|---------|---------|
-| `gemma3:4b` | `NOCTIS_OLLAMA_MODEL` | Tool selection, scan planning, structured JSON decisions |
-| `qwen2.5-coder:7b-instruct` | `NOCTIS_OLLAMA_SCRIPT_MODEL` | CVE exploit and verification scripts |
-| `qwen2.5-coder:7b-instruct` | `NOCTIS_OLLAMA_CVE_SCRIPT_MODEL` | CVE probe generation (override with a larger model for better strategy pivoting) |
-| `gemma3:4b` | `NOCTIS_OLLAMA_REPORT_MODEL` | Report conclusion, attacker perspective, remediation guidance |
+| `qwen2.5-coder:3b-instruct` | `NOCTIS_OLLAMA_MODEL` | Tool selection, scan planning, structured JSON decisions |
+| `qwen2.5-coder:3b-instruct` | `NOCTIS_OLLAMA_SCRIPT_MODEL` | CVE exploit and verification scripts |
+| `qwen2.5-coder:3b-instruct` | `NOCTIS_OLLAMA_CVE_SCRIPT_MODEL` | CVE probe generation (override with a larger model for better strategy pivoting) |
+| `qwen3:8b` | `NOCTIS_OLLAMA_REPORT_MODEL` | Report conclusion, attacker perspective, remediation guidance |
 
-`gemma3:4b` is ~3.3 GB; `qwen2.5-coder:7b-instruct` is ~4.4 GB. During the main scan only one model is active at a time. During `--cve-test` both may be resident simultaneously — peak combined RAM ~7.7 GB. Inference is typically 20–90 s per call on CPU-only hardware after the initial warm load.
+`qwen2.5-coder:3b-instruct` is ~2 GB; `qwen3:8b` is ~5 GB. During the main scan only one model is active at a time. During `--cve-test` both may be resident simultaneously — peak combined RAM ~7 GB. Inference is typically 20–90 s per call on CPU-only hardware after the initial warm load.
 
 ---
 
@@ -504,13 +504,13 @@ The worker is already deployed at `https://noctis-kb-relay.pearcetechnologies1.w
 - **Ease-of-Fix effort tags on CVE match cards:** Every CVE match now shows a `Low` / `Medium` / `High` effort pill (green/amber/red) between the business impact block and the compliance section, sourced from the new `_REMEDIATION_EFFORT` dict (18 vulnerability types). Helps operators prioritise patches they can ship quickly.
 - **Compliance control reasoning:** Each compliance control chip (PCI-DSS, SOC2, ISO 27001, NIST CSF 2.0) in the CVE match section now expands with a one-sentence explanation of why the specific control applies to that vulnerability type. Sourced from the new `_COMPLIANCE_REASONING` dict (26 entries). No more bare control IDs without context.
 - **Expanded executive summary:** Conclusion prompt now requests exactly 4 paragraphs of 3–5 sentences each in plain business language, with `top_findings` context (top 6 findings by risk score) injected into the LLM call. `num_ctx` raised from 2048 → 4096 for this call.
-- **Remediation LLM speed improvement:** `_generate_immediate_remediation()` and `_generate_remediation()` switched from `REPORT_MODEL` to `SCRIPT_MODEL` (`qwen2.5-coder:7b-instruct`), which is significantly faster at structured output generation. Per-CVE remediation latency reduced.
+- **Remediation LLM speed improvement:** `_generate_immediate_remediation()` and `_generate_remediation()` switched from `REPORT_MODEL` to `SCRIPT_MODEL` (`qwen2.5-coder:3b-instruct`), which is significantly faster at structured output generation. Per-CVE remediation latency reduced.
 - **Nuclei KB message accuracy:** Console output now correctly distinguishes `(N new template(s))` vs `unchanged (no HTTP/web CVEs tested this run)` instead of always printing a misleading "updated" message.
 - **Nuclei HTTPS coverage expanded:** `_NUCLEI_HTTP_SERVICES` frozenset now includes `https-alt` and `ssl/https` in addition to the existing `https` and `ssl/http` entries, ensuring all common HTTPS service label variants trigger template generation.
 - **ETA timing fix:** Phase checkpoint `frac_done` values are now strictly non-decreasing across the full scan pipeline. Previously "Base reports saved" used `frac_done=0.70` after MSF validation done at `0.85`, causing the estimated completion time to jump backwards mid-scan. All checkpoints now form a monotonically increasing sequence.
 - **CVE verdict strictness hardened:** The CVE test LLM prompt now explicitly requires (a) a version string extracted and confirmed within the CVE range, OR (b) the specific vulnerable behaviour directly observed. Product/service name presence alone (e.g. `OpenSSH` in banner, `Apache` in Server header) is explicitly forbidden as a basis for `VULNERABLE`.
 - **`docker-run.sh` macOS compatibility:** Replaced `df --output=avail /` (GNU coreutils only) with `df -k / | awk 'NR==2 {print $4}'` which works identically on macOS (BSD) and Linux.
-- **Model alignment across all deployment files:** `setup.sh`, `update.sh`, `docker-run.sh`, and `docker-compose.yml` now all correctly reference `gemma3:4b` for planning and report prose, and `qwen2.5-coder:7b-instruct` for CVE scripts and verification scripts — matching the runtime defaults in `noctis.py`. Fresh installs and `./update.sh` runs now pull the correct models.
+- **Model alignment across all deployment files:** `setup.sh`, `update.sh`, `docker-run.sh`, and `docker-compose.yml` now all correctly reference `qwen2.5-coder:3b-instruct` for planning and scripting, and `qwen3:8b` for report prose — matching the runtime defaults in `noctis.py`. Fresh installs and `./update.sh` runs now pull the correct models.
 
 ## What's New in v0.8.1
 
