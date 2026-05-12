@@ -4944,7 +4944,7 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
     if _unknown_findings:
         print(f"\n[+] Enriching {len(_unknown_findings)} finding(s) with specific LLM remediation ...")
         import concurrent.futures
-        with concurrent.futures.ThreadPoolExecutor() as _pool:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as _pool:
             list(_pool.map(_enrich_finding_remediation, _unknown_findings))
 
     generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")
