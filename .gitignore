@@ -32,6 +32,7 @@ CVE/.nvd-cache/
 # Offline threat-intelligence databases — rebuilt by setup.sh / update.sh, not source
 CVE/epss-scores.csv
 CVE/nvd-cvss.csv
+CVE/cwe-data.csv
 
 # Development / quarantine scratch area — not for distribution
 quarantine/
