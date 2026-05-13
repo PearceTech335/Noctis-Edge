@@ -4473,7 +4473,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <div style="background:#2a1500;border:1px solid #ff6d00;border-radius:6px;padding:10px 16px;margin:0 0 14px 0;font-size:.88em">
   <strong style="color:#ff9800">&#9888; Scan Coverage Incomplete</strong>
   <div style="color:#ffe0b2;margin-top:.4em">{{ timed_out_tools|length }} tool run(s) timed out — results may be partial:
-    {% for t in timed_out_tools %}<code style="background:#1a0a00;padding:.1em .4em;border-radius:3px;margin:.1em">{{ t.tool }}{% if t.args %} {{ t.args[:40] }}{% endif %}</code> {% endfor %}
+    {% for t in timed_out_tools %}<code style="background:#1a0a00;padding:.1em .4em;border-radius:3px;margin:.1em">{{ t.tool }}{% if t.args %} {{ t.args[0:40] }}{% endif %}</code> {% endfor %}
   </div>
 </div>
 {% endif %}
@@ -5320,7 +5320,7 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
         "target_info":   target_info.to_dict() if target_info else {},
         "compliance_summary": compliance_summary,
         "timed_out_tools": [
-            {"tool": r.get("tool", ""), "args": r.get("args", "")}
+            {"tool": r.get("tool", ""), "args": str(r.get("args", "") or "")}
             for r in timed_out_scan_records
         ],
     }
