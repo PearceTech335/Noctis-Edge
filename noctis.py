@@ -4561,7 +4561,26 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 </details>
 {% endif %}
 
-<h2>Findings ({{ findings|length }} total)</h2>
+<h2>NMAP NSE Script Findings ({{ findings|length }} total)</h2>
+<div style="margin:.5em 0 1.2em;padding:.8em 1.1em;background:#0d1b2a;border:1px solid #1e3a5f;border-radius:6px;font-size:.86em;color:#b0bec5;line-height:1.65">
+  <div style="display:flex;flex-wrap:wrap;gap:1.4em">
+    <div>
+      <strong style="color:#e0e0e0;display:block;margin-bottom:.3em">Severity</strong>
+      <span style="color:#ff4757;font-weight:700">CRITICAL</span> — Immediate exploitation risk; direct path to RCE, full compromise, or data exfiltration.<br>
+      <span style="color:#ff6b35;font-weight:700">HIGH</span> — Significant exposure; likely exploitable with moderate effort or public tooling.<br>
+      <span style="color:#ffa502;font-weight:700">MEDIUM</span> — Exploitable under specific conditions; increases attacker foothold or information exposure.<br>
+      <span style="color:#2ed573;font-weight:700">LOW</span> — Limited direct impact; useful for reconnaissance or chaining with other findings.<br>
+      <span style="color:#70a1ff;font-weight:700">INFO</span> — No exploitable risk; recorded for compliance, hardening, or asset inventory purposes.
+    </div>
+    <div>
+      <strong style="color:#e0e0e0;display:block;margin-bottom:.3em">Confidence</strong>
+      <span style="color:#c62828;font-weight:700">CONFIRMED</span> — Active curl/probe re-verified the finding against the live service; high-fidelity result.<br>
+      <span style="color:#bf360c;font-weight:700">PROBABLE</span> — Discovered by a reliable tool (confidence ≥ 60 %) but not independently re-verified; treat as likely real.<br>
+      <span style="color:#37474f;font-weight:700;color:#cfd8dc">REVIEW</span> — Probe returned inconclusive results or the reporting tool has low confidence; manual inspection recommended before actioning.<br>
+      <span style="color:#546e7a;font-weight:700">INFO</span> — Informational finding; no active verification attempted.
+    </div>
+  </div>
+</div>
 {% if findings %}
 {%- set _confirmed_ids = confirmed_findings | map(attribute='finding_id') | list %}
 {%- set _probable_ids = probable_findings | map(attribute='finding_id') | list %}
@@ -5023,12 +5042,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   </div>
 </details>
 {% endif %}
-
-<h2>Exploitation Validation</h2>
-<p style="color:#546e7a;font-size:.9em">MSF and active probe testing evidence is embedded inside each CVE card in the <strong>CVE Matches</strong> section above.</p>
-
-<h2>CVE Test Results</h2>
-<p style="color:#546e7a;font-size:.9em">CVE test results are embedded inside each CVE card in the <strong>CVE Matches</strong> section above.</p>
 
 <h2>Execution Log</h2>
 <table>
