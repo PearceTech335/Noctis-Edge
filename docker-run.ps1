@@ -1,4 +1,4 @@
-﻿# =============================================================================
+# =============================================================================
 #  Noctis Edge -- One-Shot Docker Launcher  (Windows PowerShell)
 #
 #  Usage (run from the Noctis-Edge directory):
@@ -68,29 +68,53 @@ function Invoke-DC {
 }
 
 # ---------------------------------------------------------------------------
-# 1. Pull latest source
+# 1. Pull latest source -- record HEAD before/after to detect new commits
 # ---------------------------------------------------------------------------
 Write-Header "1/5  Pulling latest Noctis Edge"
+$gitBefore = ""
+$gitAfter  = ""
 try {
-    $gitStatus = git -C $SCRIPT_DIR rev-parse --is-inside-work-tree 2>&1
+    git -C $SCRIPT_DIR rev-parse --is-inside-work-tree 2>&1 | Out-Null
     if ($LASTEXITCODE -eq 0) {
+        $gitBefore = (git -C $SCRIPT_DIR rev-parse HEAD 2>$null)
         git -C $SCRIPT_DIR pull --rebase origin master 2>&1 | Out-Null
         if ($LASTEXITCODE -eq 0) { Write-Ok "Source up to date" }
         else { Write-Info "git pull failed (may have local changes) -- continuing" }
+        $gitAfter = (git -C $SCRIPT_DIR rev-parse HEAD 2>$null)
     }
 } catch {
     Write-Info "git not found or not a repo -- skipping git pull"
 }
 
 # ---------------------------------------------------------------------------
-# 2. Build the image
+# 2. Build the image -- only when necessary
+#    * First run  : image does not exist yet          -> build
+#    * After pull : git HEAD changed                  -> rebuild for new code
+#    * No changes : same HEAD, image already exists   -> skip (saves ~10 min)
+#    * --rebuild  : force a full rebuild              -> .\docker-run.ps1 --rebuild
 # ---------------------------------------------------------------------------
 Write-Header "2/5  Building Noctis Edge Docker image"
-Write-Info "This takes ~5-10 minutes on first build (Go tools + CVE database)"
-Write-Info "Subsequent builds use Docker layer cache and are much faster"
-Invoke-DC @("build")
-if ($LASTEXITCODE -ne 0) { Write-Err "Build failed."; exit 1 }
-Write-Ok "Image built"
+$forceRebuild = $args -contains "--rebuild"
+$imageExists  = $false
+docker image inspect noctis-edge:latest 2>$null | Out-Null
+if ($LASTEXITCODE -eq 0) { $imageExists = $true }
+$codeChanged  = ($gitBefore -ne "" -and $gitAfter -ne "" -and $gitBefore -ne $gitAfter)
+
+if ($forceRebuild -or -not $imageExists -or $codeChanged) {
+    if (-not $imageExists) {
+        Write-Info "First run -- building Docker image (~10 min; only happens once)"
+    } elseif ($codeChanged) {
+        Write-Info "Source updated ($gitBefore -> $gitAfter) -- rebuilding image"
+    } else {
+        Write-Info "Forced rebuild requested"
+    }
+    Invoke-DC @("build")
+    if ($LASTEXITCODE -ne 0) { Write-Err "Build failed."; exit 1 }
+    Write-Ok "Image built"
+} else {
+    Write-Ok "Image is up to date -- skipping rebuild"
+    Write-Info "To force a rebuild: .\docker-run.ps1 --rebuild"
+}
 
 # ---------------------------------------------------------------------------
 # 3. Start Ollama sidecar
