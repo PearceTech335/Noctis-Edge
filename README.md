@@ -8,7 +8,7 @@
 
 Noctis Edge is a Python-based, AI-assisted vulnerability exposure and testing platform built around **local execution, data sovereignty, and operational security**.
 
-Unlike cloud-dependent security platforms, **Noctis Edge runs entirely on your local machine**. All scanning, LLM-assisted analysis, CVE validation, and report generation happen on-device — no target data, credentials, or findings ever leave the host. It supports command-line execution via `noctis.py` and a browser-based Web UI via `noctis_web.py` (served locally at `http://127.0.0.1:5000`), without requiring external SaaS platforms, third-party APIs, or cloud processing.
+Unlike cloud-dependent security platforms, **Noctis Edge runs entirely on your local machine**. All scanning, LLM-assisted analysis, CVE validation, and report generation happen on-device — no target data, credentials, or findings ever leave the host. It supports command-line execution via `noctis.py` and a browser-based Web UI via `noctis_web.py` (served locally at `http://127.0.0.1:8888`), without requiring external SaaS platforms, third-party APIs, or cloud processing.
 
 This architecture makes Noctis Edge particularly suited for regulated environments, internal security teams, air-gapped networks, OT environments, and organizations where confidentiality and control are non-negotiable.
 
@@ -111,7 +111,7 @@ chmod +x docker-run.sh && ./docker-run.sh
 .\docker-run.ps1
 ```
 
-The launcher script handles everything automatically: pulls latest source, builds the Docker image (all tools + offline CVE database baked in), starts the Ollama sidecar and downloads the LLM models (~7 GB total — `qwen2.5-coder:3b-instruct` ~2 GB + `qwen3:8b` ~5 GB — one-time download, stored in a Docker volume), then starts the Web UI at **http://localhost:5000**.
+The launcher script handles everything automatically: pulls latest source, builds the Docker image (all tools + offline CVE database baked in), starts the Ollama sidecar and downloads the LLM models (~7 GB total — `qwen2.5-coder:3b-instruct` ~2 GB + `qwen3:8b` ~5 GB — one-time download, stored in a Docker volume), then starts the Web UI at **http://localhost:8888**.
 
 **Useful Docker commands:**
 ```bash

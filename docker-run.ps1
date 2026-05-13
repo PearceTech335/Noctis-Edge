@@ -150,12 +150,12 @@ Invoke-DC @("up", "-d", "noctis")
 Write-Ok "Noctis Edge is running"
 
 # Open browser automatically
-Start-Process "http://localhost:5000"
+Start-Process "http://localhost:8888"
 
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Green
 Write-Host "  Noctis Edge is ready!" -ForegroundColor Green
-Write-Host "  Browser opened: http://localhost:5000" -ForegroundColor Green
+Write-Host "  Browser opened: http://localhost:8888" -ForegroundColor Green
 Write-Host ""
 Write-Host "  Stop:    docker compose down" -ForegroundColor Yellow
 Write-Host "  Logs:    docker compose logs -f noctis" -ForegroundColor Yellow

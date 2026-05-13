@@ -309,7 +309,7 @@ same profile/flag controls, and live terminal streaming via WebSocket.
 **Dependencies:** `flask` and `flask-sock` (installed in Section 4 above — no extra steps needed).
 
 ```bash
-# Start the web UI (default port 5000):
+# Start the web UI (default port 8888):
 source .venv/bin/activate
 python3 noctis_web.py
 
@@ -317,7 +317,7 @@ python3 noctis_web.py
 python3 noctis_web.py --port 8080
 ```
 
-Then open **http://127.0.0.1:5000** in any browser. The server is bound to `127.0.0.1` only —
+Then open **http://127.0.0.1:8888** in any browser. The server is bound to `127.0.0.1` only —
 it is not accessible from other machines on the network.
 
 | Feature              | CLI | GUI | Web UI |

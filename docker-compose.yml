@@ -15,7 +15,7 @@
 
 #    docker compose exec ollama ollama pull qwen2.5-coder:3b-instruct
 #    docker compose exec ollama ollama pull qwen3:8b
-#    # Open http://localhost:5000
+#    # Open http://localhost:8888
 #
 #  CLI scan (without web UI):
 #    docker compose run --rm noctis scan 192.168.0.1
@@ -76,10 +76,10 @@ services:
       - NOCTIS_OLLAMA_SCRIPT_MODEL=qwen2.5-coder:3b-instruct
       # Narrative prose model (report writing, attacker perspectives)
       - NOCTIS_OLLAMA_REPORT_MODEL=qwen3:8b
-      # Bind to all interfaces so the host browser can reach port 5000
+      # Bind to all interfaces so the host browser can reach port 8888
       - NOCTIS_BIND_HOST=0.0.0.0
     ports:
-      - "5000:5000"
+      - "8888:8888"
     volumes:
       # Persist scan sessions on the host so reports survive container restarts
       - ./sessions:/app/sessions

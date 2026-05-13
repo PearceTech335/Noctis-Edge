@@ -1260,7 +1260,7 @@ def serve_logo():
 
 # ── Entry point ──────────────────────────────────────────────────────────────
 def main():
-    port = 5000
+    port = 8888
     args = sys.argv[1:]
     if "--port" in args:
         idx = args.index("--port")

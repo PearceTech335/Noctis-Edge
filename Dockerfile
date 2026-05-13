@@ -5,7 +5,7 @@
 #  docker-compose.yml).
 #
 #  Build:   docker compose build
-#  Run:     docker compose up          (starts web UI on http://localhost:5000)
+#  Run:     docker compose up          (starts web UI on http://localhost:8888)
 #  CLI:     docker compose run --rm noctis scan <target>
 # =============================================================================
 
@@ -178,7 +178,7 @@ COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh && \
     mkdir -p /app/sessions /data
 
-EXPOSE 5000
+EXPOSE 8888
 
 # Default: start the web UI.  Override CMD for CLI use:
 #   docker compose run --rm noctis scan 192.168.0.1

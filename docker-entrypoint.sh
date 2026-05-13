@@ -3,7 +3,7 @@
 #  Noctis Edge — Docker Entrypoint
 #
 #  Usage (via docker-compose.yml CMD):
-#    web           → start the browser-based Web UI on port 5000 (default)
+#    web           → start the browser-based Web UI on port 8888 (default)
 #    scan <args>   → run noctis.py directly (CLI mode)
 #
 #  Example CLI:
@@ -129,7 +129,7 @@ fi
 
 case "${1:-web}" in
     web)
-        echo "[*] Starting Noctis Edge Web UI on port 5000 ..."
+        echo "[*] Starting Noctis Edge Web UI on port 8888 ..."
         exec /app/.venv/bin/python3 /app/noctis_web.py
         ;;
     scan)
