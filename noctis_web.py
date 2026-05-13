@@ -828,7 +828,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   <!-- Target -->
   <div id="target-row">
     <label for="target-input">Target:</label>
-    <input id="target-input" type="text" placeholder="192.168.0.1 or hostname" autocomplete="off" spellcheck="false">
+    <input id="target-input" type="text" placeholder="192.168.0.1, hostname, host:port, or host:80,443" autocomplete="off" spellcheck="false">
   </div>
 
   <!-- Profiles -->

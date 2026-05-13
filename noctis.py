@@ -2643,8 +2643,18 @@ def _select_nse_scripts(service_name: str) -> str:
     return ""
 
 
-def run_nmap_discovery(target: str) -> tuple:
+def run_nmap_discovery(target: str, pinned_ports: str | None = None) -> tuple:
     """Five-phase nmap discovery pipeline.
+
+    Parameters
+    ----------
+    target : str
+        Hostname or IP address to scan.
+    pinned_ports : str | None
+        Comma-separated port number(s) to scan exclusively (e.g. "8080" or
+        "80,443,8080").  When set, Phase 1 skips the full -p- scan and probes
+        only the specified ports.  Supplied by parsing host:port syntax on the
+        CLI or web UI (e.g. "localhost:8080" or "192.168.0.1:80,443").
 
     Phase 1 — Host discovery + open port list
     Phase 2 — Service/version enumeration on discovered ports
@@ -2670,26 +2680,42 @@ def run_nmap_discovery(target: str) -> tuple:
     # ------------------------------------------------------------------ #
     # Phase 1 — Host discovery + open port list                           #
     # ------------------------------------------------------------------ #
-    print(f"\n[+] Nmap Phase 1 — Host discovery & port list ({target})")
-    p1_xml = _nmap_run([
-        "-Pn", "-T4", "--open",
-        "-p-",                      # all 65 535 ports
-        "--min-rate", "2000",       # speed — safe on LAN, capped by congestion
-        "--max-retries", "1",
-        "-oX", "-",
-        target,
-    ], timeout=300)
-    nmap_meta["phase1_raw"] = p1_xml
-
-    # Fall back to top-1000 scan if the full-port run produced nothing
-    if not p1_xml.strip() or not _parse_nmap_xml(p1_xml):
-        print("[!] Full-port scan returned nothing — falling back to top-1000")
-        p1_xml = _nmap_run(["-Pn", "-T4", "--open", "-oX", "-", target], timeout=120)
+    if pinned_ports:
+        # Port-pinned mode: user supplied host:port or host:p1,p2,...
+        # Skip the full -p- scan — probe only the specified port(s).
+        print(f"\n[+] Nmap Phase 1 — Port-pinned scan ({target} / ports {pinned_ports})")
+        p1_xml = _nmap_run([
+            "-Pn", "-T4", "--open",
+            "-p", pinned_ports,
+            "--max-retries", "2",
+            "-oX", "-",
+            target,
+        ], timeout=60)
         nmap_meta["phase1_raw"] = p1_xml
+    else:
+        print(f"\n[+] Nmap Phase 1 — Host discovery & port list ({target})")
+        p1_xml = _nmap_run([
+            "-Pn", "-T4", "--open",
+            "-p-",                      # all 65 535 ports
+            "--min-rate", "2000",       # speed — safe on LAN, capped by congestion
+            "--max-retries", "1",
+            "-oX", "-",
+            target,
+        ], timeout=300)
+        nmap_meta["phase1_raw"] = p1_xml
+
+        # Fall back to top-1000 scan if the full-port run produced nothing
+        if not p1_xml.strip() or not _parse_nmap_xml(p1_xml):
+            print("[!] Full-port scan returned nothing — falling back to top-1000")
+            p1_xml = _nmap_run(["-Pn", "-T4", "--open", "-oX", "-", target], timeout=120)
+            nmap_meta["phase1_raw"] = p1_xml
 
     p1_services = _parse_nmap_xml(p1_xml)
     if not p1_services:
-        print("[!] Phase 1: no open ports found.")
+        if pinned_ports:
+            print(f"[!] Phase 1: port(s) {pinned_ports} appear closed or filtered on {target}.")
+        else:
+            print("[!] Phase 1: no open ports found.")
         return [], nmap_meta
 
     open_ports = [s["port"] for s in p1_services]
@@ -8852,11 +8878,22 @@ async def main_async():
 
     if len(sys.argv) < 2:
         print("Usage: python3 noctis.py <target> [profile ...] [--resume] [--session-dir <path>] [--aggressive] [--dns-enum] [--msf-validate] [--cve-test] [--unattended]")
+        print("       Target formats: 192.168.0.1  |  hostname  |  host:port  |  host:80,443,8080")
         print("       python3 noctis.py --report <json_file>")
         print("Profiles (one or more):", ", ".join(PROFILES))
         sys.exit(1)
 
     target        = sys.argv[1]
+    # Parse optional port pin: host:port or host:port1,port2,port3
+    # The colon suffix is stripped from target so all downstream code (nmap,
+    # session naming, tool dispatch) receives a clean hostname/IP.
+    pinned_ports: str | None = None
+    if ":" in target and not target.startswith("["):   # guard: not an IPv6 literal [::1]
+        _host, _ports_str = target.rsplit(":", 1)
+        _port_nums = [p.strip() for p in _ports_str.split(",")]
+        if _port_nums and all(p.isdigit() and 1 <= int(p) <= 65535 for p in _port_nums):
+            target       = _host
+            pinned_ports = ",".join(_port_nums)
     profile_names: list = []
     resume        = False
     resume_session_dir: str | None = None
@@ -8987,7 +9024,7 @@ async def main_async():
     print(f"\n{'=' * 52}")
     print("  Nmap Discovery — 5 Phases")
     print(f"{'=' * 52}")
-    services, nmap_meta = run_nmap_discovery(target)
+    services, nmap_meta = run_nmap_discovery(target, pinned_ports=pinned_ports)
     _print_scan_eta("Nmap discovery done", scan_start, 0.12)
 
     if not services:
