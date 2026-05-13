@@ -1173,6 +1173,8 @@ def parse_nikto_output(output, target):
         # Skip Nikto admin/meta messages — they are printed to terminal by run_nikto_async
         if any(p in text.lower() for p in _NIKTO_ADMIN_PHRASES):
             continue
+        # Sanitize Perl stringified array refs before they reach report titles
+        text = re.sub(r'ARRAY\(0x[0-9a-f]+\)', '[array]', text)
         # Apply severity upgrades — first matching pattern wins
         severity = "info"
         title_prefix = ""
@@ -1185,6 +1187,26 @@ def parse_nikto_output(output, target):
         # Prefix the title so the severity is self-evident in reports
         display_title = f"{title_prefix} {text[:120]}".strip() if title_prefix else text[:120]
         manual_review = severity != "info"  # flag anything above info for human follow-up
+        # Derive vuln_type from the title_prefix so this finding is not sent to LLM enrichment
+        _NIKTO_PREFIX_VULN_TYPE = {
+            "Header:": "Missing Security Header",
+            "Recon:": "Information Disclosure",
+            "Dir-Listing:": "Directory Listing",
+            "Admin:": "Exposed Admin Interface",
+            "Config-Leak:": "Information Disclosure",
+            "Source-Leak:": "Information Disclosure",
+            "Backup:": "Information Disclosure",
+            "Platform:": "Information Disclosure",
+            "Server:": "Information Disclosure",
+            "XSS:": "XSS",
+            "Traversal:": "Path Traversal",
+            "LFI:": "File Inclusion",
+            "SSRF:": "SSRF",
+            "Redirect:": "Open Redirect",
+        }
+        _vuln_type = _NIKTO_PREFIX_VULN_TYPE.get(title_prefix) or _infer_vuln_type(text)
+        if not _vuln_type or _vuln_type == "Unknown":
+            _vuln_type = "Misconfiguration"
         f = Finding(
             finding_id=make_finding_id("nikto", target, text[:50]),
             tool="nikto",
@@ -1200,6 +1222,7 @@ def parse_nikto_output(output, target):
             verification_status="discovered",
             manual_review=manual_review,
             detection_method="banner_analysis",
+            vuln_type=_vuln_type,
         )
         f.tags = auto_tag(f)
         findings.append(f)
@@ -5256,11 +5279,21 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
         _sp.stop(f" done ({_fmt_dur(time.monotonic() - _t0)})")
 
     # ── Per-finding LLM remediation for Unknown vuln_type ────────────────────
+    # Pre-enrichment inference pass: use the static keyword map to fill in vuln_type
+    # for any finding that still has an empty or Unknown vuln_type (covers nuclei,
+    # ffuf, ssh-audit, nmap-service parsers that don't set it at parse time).
+    for _f in all_findings:
+        if not _f.vuln_type or _f.vuln_type == "Unknown":
+            _inferred = _infer_vuln_type(_f.title + " " + (_f.description or ""))
+            if _inferred and _inferred != "Unknown":
+                _f.vuln_type = _inferred
+            elif not _f.vuln_type:
+                _f.vuln_type = "Misconfiguration"
     _unknown_findings = [f for f in all_findings if not f.vuln_type or f.vuln_type == "Unknown"]
     if _unknown_findings:
         print(f"\n[+] Enriching {len(_unknown_findings)} finding(s) with specific LLM remediation ...")
         import concurrent.futures
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as _pool:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as _pool:
             list(_pool.map(_enrich_finding_remediation, _unknown_findings))
 
     generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -8494,7 +8527,7 @@ def _enrich_finding_remediation(f) -> None:
         resp = requests.post(
             OLLAMA_URL,
             json={
-                "model":      REPORT_MODEL,
+                "model":      SCRIPT_MODEL,
                 "prompt":     prompt,
                 "stream":     False,
                 "keep_alive": _OLLAMA_KEEP_ALIVE,
