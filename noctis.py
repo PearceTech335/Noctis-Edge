@@ -124,14 +124,17 @@ TOOL_MANIFEST_PATH   = os.path.join(BASE_DIR, "tool_manifest.json")
 _TOOL_MANIFEST: "dict | None" = None  # lazy-loaded on first call to _load_tool_manifest()
 
 # Offline threat-intelligence databases (built by scripts/build_epss_db.py,
-# scripts/build_nvd_cvss.py and scripts/build_cwe_db.py; refreshed by update.sh)
+# scripts/build_nvd_cvss.py, scripts/build_cwe_db.py and scripts/build_kev_db.py;
+# refreshed by update.sh)
 _EPSS_CSV     = os.path.join(BASE_DIR, "CVE", "epss-scores.csv")
 _NVD_CVSS_CSV = os.path.join(BASE_DIR, "CVE", "nvd-cvss.csv")
 _CWE_DATA_CSV = os.path.join(BASE_DIR, "CVE", "cwe-data.csv")
+_KEV_CSV      = os.path.join(BASE_DIR, "CVE", "kev-catalog.csv")
 # Lazy-loaded lookup dicts — populated on first call
 _EPSS_DB: "dict | None" = None
 _CVSS_DB: "dict | None" = None
 _CWE_DB:  "dict | None" = None
+_KEV_DB:  "dict | None" = None
 
 
 def _load_epss_db() -> dict:
@@ -209,6 +212,36 @@ def _load_cwe_db() -> dict:
     except Exception:
         pass
     return _CWE_DB
+def _load_kev_db() -> dict:
+    """Lazy-load CVE/kev-catalog.csv → {cve_id: {vendor, product, date_added, due_date, action}}.
+
+    Build with: python scripts/build_kev_db.py
+    Refresh via update.sh.
+    """
+    global _KEV_DB
+    if _KEV_DB is not None:
+        return _KEV_DB
+    _KEV_DB = {}
+    if not os.path.isfile(_KEV_CSV):
+        return _KEV_DB
+    try:
+        import csv as _csv
+        with open(_KEV_CSV, newline="", encoding="utf-8") as fh:
+            for row in _csv.DictReader(fh):
+                cve = row.get("cveID", "").upper()
+                if cve:
+                    _KEV_DB[cve] = {
+                        "vendor":     row.get("vendorProject", ""),
+                        "product":    row.get("product", ""),
+                        "date_added": row.get("dateAdded", ""),
+                        "due_date":   row.get("dueDate", ""),
+                        "action":     row.get("requiredAction", ""),
+                    }
+    except Exception:
+        pass
+    return _KEV_DB
+
+
 CVE_FRESH_ATTEMPTS  = 5   # fresh LLM-generated scripts per CVE (on top of known-exploit + KB replays)
 CVE_VERIFY_ATTEMPTS = 2  # independent verifier scripts run when any attempt returns VULNERABLE
 CVE_BATCH_SIZE      = 5  # prompt user to continue after this many CVEs (runaway guard)
@@ -515,6 +548,7 @@ class Finding:
     compliance_controls: list = field(default_factory=list)  # PCI-DSS, SOC2, ISO 27001
     manual_review:       bool = False  # True when nikto/scanner flags a finding that warrants manual verification
     verifier_tool:       str  = ""   # Tool dispatched to verify this finding (set when probe_inconclusive)
+    detection_method:    str  = ""   # How detected: banner_analysis, template_match, service_probe, exploit_confirmed
     llm_remediation_short: str = ""  # LLM-generated immediate workaround (set during report generation for Unknown vuln_type)
     llm_remediation_long:  str = ""  # LLM-generated permanent fix (set during report generation for Unknown vuln_type)
 
@@ -780,6 +814,17 @@ def deduplicate_findings(findings):
     return unique
 
 
+def _confidence_label(confidence: float) -> str:
+    """Map a confidence float to a human-readable tier label."""
+    if confidence >= 0.95:
+        return "Validated"
+    if confidence >= 0.75:
+        return "Strong Fingerprint"
+    if confidence >= 0.40:
+        return "Banner / Heuristic"
+    return "Weak Inference"
+
+
 # ---------------------------------------------------------------------------
 # TOOL VALIDATION
 # ---------------------------------------------------------------------------
@@ -1038,6 +1083,7 @@ def parse_nuclei_json(raw_output, target):
             template_id=template_id,
             references=references,
             verification_status="discovered",
+            detection_method="template_match",
         )
         f.tags = list(set(f.tags + auto_tag(f)))
         findings.append(f)
@@ -1153,6 +1199,7 @@ def parse_nikto_output(output, target):
             tags=[],
             verification_status="discovered",
             manual_review=manual_review,
+            detection_method="banner_analysis",
         )
         f.tags = auto_tag(f)
         findings.append(f)
@@ -1233,6 +1280,7 @@ async def run_ssh_enum(host, port, available_tools):
                 tags=["ssh", "auth"],
                 verification_status="discovered",
                 raw_output=output[:1000],
+                detection_method="service_probe",
             )
             f.tags = list(set(f.tags + auto_tag(f)))
             findings.append(f)
@@ -1297,6 +1345,7 @@ async def run_rdp_enum(host, port, available_tools):
             timestamp=datetime.now(timezone.utc).isoformat(),
             tags=["rdp"],
             verification_status="discovered",
+            detection_method="service_probe",
         )
         findings.append(f)
 
@@ -1630,6 +1679,54 @@ def _infer_version_range(summary: str) -> str:
     return "See NVD advisory"
 
 
+def _parse_semver(v: str) -> tuple:
+    """Parse a version string into a comparable tuple of ints.
+
+    Handles: '10.0', '9.8p1', '2.4.50', '1.0.0-beta', '5.0.0+dfsg1'.
+    Splits on any non-digit run and collects all leading integer segments.
+    """
+    if not v:
+        return (0,)
+    v = re.sub(r'[+~].*$', '', v)   # strip build metadata
+    parts = re.split(r'[^0-9]+', v)
+    result = tuple(int(p) for p in parts if p)
+    return result if result else (0,)
+
+
+def _extract_fixed_version(summary: str) -> str:
+    """Return the patched/fixed version string from a CVE summary, or '' if not determinable.
+
+    Only handles 'before X' / 'prior to X' / '< X' patterns where the fixed version is
+    explicit.  Range patterns ('X through Y') are skipped — the upper bound alone is
+    insufficient without knowing whether it is inclusive or exclusive.
+    """
+    m = re.search(r'(?:before|prior to)\s+([\d][.\d\w]+)', summary, re.IGNORECASE)
+    if m:
+        return m.group(1)
+    m = re.search(r'<\s*([\d][.\d\w]+)', summary)
+    if m:
+        return m.group(1)
+    return ""
+
+
+def _version_is_suppressed(detected_ver: str, fixed_ver: str) -> bool:
+    """Return True if detected_ver >= fixed_ver (CVE has been patched on this host).
+
+    Returns False when either version is empty, unparseable, or the comparison
+    is ambiguous (e.g. a single-component version that matches identically).
+    """
+    if not detected_ver or not fixed_ver:
+        return False
+    try:
+        det = _parse_semver(detected_ver)
+        fix = _parse_semver(fixed_ver)
+        if det in ((0,), ()) or fix in ((0,), ()):
+            return False
+        return det >= fix
+    except Exception:
+        return False
+
+
 # ---------------------------------------------------------------------------
 # CWE MAPPING — Vulnerability Type to Common Weakness Enumeration
 # ---------------------------------------------------------------------------
@@ -1890,6 +1987,12 @@ def enrich_cve(cve: dict, service: dict) -> dict:
     epss_score      = epss_entry[0]
     epss_percentile = epss_entry[1]
 
+    # CISA KEV lookup
+    kev_db    = _load_kev_db()
+    kev_entry = kev_db.get(cve["id"].upper())
+    kev_listed   = kev_entry is not None
+    kev_due_date = (kev_entry or {}).get("due_date", "")
+
     # NVD CVSS lookup — prefer authoritative NVD data over derived estimates
     cvss_db    = _load_cvss_db()
     cvss_entry = cvss_db.get(cve["id"].upper())
@@ -1924,6 +2027,8 @@ def enrich_cve(cve: dict, service: dict) -> dict:
         "nvd_cvss_v4_vector":    nvd_v4_vector,
         "epss_score":            epss_score,
         "epss_percentile":       epss_percentile,
+        "kev_listed":            kev_listed,
+        "kev_due_date":          kev_due_date,
         "cwe_id":                resolved_cwe or _CWE_MAPPING.get(vuln_type, "See NVD for CWE information"),
         "cwe_name":              cwe_info.get("name", ""),
         "cwe_description":       cwe_info.get("description", ""),
@@ -2513,7 +2618,26 @@ def cves_for_service(service):
             if len(results) < 5:
                 _add([kw])
 
-    return results[:5]
+    # Version suppression — filter out CVEs where the detected version is known
+    # to be at or above the fixed/patched version stated in the CVE summary.
+    # Suppressed CVEs are returned separately so the report can show them in a
+    # collapsed section rather than silently dropping them.
+    active     = []
+    suppressed = []
+    for cve in results:
+        fixed_ver = _extract_fixed_version(cve.get("summary", ""))
+        if fixed_ver and version and _version_is_suppressed(version, fixed_ver):
+            suppressed.append({
+                **cve,
+                "_suppression_reason": (
+                    f"Detected version {version} \u2265 fixed {fixed_ver} "
+                    f"(per CVE summary)"
+                ),
+            })
+        else:
+            active.append(cve)
+
+    return active[:5], suppressed
 
 
 # ---------------------------------------------------------------------------
@@ -4192,6 +4316,7 @@ async def run_parallel_wave(actions, available_tools, session_dir):
                 "args":           args,
                 "cmd":            _describe_cmd(tool, args, available_tools),
                 "status":         "broken" if broken else "ok",
+                "timed_out":      (not broken) and ("Command timed out" in output),
                 "output":         output[:400],
                 "findings_count": len(findings) if not broken else 0,
                 "phase":          "parallel-wave",
@@ -4272,6 +4397,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   .badge-medium{background:#ffa502;color:#000}
   .badge-low{background:#2ed573;color:#000}
   .badge-info{background:#70a1ff;color:#000}
+  .badge-kev{background:#d32f2f;color:#fff;border:1px solid #ff5252;animation:kev-pulse 2s ease-in-out infinite}
+  @keyframes kev-pulse{0%,100%{box-shadow:0 0 0 0 rgba(211,47,47,.4)}50%{box-shadow:0 0 0 4px rgba(211,47,47,0)}}
   .ev{font-family:monospace;font-size:.82em;background:#0d1117;padding:8px;border-radius:4px;
       max-height:90px;overflow-y:auto;white-space:pre-wrap;word-break:break-all}
   .tag{background:#0f3460;color:#00d4ff;padding:1px 6px;border-radius:8px;font-size:.75em;
@@ -4331,6 +4458,25 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <div class="box"><div class="num medium">{{ counts.medium }}</div><div>Medium</div></div>
   <div class="box"><div class="num low">{{ counts.low + counts.info }}</div><div>Low / Info</div></div>
 </div>
+{% set _cc = confirmed_counts if confirmed_counts else {} %}
+<div style="display:flex;gap:1em;flex-wrap:wrap;margin:-8px 0 14px 0;font-size:.83em;color:#888">
+  <span title="Actively validated or strong-probe confirmed findings only">
+    &#10003;&nbsp;<strong style="color:#ccc">Confirmed+Probable:</strong>
+    {% if _cc.critical %}<span class="critical">{{ _cc.critical }}C</span> {% endif %}
+    {% if _cc.high %}<span class="high">{{ _cc.high }}H</span> {% endif %}
+    {% if _cc.medium %}<span class="medium">{{ _cc.medium }}M</span> {% endif %}
+    {% if (_cc.low or 0) + (_cc.info or 0) > 0 %}<span class="low">{{ (_cc.low or 0) + (_cc.info or 0) }}L</span>{% endif %}
+    &nbsp;<em style="color:#666">(total counts above include unverified findings)</em>
+  </span>
+</div>
+{% if timed_out_tools %}
+<div style="background:#2a1500;border:1px solid #ff6d00;border-radius:6px;padding:10px 16px;margin:0 0 14px 0;font-size:.88em">
+  <strong style="color:#ff9800">&#9888; Scan Coverage Incomplete</strong>
+  <div style="color:#ffe0b2;margin-top:.4em">{{ timed_out_tools|length }} tool run(s) timed out — results may be partial:
+    {% for t in timed_out_tools %}<code style="background:#1a0a00;padding:.1em .4em;border-radius:3px;margin:.1em">{{ t.tool }}{% if t.args %} {{ t.args[:40] }}{% endif %}</code> {% endfor %}
+  </div>
+</div>
+{% endif %}
 <div class="conclusion">{% for para in conclusion.split('\n\n') %}{% if para.strip() %}<p style="margin:0 0 .75em 0">{{ para.strip() }}</p>{% endif %}{% endfor %}</div>
 
 {% if compliance_summary %}
@@ -4392,18 +4538,30 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 </details>
 {% endif %}
 
-<h2>Nmap NSE Script Findings ({{ findings|length }})</h2>
+<h2>Findings ({{ findings|length }} total)</h2>
 {% if findings %}
+{%- set _confirmed_ids = confirmed_findings | map(attribute='finding_id') | list %}
+{%- set _probable_ids = probable_findings | map(attribute='finding_id') | list %}
+{%- set _review_ids = review_needed | map(attribute='finding_id') | list %}
 <details style="margin-bottom:1.2em;border:1px solid #1e4a6e;border-radius:6px;background:#0d1b2a">
   <summary style="cursor:pointer;color:#29b6f6;font-size:.92em;font-weight:600;padding:.65em 1em;user-select:none;display:flex;align-items:center;gap:.6em">
     <span>&#9654;</span>
-    <span>{{ findings|length }} finding(s) &mdash; click to expand</span>
+    <span>{{ findings|length }} finding(s) &mdash; click to expand
+      {% if confirmed_findings %}&nbsp;<span style="background:#c62828;color:#fff;padding:1px 7px;border-radius:10px;font-size:.82em">{{ confirmed_findings|length }} confirmed</span>{% endif %}
+      {% if probable_findings %}&nbsp;<span style="background:#bf360c;color:#fff;padding:1px 7px;border-radius:10px;font-size:.82em">{{ probable_findings|length }} probable</span>{% endif %}
+      {% if review_needed %}&nbsp;<span style="background:#37474f;color:#cfd8dc;padding:1px 7px;border-radius:10px;font-size:.82em">{{ review_needed|length }} review needed</span>{% endif %}
+    </span>
   </summary>
   <div style="padding:.5em">
   {% for f in findings %}
   <details style="margin-bottom:.8em;border:1px solid {% if f.severity == 'critical' %}#ff4757{% elif f.severity == 'high' %}#ff6b35{% elif f.severity == 'medium' %}#ffa502{% elif f.severity == 'low' %}#2ed573{% else %}#70a1ff{% endif %};border-radius:6px;background:#16213e">
     <summary style="padding:10px 14px;cursor:pointer;display:flex;flex-wrap:wrap;align-items:center;gap:8px;list-style:none">
       <span class="badge badge-{{ f.severity }}">{{ f.severity|upper }}</span>
+      {%- if f.finding_id in _confirmed_ids %}<span style="background:#b71c1c;color:#fff;padding:1px 6px;border-radius:8px;font-size:.72em;font-weight:700">&#10003; CONFIRMED</span>
+      {%- elif f.finding_id in _probable_ids %}<span style="background:#bf360c;color:#fff;padding:1px 6px;border-radius:8px;font-size:.72em;font-weight:700">~ PROBABLE</span>
+      {%- elif f.finding_id in _review_ids %}<span style="background:#37474f;color:#cfd8dc;padding:1px 6px;border-radius:8px;font-size:.72em;font-weight:700">&#9888; REVIEW</span>
+      {%- else %}<span style="background:#1a2a3a;color:#79b8d4;padding:1px 6px;border-radius:8px;font-size:.72em">INFO</span>
+      {%- endif %}
       <span style="font-weight:600;flex:1;min-width:180px">{{ f.title }}</span>
       <span style="color:#aaa;font-size:.82em">{{ f.tool }}</span>
       <span style="color:#888;font-size:.82em">{{ f.service }}</span>
@@ -4413,7 +4571,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     </summary>
     <div style="padding:12px 16px;border-top:1px solid #0f3460">
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:.8em;margin-bottom:1em;font-size:.88em">
-        <div><strong style="color:#00d4ff">Confidence</strong><br>{{ "%.0f%%"|format(f.confidence * 100) }}</div>
+        <div><strong style="color:#00d4ff">Confidence</strong><br>{{ "%.0f%%"|format(f.confidence * 100) }} &mdash; {% if f.confidence >= 0.95 %}<span style="color:#2ed573">Validated</span>{% elif f.confidence >= 0.75 %}<span style="color:#69f0ae">Strong Fingerprint</span>{% elif f.confidence >= 0.40 %}<span style="color:#ffa502">Banner / Heuristic</span>{% else %}<span style="color:#90a4ae">Weak Inference</span>{% endif %}</div>
+        {% if f.detection_method %}<div><strong style="color:#00d4ff">Detection Method</strong><br><span style="color:#b0bec5;font-size:.9em">{{ f.detection_method }}</span></div>{% endif %}
         {% if f.vuln_type %}<div><strong style="color:#00d4ff">Vuln Type</strong><br>{{ f.vuln_type }}</div>{% endif %}
         {% if f.cwe_id %}
         {%- set _cwe_info = cwe_db.get(f.cwe_id, {}) %}
@@ -4524,6 +4683,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       {% if c.epss_score %}
       <span style="background:#7c4700;color:#ffb300;padding:3px 9px;border-radius:4px;font-size:.82em;font-weight:700;border:1px solid #ff8f00" title="EPSS: probability of exploitation in the wild">EPSS&nbsp;{{ "%.1f%%"|format(c.epss_score * 100) }}</span>
       {% endif %}
+      {% if c.kev_listed %}
+      <span class="badge badge-kev" title="CISA Known Exploited Vulnerability — federal agencies must patch">&#9888; MUST-PATCH (KEV)</span>
+      {% endif %}
     </summary>
     
     <div style="margin-top:1em;padding-top:1em;border-top:1px solid #333">
@@ -4549,6 +4711,17 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       <div style="background:#111820;border-left:4px solid #546e7a;border-radius:0 6px 6px 0;padding:.7em 1em;margin-bottom:1em;display:flex;align-items:center;gap:.7em">
         <span style="font-size:1.2em">&#9680;</span>
         <div><strong style="color:#90a4ae;font-size:.92em">UNVERIFIED</strong><div style="color:#b0bec5;font-size:.84em;margin-top:.2em">Matched by version fingerprint only &mdash; not actively probed. May be a false positive. Re-scan with <code style="background:#0d1117;padding:.05em .3em;border-radius:3px">--cve-test</code> to verify.</div></div>
+      </div>
+      {% endif %}
+
+      {# ── KEV Alert Banner ───────────────────────────────────────────────── #}
+      {% if c.kev_listed %}
+      <div style="background:#3d0000;border-left:4px solid #d32f2f;border-radius:0 6px 6px 0;padding:.7em 1em;margin-bottom:1em;display:flex;align-items:center;gap:.7em">
+        <span style="color:#ef5350;font-size:1.2em">&#9888;</span>
+        <div>
+          <strong style="color:#ef5350">CISA Known Exploited Vulnerability (KEV)</strong>
+          <div style="color:#ffcdd2;font-size:.85em;margin-top:.2em">This CVE is actively exploited in the wild. Federal agencies are required to remediate.{% if c.kev_due_date %} <strong>Due date: {{ c.kev_due_date }}</strong>{% endif %}</div>
+        </div>
       </div>
       {% endif %}
 
@@ -4804,6 +4977,30 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 </details>
 {% else %}<p>No CVE matches found.</p>{% endif %}
 
+{% if suppressed_cve_matches %}
+<h2>Suppressed CVE Matches ({{ suppressed_cve_matches|length }})</h2>
+<details style="margin-bottom:1.2em;border:1px solid #37474f;border-radius:6px;background:#0d1b2a">
+  <summary style="cursor:pointer;color:#78909c;font-size:.92em;font-weight:600;padding:.65em 1em;user-select:none;display:flex;align-items:center;gap:.6em">
+    <span>&#9654;</span>
+    <span>{{ suppressed_cve_matches|length }} CVE(s) suppressed &mdash; detected version &ge; fixed version (false positive reduction)</span>
+  </summary>
+  <div style="padding:.5em;color:#90a4ae;font-size:.88em">
+    <p style="margin:.5em 1em;color:#607d8b">These CVEs were matched by service/version correlation but the detected version appears to be patched based on the CVE summary. They are shown here for audit completeness.</p>
+    {% for c in suppressed_cve_matches %}
+    <div style="margin-bottom:.7em;border:1px solid #37474f;border-radius:5px;padding:.7em 1em;background:#121e27">
+      <div style="display:flex;flex-wrap:wrap;align-items:center;gap:.5em;margin-bottom:.3em">
+        <a href="https://nvd.nist.gov/vuln/detail/{{ c.cve_id }}" target="_blank" style="color:#546e7a;text-decoration:none;font-weight:700;font-family:monospace">{{ c.cve_id }}</a>
+        <span class="badge badge-{{ c.severity|lower }}" style="opacity:.5;text-decoration:line-through">{{ c.severity|upper }}</span>
+        {% if c.epss_score %}<span style="background:#1a1a1a;color:#78909c;padding:2px 7px;border-radius:4px;font-size:.8em;border:1px solid #37474f">EPSS {{ "%.1f%%"|format(c.epss_score * 100) }}</span>{% endif %}
+        <span style="color:#607d8b;font-size:.85em">&mdash; {{ c.service }}</span>
+      </div>
+      {% if c.suppression_reason %}<div style="color:#546e7a;font-size:.82em;font-style:italic">&#x2714; {{ c.suppression_reason }}</div>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</details>
+{% endif %}
+
 <h2>Exploitation Validation</h2>
 <p style="color:#546e7a;font-size:.9em">MSF and active probe testing evidence is embedded inside each CVE card in the <strong>CVE Matches</strong> section above.</p>
 
@@ -4906,6 +5103,32 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
     counts = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
     for f in all_findings:
         counts[f.severity.lower()] = counts.get(f.severity.lower(), 0) + 1
+
+    # Partition findings into trust tiers for the report
+    confirmed_findings    = [f for f in all_findings if f.verification_status == "confirmed"]
+    review_needed         = [f for f in all_findings
+                             if f.verification_status == "probe_inconclusive"
+                             or getattr(f, "manual_review", False)]
+    probable_findings     = [f for f in all_findings
+                             if f.verification_status == "discovered"
+                             and f not in review_needed
+                             and f.confidence >= 0.60]
+    informational_findings = [f for f in all_findings
+                               if f not in confirmed_findings
+                               and f not in probable_findings
+                               and f not in review_needed]
+
+    # Counts used for executive summary grid (all findings, for full picture)
+    # Separate confirmed_counts drives the anchor sentence accuracy
+    confirmed_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
+    for f in confirmed_findings + probable_findings:
+        confirmed_counts[f.severity.lower()] = confirmed_counts.get(f.severity.lower(), 0) + 1
+
+    # Timed-out tools for coverage section
+    timed_out_scan_records = [
+        r for r in scan_records
+        if r.get("timed_out") or "Command timed out" in (r.get("output", "") or "")
+    ]
 
     cve_matches = []
     for s in services:
@@ -5066,14 +5289,29 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
             if ctrl not in compliance_summary:
                 compliance_summary.append(ctrl)
 
+    # Build suppressed CVE list across all services for the report
+    suppressed_cve_matches = []
+    for s in services:
+        for c in s.get("suppressed_cves", []):
+            enriched = enrich_cve(c, s)
+            enriched["service"]             = f"{s['port']}/{s.get('name', '')}"
+            enriched["suppression_reason"]  = c.get("_suppression_reason", "")
+            suppressed_cve_matches.append(enriched)
+
     return {
         "target":        target,
         "profile":       profile,
         "generated_at":  generated_at,
         "counts":        counts,
+        "confirmed_counts": confirmed_counts,
         "services":      services,
         "findings":      [dataclasses.asdict(f) for f in all_findings],
+        "confirmed_findings":     [dataclasses.asdict(f) for f in confirmed_findings],
+        "probable_findings":      [dataclasses.asdict(f) for f in probable_findings],
+        "informational_findings": [dataclasses.asdict(f) for f in informational_findings],
+        "review_needed":          [dataclasses.asdict(f) for f in review_needed],
         "cve_matches":   cve_matches,
+        "suppressed_cve_matches": suppressed_cve_matches,
         "tools_run":     tools_run,
         "execution_log": execution_log,
         "conclusion":    conclusion,
@@ -5081,6 +5319,10 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
         "msf_validation": [],
         "target_info":   target_info.to_dict() if target_info else {},
         "compliance_summary": compliance_summary,
+        "timed_out_tools": [
+            {"tool": r.get("tool", ""), "args": r.get("args", "")}
+            for r in timed_out_scan_records
+        ],
     }
 
 
@@ -9045,7 +9287,7 @@ async def main_async():
     # CVE lookup
     print("[+] Searching CVE database ...")
     for s in services:
-        s["cves"] = cves_for_service(s)
+        s["cves"], s["suppressed_cves"] = cves_for_service(s)
         if s["cves"]:
             label = s.get("product") or s.get("name", "?")
             print(f"    {s['port']}/{s['name']} ({label}): {len(s['cves'])} CVE(s)")
@@ -9053,6 +9295,9 @@ async def main_async():
                 print(f"      [{c['severity']:8}] {c['id']}: {c['summary'][:80]}...")
         else:
             print(f"    {s['port']}/{s['name']}: no CVEs matched")
+        if s.get("suppressed_cves"):
+            for c in s["suppressed_cves"]:
+                print(f"      [SUPPRESSED] {c['id']}: {c.get('_suppression_reason', '')}")
 
     svc_summary = ", ".join(
         f"{s['port']}/{s['name']}(p{s['priority']})" for s in services
