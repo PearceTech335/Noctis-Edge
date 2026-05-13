@@ -107,6 +107,12 @@ if [[ ! -f "$NVD_CSV" ]]; then
     echo "[*] Building NVD CVSS database in background (first run — this may take a few minutes) ..."
     /app/.venv/bin/python3 /app/scripts/build_nvd_cvss.py >> /tmp/nvd_refresh.log 2>&1 &
 fi
+# CWE: refresh monthly if the file is older than 30 days (2592000 seconds)
+CWE_CSV="/app/CVE/cwe-data.csv"
+if [[ ! -f "$CWE_CSV" ]] || [[ $(( $(date +%s) - $(stat -c %Y "$CWE_CSV" 2>/dev/null || echo 0) )) -gt 2592000 ]]; then
+    echo "[*] Refreshing CWE database in background ..."
+    /app/.venv/bin/python3 /app/scripts/build_cwe_db.py >> /tmp/cwe_refresh.log 2>&1 &
+fi
 # CVE summary DB: ALWAYS build synchronously if missing.
 # A background build causes a race condition where any scan (CLI or web UI)
 # starts before the CSV is ready, producing "no CVEs matched" for every port.

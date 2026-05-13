@@ -75,15 +75,16 @@ def _parse_meta_date(meta_content: str) -> str:
 
 
 def _extract_cvss(entry: dict) -> dict:
-    """Extract CVSS v3.1 and v4.0 data from an NVD JSON 2.0 entry."""
+    """Extract CVSS v3.1, v4.0 and primary CWE data from an NVD JSON 2.0 entry."""
     metrics = entry.get("metrics", {})
     result = {
-        "cve_id":          entry.get("id", ""),
-        "cvss_v3_score":   "",
-        "cvss_v3_vector":  "",
+        "cve_id":           entry.get("id", ""),
+        "cvss_v3_score":    "",
+        "cvss_v3_vector":   "",
         "cvss_v3_severity": "",
-        "cvss_v4_score":   "",
-        "cvss_v4_vector":  "",
+        "cvss_v4_score":    "",
+        "cvss_v4_vector":   "",
+        "cwe_id":           "",
     }
 
     # CVSS v3.1 — prefer primary, fall back to secondary source
@@ -104,6 +105,19 @@ def _extract_cvss(entry: dict) -> dict:
         result["cvss_v4_score"]  = str(m.get("baseScore", ""))
         result["cvss_v4_vector"] = m.get("vectorString", "")
         break
+
+    # Primary CWE — prefer NVD-assigned primary over CNA-supplied secondary
+    for weakness in sorted(
+        entry.get("weaknesses", []),
+        key=lambda w: 0 if w.get("type") == "Primary" else 1,
+    ):
+        for desc in weakness.get("description", []):
+            val = desc.get("value", "")
+            if val.startswith("CWE-") and val[4:].isdigit():
+                result["cwe_id"] = val
+                break
+        if result["cwe_id"]:
+            break
 
     return result
 
@@ -174,7 +188,7 @@ def main() -> int:
     print(f"[NVD] Writing {len(all_rows):,} records → {OUTPUT}")
     tmp = OUTPUT + ".tmp"
     fieldnames = ["cve_id", "cvss_v3_score", "cvss_v3_vector", "cvss_v3_severity",
-                  "cvss_v4_score", "cvss_v4_vector"]
+                  "cvss_v4_score", "cvss_v4_vector", "cwe_id"]
     with open(tmp, "w", newline="", encoding="utf-8") as fh:
         writer = csv.DictWriter(fh, fieldnames=fieldnames)
         writer.writeheader()

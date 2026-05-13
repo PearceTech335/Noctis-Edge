@@ -363,6 +363,21 @@ else
 fi
 
 # =============================================================================
+# 5c. CWE offline dictionary — MITRE CWE weakness names, descriptions,
+#     consequences and mitigations (refreshed monthly is sufficient)
+# =============================================================================
+header "5c  CWE offline dictionary (MITRE weakness database)"
+CWE_SCRIPT="$SCRIPT_DIR/scripts/build_cwe_db.py"
+if [[ -f "$CWE_SCRIPT" ]]; then
+    info "Downloading MITRE CWE dictionary to CVE/cwe-data.csv ..."
+    "$SCRIPT_DIR/.venv/bin/python3" "$CWE_SCRIPT" \
+        && ok "CWE database updated" \
+        || err "CWE download failed (network issue?) — existing file retained"
+else
+    err "scripts/build_cwe_db.py not found — skipping CWE update"
+fi
+
+# =============================================================================
 # 6. CVE offline database
 # =============================================================================
 header "6/10  CVE offline database"

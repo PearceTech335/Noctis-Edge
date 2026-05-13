@@ -164,6 +164,14 @@ RUN .venv/bin/python3 scripts/build_epss_db.py || \
     { echo "[!] EPSS pre-fetch failed (network unavailable at build time) — will retry at first run"; true; }
 
 # ---------------------------------------------------------------------------
+# 7c. CWE offline database — MITRE CWE dictionary baked in at build time so
+#     CVE cards can show weakness names, descriptions, and mitigations offline.
+#     Best-effort: build succeeds even if the MITRE site is unreachable.
+# ---------------------------------------------------------------------------
+RUN .venv/bin/python3 scripts/build_cwe_db.py || \
+    { echo "[!] CWE pre-fetch failed (network unavailable at build time) — will retry at first run"; true; }
+
+# ---------------------------------------------------------------------------
 # 8. Entrypoint + runtime directories
 # ---------------------------------------------------------------------------
 COPY docker-entrypoint.sh /docker-entrypoint.sh

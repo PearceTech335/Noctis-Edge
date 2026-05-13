@@ -123,13 +123,15 @@ TOOL_KB_PATH         = os.path.join(BASE_DIR, "tool_knowledge_base.json")
 TOOL_MANIFEST_PATH   = os.path.join(BASE_DIR, "tool_manifest.json")
 _TOOL_MANIFEST: "dict | None" = None  # lazy-loaded on first call to _load_tool_manifest()
 
-# Offline threat-intelligence databases (built by scripts/build_epss_db.py
-# and scripts/build_nvd_cvss.py, refreshed by update.sh steps 5a/5b)
+# Offline threat-intelligence databases (built by scripts/build_epss_db.py,
+# scripts/build_nvd_cvss.py and scripts/build_cwe_db.py; refreshed by update.sh)
 _EPSS_CSV     = os.path.join(BASE_DIR, "CVE", "epss-scores.csv")
 _NVD_CVSS_CSV = os.path.join(BASE_DIR, "CVE", "nvd-cvss.csv")
+_CWE_DATA_CSV = os.path.join(BASE_DIR, "CVE", "cwe-data.csv")
 # Lazy-loaded lookup dicts — populated on first call
 _EPSS_DB: "dict | None" = None
 _CVSS_DB: "dict | None" = None
+_CWE_DB:  "dict | None" = None
 
 
 def _load_epss_db() -> dict:
@@ -156,7 +158,7 @@ def _load_epss_db() -> dict:
 
 
 def _load_cvss_db() -> dict:
-    """Lazy-load CVE/nvd-cvss.csv → {cve_id: (v3_score, v3_vector, v3_severity, v4_score, v4_vector)}."""
+    """Lazy-load CVE/nvd-cvss.csv → {cve_id: (v3_score, v3_vector, v3_severity, v4_score, v4_vector, cwe_id)}."""
     global _CVSS_DB
     if _CVSS_DB is not None:
         return _CVSS_DB
@@ -175,10 +177,38 @@ def _load_cvss_db() -> dict:
                         row.get("cvss_v3_severity", ""),
                         float(row.get("cvss_v4_score", 0) or 0),
                         row.get("cvss_v4_vector", ""),
+                        row.get("cwe_id", ""),          # extracted from NVD weaknesses
                     )
     except Exception:
         pass
     return _CVSS_DB
+
+
+def _load_cwe_db() -> dict:
+    """Lazy-load CVE/cwe-data.csv → {cwe_id: {name, abstraction, description, likelihood, consequences, mitigation}}."""
+    global _CWE_DB
+    if _CWE_DB is not None:
+        return _CWE_DB
+    _CWE_DB = {}
+    if not os.path.isfile(_CWE_DATA_CSV):
+        return _CWE_DB
+    try:
+        import csv as _csv
+        with open(_CWE_DATA_CSV, newline="", encoding="utf-8") as fh:
+            for row in _csv.DictReader(fh):
+                cid = row.get("cwe_id", "").strip()
+                if cid:
+                    _CWE_DB[cid] = {
+                        "name":         row.get("name", ""),
+                        "abstraction":  row.get("abstraction", ""),
+                        "description":  row.get("description", ""),
+                        "likelihood":   row.get("likelihood", ""),
+                        "consequences": row.get("consequences", ""),
+                        "mitigation":   row.get("mitigation", ""),
+                    }
+    except Exception:
+        pass
+    return _CWE_DB
 CVE_FRESH_ATTEMPTS  = 5   # fresh LLM-generated scripts per CVE (on top of known-exploit + KB replays)
 CVE_VERIFY_ATTEMPTS = 2  # independent verifier scripts run when any attempt returns VULNERABLE
 CVE_BATCH_SIZE      = 5  # prompt user to continue after this many CVEs (runaway guard)
@@ -1861,18 +1891,26 @@ def enrich_cve(cve: dict, service: dict) -> dict:
     epss_percentile = epss_entry[1]
 
     # NVD CVSS lookup — prefer authoritative NVD data over derived estimates
-    cvss_db   = _load_cvss_db()
+    cvss_db    = _load_cvss_db()
     cvss_entry = cvss_db.get(cve["id"].upper())
     if cvss_entry:
-        nvd_v3_score, nvd_v3_vector, nvd_v3_severity, nvd_v4_score, nvd_v4_vector = cvss_entry
+        nvd_v3_score, nvd_v3_vector, nvd_v3_severity, nvd_v4_score, nvd_v4_vector, nvd_cwe_id = cvss_entry
         # Use NVD score if it's non-zero; fall back to passed-in value
         resolved_cvss_score  = nvd_v3_score or cve.get("cvss_score", 0.0)
         resolved_cvss_vector = nvd_v3_vector or _get_cvss_vector(severity, vuln_type)
     else:
         nvd_v3_score = nvd_v3_vector = nvd_v3_severity = ""
-        nvd_v4_score = nvd_v4_vector = ""
+        nvd_v4_score = nvd_v4_vector = nvd_cwe_id = ""
         resolved_cvss_score  = cve.get("cvss_score", 0.0)
         resolved_cvss_vector = _get_cvss_vector(severity, vuln_type)
+
+    # CWE resolution: NVD-extracted beats inferred-from-vuln-type
+    inferred_cwe = _CWE_MAPPING.get(vuln_type, "")
+    resolved_cwe = nvd_cwe_id or (inferred_cwe.split(" ")[0] if inferred_cwe else "")
+
+    # CWE detail lookup from offline dictionary
+    cwe_db   = _load_cwe_db()
+    cwe_info = cwe_db.get(resolved_cwe, {})
 
     return {
         "cve_id":                cve["id"],
@@ -1886,7 +1924,13 @@ def enrich_cve(cve: dict, service: dict) -> dict:
         "nvd_cvss_v4_vector":    nvd_v4_vector,
         "epss_score":            epss_score,
         "epss_percentile":       epss_percentile,
-        "cwe_id":                _CWE_MAPPING.get(vuln_type, "See NVD for CWE information"),
+        "cwe_id":                resolved_cwe or _CWE_MAPPING.get(vuln_type, "See NVD for CWE information"),
+        "cwe_name":              cwe_info.get("name", ""),
+        "cwe_description":       cwe_info.get("description", ""),
+        "cwe_consequences":      cwe_info.get("consequences", ""),
+        "cwe_likelihood":        cwe_info.get("likelihood", ""),
+        "cwe_mitigation":        cwe_info.get("mitigation", ""),
+        "cwe_abstraction":       cwe_info.get("abstraction", ""),
         "exploit_maturity":      _get_exploit_maturity(cve["id"], vuln_type),
         "product":               product,
         "version_affected":      version if version else "unknown",
@@ -4345,7 +4389,14 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:.8em;margin-bottom:1em;font-size:.88em">
         <div><strong style="color:#00d4ff">Confidence</strong><br>{{ "%.0f%%"|format(f.confidence * 100) }}</div>
         {% if f.vuln_type %}<div><strong style="color:#00d4ff">Vuln Type</strong><br>{{ f.vuln_type }}</div>{% endif %}
-        {% if f.cwe_id %}<div><strong style="color:#00d4ff">CWE</strong><br><span style="font-family:monospace;font-size:.92em">{{ f.cwe_id }}</span></div>{% endif %}
+        {% if f.cwe_id %}
+        {%- set _cwe_info = cwe_db.get(f.cwe_id, {}) %}
+        <div>
+          <strong style="color:#00d4ff">CWE</strong><br>
+          <a href="https://cwe.mitre.org/data/definitions/{{ f.cwe_id[4:] }}.html" target="_blank" style="color:#90caf9;text-decoration:none;font-family:monospace;font-size:.92em">{{ f.cwe_id }}</a>
+          {% if _cwe_info.get('name') %}<span style="color:#b0bec5;font-size:.85em;margin-left:.35em">&mdash; {{ _cwe_info.name }}</span>{% endif %}
+        </div>
+        {% endif %}
         {% if f.tags %}<div><strong style="color:#00d4ff">Tags</strong><br>{% for t in f.tags %}<span class="tag">{{ t }}</span>{% endfor %}</div>{% endif %}
       </div>
       <div style="margin-bottom:.8em">
@@ -4506,12 +4557,27 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           <code style="background:#0d1117;padding:.3em .6em;border-radius:3px;font-size:.8em;word-break:break-all">{{ c.cvss_vector }}</code>
           {% endif %}
         </div>
-        <div>
+        <div{% if c.cwe_name %} style="grid-column:1/-1"{% endif %}>
           <strong style="color:#00d4ff">CWE</strong><br>
           {% if c.cwe_id and c.cwe_id.startswith('CWE-') %}
           <a href="https://cwe.mitre.org/data/definitions/{{ c.cwe_id[4:] }}.html" target="_blank" style="color:#90caf9;text-decoration:none;font-family:monospace">{{ c.cwe_id }}</a>
+          {% if c.cwe_name %}<span style="color:#b0bec5;margin-left:.5em;font-size:.92em">&mdash; {{ c.cwe_name }}</span>{% endif %}
+          {% if c.cwe_abstraction %}<span style="background:#1a2a3a;color:#78909c;font-size:.78em;padding:.1em .45em;border-radius:3px;margin-left:.4em;font-family:monospace">{{ c.cwe_abstraction }}</span>{% endif %}
           {% else %}
           <span style="font-family:monospace">{{ c.cwe_id }}</span>
+          {% endif %}
+          {% if c.cwe_description or c.cwe_consequences or c.cwe_mitigation %}
+          <details style="margin-top:.5em">
+            <summary style="color:#78909c;font-size:.82em;cursor:pointer;user-select:none">&#9656; CWE detail (offline)</summary>
+            <div style="background:#0d1117;border:1px solid #1e3a5f;border-radius:4px;padding:.75em 1em;margin-top:.4em;font-size:.87em;line-height:1.6;color:#b0bec5">
+              {% if c.cwe_likelihood %}<div style="margin-bottom:.4em"><span style="color:#ffb300;font-weight:600">Likelihood of Exploit:</span> {{ c.cwe_likelihood }}</div>{% endif %}
+              {% if c.cwe_description %}<div style="margin-bottom:.6em"><span style="color:#00d4ff;font-weight:600">Description:</span><br>{{ c.cwe_description }}</div>{% endif %}
+              {% if c.cwe_consequences %}<div style="margin-bottom:.6em"><span style="color:#ef9a9a;font-weight:600">Common Consequences:</span><br>
+                {% for conseq in c.cwe_consequences.split(' | ') %}<div style="padding-left:.8em;color:#e0e0e0">&bull; {{ conseq }}</div>{% endfor %}
+              </div>{% endif %}
+              {% if c.cwe_mitigation %}<div><span style="color:#a5d6a7;font-weight:600">Suggested Mitigation:</span><br>{{ c.cwe_mitigation }}</div>{% endif %}
+            </div>
+          </details>
           {% endif %}
         </div>
         <div>
@@ -4774,6 +4840,7 @@ def generate_html_report(report_data):
         compliance_reasoning=_COMPLIANCE_REASONING,
         remediation_effort=_REMEDIATION_EFFORT,
         time_to_fix_map=_REMEDIATION_TIME_ESTIMATE,
+        cwe_db=_load_cwe_db(),
     )
     return Template(HTML_TEMPLATE).render(**data)
 
@@ -6833,10 +6900,12 @@ Write a Python 3 script to verify whether a CVE affects the target. Reply with J
 CVE: {cve.get('cve_id', '')} on {target}:{cve.get('service', '')}
 Product: {cve.get('product', '')} — {cve.get('summary', '')[:150]}
 {guidance}{msf_block}
+{('Weakness class: ' + cve.get('cwe_id','') + (' — ' + cve.get('cwe_name','') if cve.get('cwe_name') else '')) if cve.get('cwe_id','').startswith('CWE-') else ''}
 ### LANGUAGE
 Python 3 only. Use subprocess for system tools where needed.
-- USE: requests, socket, ssl, subprocess, re, json, time, urllib.parse, Python standard library.
+- USE: requests, socket, ssl, subprocess, shutil, re, json, time, urllib.parse, Python standard library.
 - SUBPROCESS ALLOWED: curl, wget, openssl, nc, dig, timeout.
+- Before calling any subprocess tool: use shutil.which('tool') first; if None, print VERDICT: INCONCLUSIVE and exit.
 - FORBIDDEN packages: beautifulsoup4, bs4, lxml, selenium, paramiko, pwntools, scapy.
 - FORBIDDEN subprocess: bash, sh, perl, ruby, socat, nmap, metasploit, sqlmap.
 - Never invoke Python, shell interpreters, or this program recursively.
@@ -6845,7 +6914,9 @@ Python 3 only. Use subprocess for system tools where needed.
 - Keep implementations concise and deterministic. Avoid unnecessary logic.
 - Handle all network and parsing failures gracefully. The script must never crash.
 - Use single quotes (') for all strings to avoid breaking the JSON.
-- Default timeout: 5 seconds. Maximum timeout: 10 seconds.
+- Default timeout: 8 seconds. Maximum timeout: 15 seconds.
+- For path traversal or header injection probes: use raw socket (socket library) to send the
+  literal byte string — do NOT use requests or urllib, which normalise paths and cause 400 errors.
 - The probe MUST match the target protocol and service type.
   Do not generate HTTP logic for non-HTTP services.
   Do not generate TLS logic unless TLS is present or implied by the service.
@@ -7003,13 +7074,14 @@ Write a Python 3 script to verify whether a CVE affects the target using a FRESH
 CVE: {cve.get('cve_id', '')} on {target}:{cve.get('service', '')}
 Product: {cve.get('product', '')} — {cve.get('summary', '')[:150]}
 Safe method: {cve.get('safe_validation_method', '')}
-
+{('Weakness class: ' + cve.get('cwe_id','') + (' — ' + cve.get('cwe_name','') if cve.get('cwe_name') else '')) if cve.get('cwe_id','').startswith('CWE-') else ''}
 ### ATTEMPTS SO FAR:
 {prior_block}{kb_block}{msf_block}{_banned_clause}
 ### LANGUAGE
 Python 3 only. Use subprocess for system tools where needed.
-- USE: requests, socket, ssl, subprocess, re, json, time, urllib.parse, Python standard library.
+- USE: requests, socket, ssl, subprocess, shutil, re, json, time, urllib.parse, Python standard library.
 - SUBPROCESS ALLOWED: curl, wget, openssl, nc, dig, timeout.
+- Before calling any subprocess tool: use shutil.which('tool') first; if None, print VERDICT: INCONCLUSIVE and exit.
 - FORBIDDEN packages: beautifulsoup4, bs4, lxml, selenium, paramiko, pwntools, scapy.
 - FORBIDDEN subprocess: bash, sh, perl, ruby, socat, nmap, metasploit, sqlmap.
 - Never invoke Python, shell interpreters, or this program recursively.
@@ -7018,7 +7090,9 @@ Python 3 only. Use subprocess for system tools where needed.
 - Keep implementations concise and deterministic. Avoid unnecessary logic.
 - Handle all network and parsing failures gracefully. The script must never crash.
 - Use single quotes (') for all strings to avoid breaking the JSON.
-- Default timeout: 5 seconds. Maximum timeout: 10 seconds.
+- Default timeout: 8 seconds. Maximum timeout: 15 seconds.
+- For path traversal or header injection probes: use raw socket (socket library) to send the
+  literal byte string — do NOT use requests or urllib, which normalise paths and cause 400 errors.
 - The probe MUST match the target protocol and service type.
   Do not generate HTTP logic for non-HTTP services.
   Do not generate TLS logic unless TLS is present or implied by the service.
@@ -7134,8 +7208,9 @@ Validate a DIFFERENT observable indicator of the same vulnerability.
 
 ### LANGUAGE
 Python 3 only. Use subprocess for system tools where needed.
-- USE: requests, socket, ssl, subprocess, re, json, time, urllib.parse, Python standard library.
+- USE: requests, socket, ssl, subprocess, shutil, re, json, time, urllib.parse, Python standard library.
 - SUBPROCESS ALLOWED: curl, wget, openssl, nc, dig, timeout.
+- Before calling any subprocess tool: use shutil.which('tool') first; if None, print VERDICT: INCONCLUSIVE and exit.
 - FORBIDDEN packages: beautifulsoup4, bs4, lxml, selenium, paramiko, pwntools, scapy.
 - FORBIDDEN subprocess: bash, sh, perl, ruby, socat, nmap, metasploit, sqlmap.
 - Never invoke Python, shell interpreters, or this program recursively.
@@ -7144,7 +7219,9 @@ Python 3 only. Use subprocess for system tools where needed.
 - Keep implementations concise and deterministic. Avoid unnecessary logic.
 - Handle all network and parsing failures gracefully. The script must never crash.
 - Use single quotes (') for all strings to avoid breaking the JSON.
-- Default timeout: 5 seconds. Maximum timeout: 10 seconds.
+- Default timeout: 8 seconds. Maximum timeout: 15 seconds.
+- For path traversal or header injection probes: use raw socket (socket library) to send the
+  literal byte string — do NOT use requests or urllib, which normalise paths and cause 400 errors.
 - The probe MUST match the target protocol and service type.
   Do not generate HTTP logic for non-HTTP services.
   Do not generate TLS logic unless TLS is present or implied by the service.

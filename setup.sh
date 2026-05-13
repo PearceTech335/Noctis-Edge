@@ -573,7 +573,12 @@ if [[ -f "$SCRIPT_DIR/scripts/build_nvd_cvss.py" ]]; then
         && ok "NVD CVSS database ready at CVE/nvd-cvss.csv" \
         || err "NVD CVSS download failed \u2014 CVE cards will show estimated scores until ./update.sh runs"
 fi
-
+if [[ -f "$SCRIPT_DIR/scripts/build_cwe_db.py" ]]; then
+    info "Downloading MITRE CWE weakness dictionary ..."
+    "$VENV/bin/python3" "$SCRIPT_DIR/scripts/build_cwe_db.py" \
+        && ok "CWE database ready at CVE/cwe-data.csv" \
+        || err "CWE download failed — weakness names/descriptions unavailable until ./update.sh runs"
+fi
 # =============================================================================
 # Per-user configuration  (noctis.conf)
 # =============================================================================

@@ -148,7 +148,8 @@ chmod +x setup.sh && ./setup.sh
 | Nuclei | Go-based template scanner (`~/go/bin/nuclei`) |
 | Ollama | Local LLM server + `qwen2.5-coder:3b-instruct` + `qwen3:8b` |
 | Python venv | `.venv/` with `requests`, `jinja2`, `pycryptodome`, `flask`, `flask-sock` |
-| CVE database | `CVE/cve-offline/` → `cve-summary.csv`; EPSS scores; NVD CVSS data |
+| CVE database | `CVE/cve-offline/` → `cve-summary.csv`; EPSS scores; NVD CVSS + CWE data |
+| CWE dictionary | `CVE/cwe-data.csv` — MITRE weakness names, descriptions, consequences, mitigations (969 entries) |
 | rdpscan | `rdpscan/` helper |
 | Additional tools | `amass`, `metasploit-framework` |
 
@@ -435,7 +436,8 @@ Subscribers receive access to the aggregated community CVE and tool knowledge ba
 | 4 | Nuclei binary + templates updated |
 | 5 | Ollama models pulled |
 | 5a | EPSS offline database refreshed (daily exploit-probability scores, 330k+ CVEs) |
-| 5b | NVD CVSS offline database updated (real CVSS v3.1/v4.0 from NVD JSON 2.0 feeds) |
+| 5b | NVD CVSS offline database updated (real CVSS v3.1/v4.0 + authoritative CWE IDs from NVD JSON 2.0 feeds) |
+| 5c | CWE offline dictionary refreshed (MITRE CWE XML — weakness names, descriptions, consequences, mitigations; 969 entries) |
 | 6 | CVE offline database pulled + CSV rebuilt |
 | 7 | Noctis Edge source updated (`git fetch` + `git reset --hard origin/master`); Docker image rebuilt if Docker is detected |
 | 8 | Nikto submodule updated |
@@ -451,6 +453,9 @@ Subscribers receive access to the aggregated community CVE and tool knowledge ba
 |--------|---------|
 | `setup.sh` | One-shot setup for a fresh install. Generates a unique installation ID stored in `noctis.conf`. |
 | `update.sh` | Refresh all components and submit local knowledge bases to the community relay. |
+| `scripts/build_cwe_db.py` | Downloads MITRE CWE XML dictionary; writes `CVE/cwe-data.csv` (969 weakness entries with names, descriptions, consequences and mitigations). |
+| `scripts/build_epss_db.py` | Downloads daily FIRST.org EPSS scores to `CVE/epss-scores.csv`. Called by `update.sh` step 5a and `docker-entrypoint.sh`. |
+| `scripts/build_nvd_cvss.py` | Incrementally downloads NVD JSON 2.0 feeds; writes `CVE/nvd-cvss.csv` with CVSS v3.1/v4.0 scores and authoritative CWE IDs. |
 | `scripts/submit_kb.py` | POSTs the local CVE knowledge base to the Cloudflare relay. Called automatically by `update.sh`. |
 | `scripts/merge_kb.py` | Additively merges an external CVE knowledge base JSON into the local one. |
 | `scripts/submit_tool_kb.py` | POSTs the local tool performance knowledge base to the Cloudflare relay. Called automatically by `update.sh`. |
@@ -496,6 +501,17 @@ The worker is already deployed at `https://noctis-kb-relay.pearcetechnologies1.w
 ---
 
 ## Version History
+
+## What's New in v0.8.3
+
+- **Offline CWE dictionary (`CVE/cwe-data.csv`):** New `scripts/build_cwe_db.py` downloads the MITRE CWE XML bundle at build time and writes 969 weakness entries to `CVE/cwe-data.csv` (name, abstraction, description, likelihood, consequences, mitigation). Integrated into `Dockerfile` (step 18), `docker-entrypoint.sh` (monthly background refresh), `update.sh` (step 5c), and `setup.sh`.
+- **Authoritative CWE IDs from NVD:** `scripts/build_nvd_cvss.py` now extracts CWE IDs directly from the NVD `weaknesses` array (prefers `type=="Primary"`, validates `CWE-{digits}` format) and writes them to the updated 7-column `nvd-cvss.csv`. Authoritative NVD IDs take precedence over inferred `_CWE_MAPPING` values.
+- **CWE-enriched CVE report cards:** Every CVE match card now resolves the weakness against the offline CWE dictionary and displays an expandable accordion with the weakness name, description, likelihood, consequences, and recommended mitigations — fully offline, no NVD or MITRE network calls at scan time.
+- **LLM probe prompts hardened:**
+  - `shutil.which()` guard added — before calling any subprocess tool the generated script must verify the binary exists; if not, it prints `VERDICT: INCONCLUSIVE` and exits cleanly rather than crashing with `FileNotFoundError`.
+  - Raw socket instruction for path-traversal probes — `requests` and `urllib` normalise encoded paths (e.g. `/.%2e/`) before sending, producing 400 responses; the prompt now explicitly directs the LLM to use the `socket` library to send the literal byte string for these probe types.
+  - Default timeout raised 5 s → 8 s; maximum timeout raised 10 s → 15 s, reducing false `INCONCLUSIVE` verdicts on slower services.
+  - CWE mechanism hint injected into fresh CVE probe prompts — the weakness class (e.g. `CWE-22 — Improper Limitation of a Pathname to a Restricted Directory`) is included as context to improve strategy selection for the initial script generation.
 
 ## What's New in v0.8.2
 
