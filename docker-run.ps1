@@ -134,9 +134,10 @@ foreach ($MODEL in @($OLLAMA_MODEL, $SCRIPT_MODEL, $REPORT_MODEL) | Select-Objec
 # 5. Start Noctis Edge
 # ---------------------------------------------------------------------------
 Write-Header "5/5  Starting Noctis Edge Web UI"
-# Ensure host-side KB files exist as valid JSON before bind-mounting.
-# If absent, Docker would auto-create them as directories instead of files.
-foreach ($f in @("cve_knowledge_base.json", "tool_knowledge_base.json", "nuclei_kb.json")) {
+# Ensure host-side JSON files exist as files before bind-mounting.
+# If absent, Docker would auto-create them as directories instead of files,
+# which causes 'device or resource busy' errors on macOS at container start.
+foreach ($f in @("cve_knowledge_base.json", "tool_knowledge_base.json", "nuclei_kb.json", "tool_manifest.json")) {
     if (-not (Test-Path (Join-Path $SCRIPT_DIR $f))) {
         [System.IO.File]::WriteAllText((Join-Path $SCRIPT_DIR $f), "{}")
         Write-Info "Created placeholder: $f"

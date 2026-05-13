@@ -37,9 +37,10 @@ done
 # The scanner gracefully runs without the manifest (curl catch-all routing).
 # ---------------------------------------------------------------------------
 if [[ -d "/app/tool_manifest.json" ]]; then
-    echo "[!] tool_manifest.json was created as a directory by Docker \u2014 removing."
+    echo "[!] tool_manifest.json was created as a directory by Docker — removing."
     echo "    It is an optional subscriber artifact; the scanner will run without it."
-    rm -rf "/app/tool_manifest.json"
+    rm -rf "/app/tool_manifest.json" 2>/dev/null || \
+        echo "[!] Could not remove bind-mounted directory (device busy on macOS) — scanner will start without tool manifest."
 fi
 # ---------------------------------------------------------------------------
 # Generate noctis.conf if not present
