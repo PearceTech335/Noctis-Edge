@@ -406,9 +406,9 @@ ollama pull qwen3:8b                        # report prose
 
 ## Community Knowledge Base
 
-`cve_knowledge_base.json` and `tool_knowledge_base.json` accumulate test results and tool-performance data at the project root. Each entry is identified only by CVE ID or service fingerprint — **no target-specific information is recorded**. Both files are gitignored and never committed.
+`cve_knowledge_base.json`, `nuclei_kb.json`, and `tool_knowledge_base.json` accumulate test results and tool-performance data at the project root. Each entry is identified only by CVE ID, Nuclei template ID, or service fingerprint — **no target-specific information is recorded**. All three files are gitignored and never committed.
 
-Running `./update.sh` submits both files to the community relay via the Cloudflare Worker (`cloudflare/worker.js`). The worker source is included in this repository for full transparency. Your installation ID (generated once by `setup.sh`, stored in `noctis.conf`) is used only to rate-limit submissions (4 per day) and is never linked to personal data.
+Running `./update.sh` submits all three files to the community relay via the Cloudflare Worker (`cloudflare/worker.js`). The worker source is included in this repository for full transparency. Your installation ID (generated once by `setup.sh`, stored in `noctis.conf`) is used only to rate-limit submissions (4 per day) and is never linked to personal data.
 
 ### Unlocking the Community Knowledge Base
 
@@ -438,10 +438,11 @@ Subscribers receive access to the aggregated community CVE and tool knowledge ba
 | 5a | EPSS offline database refreshed (daily exploit-probability scores, 330k+ CVEs) |
 | 5b | NVD CVSS offline database updated (real CVSS v3.1/v4.0 + authoritative CWE IDs from NVD JSON 2.0 feeds) |
 | 5c | CWE offline dictionary refreshed (MITRE CWE XML — weakness names, descriptions, consequences, mitigations; 969 entries) |
+| 5d | CISA KEV catalog refreshed (CISA Known Exploited Vulnerabilities — active exploitation ground truth, used to boost risk scores and flag MUST-PATCH findings) |
 | 6 | CVE offline database pulled + CSV rebuilt |
 | 7 | Noctis Edge source updated (`git fetch` + `git reset --hard origin/master`); Docker image rebuilt if Docker is detected |
 | 8 | Nikto submodule updated |
-| 9–10 | CVE and Tool knowledge bases submitted to community relay; community KB pulled if `KB_LICENSE_KEY` is set |
+| 9–10 | CVE, Nuclei template, and Tool knowledge bases submitted to community relay; community KBs pulled if `KB_LICENSE_KEY` is set |
 
 > **Data safety:** `git reset --hard` only affects git-tracked files. All user data lives in gitignored paths (`sessions/`, `noctis.conf`, `cve_knowledge_base.json`, `tool_knowledge_base.json`) and is never touched by the update.
 
@@ -456,8 +457,10 @@ Subscribers receive access to the aggregated community CVE and tool knowledge ba
 | `scripts/build_cwe_db.py` | Downloads MITRE CWE XML dictionary; writes `CVE/cwe-data.csv` (969 weakness entries with names, descriptions, consequences and mitigations). |
 | `scripts/build_epss_db.py` | Downloads daily FIRST.org EPSS scores to `CVE/epss-scores.csv`. Called by `update.sh` step 5a and `docker-entrypoint.sh`. |
 | `scripts/build_nvd_cvss.py` | Incrementally downloads NVD JSON 2.0 feeds; writes `CVE/nvd-cvss.csv` with CVSS v3.1/v4.0 scores and authoritative CWE IDs. |
+| `scripts/build_kev_db.py` | Downloads the CISA Known Exploited Vulnerabilities catalog to `CVE/kev-catalog.csv`. Called by `update.sh` step 5d and `docker-entrypoint.sh`. |
 | `scripts/submit_kb.py` | POSTs the local CVE knowledge base to the Cloudflare relay. Called automatically by `update.sh`. |
 | `scripts/merge_kb.py` | Additively merges an external CVE knowledge base JSON into the local one. |
+| `scripts/submit_nuclei_kb.py` | POSTs the local Nuclei template knowledge base to the Cloudflare relay. Called automatically by `update.sh`. |
 | `scripts/submit_tool_kb.py` | POSTs the local tool performance knowledge base to the Cloudflare relay. Called automatically by `update.sh`. |
 | `scripts/merge_tool_kb.py` | Additively merges an external tool knowledge base JSON into the local one. |
 
@@ -478,6 +481,7 @@ The `cloudflare/` directory contains the Cloudflare Worker that relays KB submis
 | `/community-kb` | POST | CVE community KB pull (license-gated) |
 | `/submit-tool` | POST | Tool KB submission |
 | `/community-tool-kb` | POST | Tool community KB pull (license-gated) |
+| `/submit-nuclei` | POST | Nuclei template KB submission |
 
 The worker is already deployed at `https://noctis-kb-relay.pearcetechnologies1.workers.dev`. End users do not need to deploy anything.
 
@@ -490,6 +494,7 @@ The worker is already deployed at `https://noctis-kb-relay.pearcetechnologies1.w
 | `sessions/` | Runtime scan output — local to each installation |
 | `noctis.conf` | Per-user config (UUID, license key) |
 | `cve_knowledge_base.json` | Machine-specific CVE test results |
+| `nuclei_kb.json` | Machine-specific Nuclei template performance data |
 | `tool_knowledge_base.json` | Machine-specific tool performance data |
 | `cloudflare/.wrangler/` | Wrangler cache (contains Cloudflare account credentials) |
 | `WordLists/rockyou.txt` | 139 MB — not needed for directory enumeration |
@@ -501,6 +506,15 @@ The worker is already deployed at `https://noctis-kb-relay.pearcetechnologies1.w
 ---
 
 ## Version History
+
+## What's New in v0.8.4
+
+- **CISA KEV integration:** `scripts/build_kev_db.py` downloads the CISA Known Exploited Vulnerabilities catalog to `CVE/kev-catalog.csv`. `_load_kev_db()` follows the same lazy-load pattern as EPSS. In `enrich_cve()`, any CVE present in the KEV catalog sets `kev_listed: true` and `kev_due_date` in the enriched CVE dict. `calculate_risk_score()` applies a +0.2 bonus (capped at 1.0) for KEV-listed CVEs. The HTML report displays an animated red **MUST-PATCH (KEV)** badge and a due-date alert banner on matching CVE cards. `kev_listed` and `kev_due_date` are included in the JSON export. `update.sh` gains step 5d to refresh the catalog alongside EPSS, NVD, and CWE.
+- **CVE version suppression:** `_parse_semver()` and `_extract_fixed_version()` parse machine-comparable version tuples from CVE summary text. `_version_is_suppressed()` returns `True` when the detected service version is at or above the fixed version. `cves_for_service()` partitions results into `(active_cves, suppressed_cves)` — suppressed CVEs are retained in the service record with a `suppression_reason` field (e.g. `version 10.0 >= fixed 9.8p1`) and rendered as a collapsed section in the HTML report. Nothing is silently dropped.
+- **Confidence label tiers:** `_confidence_label()` maps the existing `Finding.confidence` float to human-readable tiers: **Validated** (≥ 0.95), **Strong Fingerprint** (≥ 0.75), **Banner / Heuristic** (≥ 0.40), **Weak Inference** (< 0.40). Finding cards in the HTML report now display `87% — Strong Fingerprint` with a tooltip explaining each tier. The new `Finding.detection_method` field records how each finding was produced (`template_match`, `banner_analysis`, `service_probe`, `header_analysis`).
+- **Finding category separation:** `generate_report()` partitions all findings into four buckets: **Confirmed** (`verification_status == "confirmed"`), **Probable** (`discovered` + confidence ≥ 0.60), **Review Needed** (`probe_inconclusive` or `manual_review`), and **Informational** (remaining). Executive summary severity counts are calculated from Confirmed + Probable only, eliminating the contradiction where the summary showed zero criticals while the flat finding list contained unvalidated criticals. All four lists are exported to the JSON report. The HTML report renders colour-coded collapsible sections with tier badge pills.
+- **Scan coverage state:** `run_parallel_wave()` propagates the `timed_out` flag from each tool invocation into `scan_records`. `generate_report()` collects `timed_out_tools` and surfaces a **Scan Coverage** table in the HTML report before the executive summary — any timed-out tool is flagged `INCOMPLETE — results may be partial` with its target and duration. `timed_out_tools` is included in the JSON export.
+- **Nuclei KB community submissions:** `scripts/submit_nuclei_kb.py` is now a public script (no longer subscriber-only) and distributed with every install. `update.sh` submits `nuclei_kb.json` alongside the CVE and Tool KBs on every `./update.sh` run. The Cloudflare Worker gains a `/submit-nuclei` route that writes submissions to the `nuclei/` subfolder of the community submissions repository. All users now contribute Nuclei template performance data automatically after running `./update.sh`.
 
 ## What's New in v0.8.3
 

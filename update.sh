@@ -378,6 +378,21 @@ else
 fi
 
 # =============================================================================
+# 5d. CISA KEV catalog — Known Exploited Vulnerabilities (active exploitation
+#     ground truth; used to boost risk scores and flag MUST-PATCH findings)
+# =============================================================================
+header "5d  CISA KEV catalog (Known Exploited Vulnerabilities)"
+KEV_SCRIPT="$SCRIPT_DIR/scripts/build_kev_db.py"
+if [[ -f "$KEV_SCRIPT" ]]; then
+    info "Downloading CISA KEV catalog to CVE/kev-catalog.csv ..."
+    "$SCRIPT_DIR/.venv/bin/python3" "$KEV_SCRIPT" \
+        && ok "KEV catalog updated" \
+        || err "KEV download failed (network issue?) — existing file retained"
+else
+    err "scripts/build_kev_db.py not found — skipping KEV update"
+fi
+
+# =============================================================================
 # 6. CVE offline database
 # =============================================================================
 header "6/10  CVE offline database"

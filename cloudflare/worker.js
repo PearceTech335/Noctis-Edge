@@ -15,8 +15,9 @@
  *   RATE_LIMIT_KV          (KV)      Namespace for per-UUID rate-limit tracking
  *
  * Routes:
- *   POST /submit        Accept a CVE KB submission
- *   POST /submit-tool   Accept a tool performance KB submission
+ *   POST /submit          Accept a CVE KB submission
+ *   POST /submit-tool     Accept a tool performance KB submission
+ *   POST /submit-nuclei   Accept a Nuclei template KB submission
  *   POST /community-kb       Validate Lemon Squeezy license key and serve community_kb.json
  *   POST /community-tool-kb  Validate Lemon Squeezy license key and serve community_tool_kb.json
  *   GET  /health        Liveness probe
@@ -140,6 +141,30 @@ async function putToolFile(filename, contentB64, message, token, sha = null) {
   if (sha) payload.sha = sha;
 
   const resp = await fetch(`${GITHUB_TOOL_API_BASE}/${filename}`, {
+    method: "PUT",
+    headers: { ...githubHeaders(token), "Content-Type": "application/json" },
+    body:    JSON.stringify(payload),
+  });
+  return resp.status;
+}
+
+// Nuclei KB submissions go into a nuclei/ subfolder of the CVE submissions repo
+const GITHUB_NUCLEI_API_BASE = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/nuclei`;
+
+async function getNucleiFileSha(filename, token) {
+  const resp = await fetch(`${GITHUB_NUCLEI_API_BASE}/${filename}`, {
+    headers: githubHeaders(token),
+  });
+  if (!resp.ok) return null;
+  const data = await resp.json();
+  return data.sha ?? null;
+}
+
+async function putNucleiFile(filename, contentB64, message, token, sha = null) {
+  const payload = { message, content: contentB64 };
+  if (sha) payload.sha = sha;
+
+  const resp = await fetch(`${GITHUB_NUCLEI_API_BASE}/${filename}`, {
     method: "PUT",
     headers: { ...githubHeaders(token), "Content-Type": "application/json" },
     body:    JSON.stringify(payload),
@@ -373,6 +398,82 @@ async function handleToolSubmit(request, env) {
   return jsonResp({ error: `Upstream write failed (HTTP ${status}) — try again later` }, 502);
 }
 
+// ---------------------------------------------------------------------------
+// Nuclei KB submission handler
+// Writes to nuclei/<user_id>.json inside the CVE submissions repo using
+// GITHUB_TOKEN (same secret — same repo, separate subfolder).
+// ---------------------------------------------------------------------------
+const MAX_NUCLEI_KB_BYTES = 2 * 1024 * 1024;  // 2 MB
+const NUCLEI_TMPL_KEY_RE  = /^[a-z0-9_/-]{3,120}$/;
+
+async function handleNucleiSubmit(request, env) {
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return jsonResp({ error: "Request body must be valid JSON" }, 400);
+  }
+
+  const { user_id, nuclei_kb } = body;
+
+  if (!user_id || typeof user_id !== "string" || !UUID_RE.test(user_id)) {
+    return jsonResp({ error: "user_id must be a valid UUID v4" }, 400);
+  }
+
+  if (!nuclei_kb || typeof nuclei_kb !== "object" || Array.isArray(nuclei_kb)) {
+    return jsonResp({ error: "nuclei_kb must be a non-null JSON object" }, 400);
+  }
+
+  const invalidKeys = Object.keys(nuclei_kb).filter(k => !NUCLEI_TMPL_KEY_RE.test(k));
+  if (invalidKeys.length > 0) {
+    return jsonResp({
+      error: `Invalid nuclei template keys: ${invalidKeys.slice(0, 3).join(", ")}`,
+    }, 400);
+  }
+
+  const kbStr   = JSON.stringify(nuclei_kb);
+  const kbBytes = new TextEncoder().encode(kbStr).length;
+  if (kbBytes > MAX_NUCLEI_KB_BYTES) {
+    return jsonResp({
+      error: `Nuclei KB payload exceeds 2 MB limit (${(kbBytes / 1_048_576).toFixed(1)} MB received)`,
+    }, 413);
+  }
+
+  const rate = await checkRateLimit(env.RATE_LIMIT_KV, user_id, "nuclei-rate");
+  if (!rate.allowed) {
+    return jsonResp({
+      error: `Rate limit exceeded — max ${MAX_DAILY_SUBS} nuclei KB submissions per 24 hours`,
+    }, 429);
+  }
+
+  const filename    = `${user_id}.json`;
+  const contentB64  = bytesToBase64(new TextEncoder().encode(kbStr));
+  const ts          = new Date().toISOString();
+  const message     = `nuclei-kb-submission: ${user_id} ${ts}`;
+
+  let status = await putNucleiFile(filename, contentB64, message, env.GITHUB_TOKEN);
+
+  if (status === 422) {
+    const sha = await getNucleiFileSha(filename, env.GITHUB_TOKEN);
+    if (sha) {
+      status = await putNucleiFile(filename, contentB64, message, env.GITHUB_TOKEN, sha);
+    } else {
+      return jsonResp({ error: "SHA conflict — please retry in a moment" }, 409);
+    }
+  }
+
+  if (status === 200 || status === 201) {
+    return jsonResp({
+      status:    "ok",
+      action:    status === 201 ? "created" : "updated",
+      remaining: rate.remaining,
+    });
+  }
+
+  console.error(`[nuclei-kb-relay] GitHub PUT failed HTTP ${status} for nuclei/${filename}`);
+  return jsonResp({ error: `Upstream write failed (HTTP ${status}) — try again later` }, 502);
+}
+
 async function handleCommunityToolKB(request, env) {
   // ── Parse body ────────────────────────────────────────────────────────────
   let body;
@@ -454,6 +555,10 @@ export default {
 
     if (pathname === "/submit-tool" && request.method === "POST") {
       return handleToolSubmit(request, env);
+    }
+
+    if (pathname === "/submit-nuclei" && request.method === "POST") {
+      return handleNucleiSubmit(request, env);
     }
 
     if (pathname === "/community-kb" && request.method === "POST") {

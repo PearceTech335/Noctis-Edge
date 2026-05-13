@@ -33,6 +33,7 @@ CVE/.nvd-cache/
 CVE/epss-scores.csv
 CVE/nvd-cvss.csv
 CVE/cwe-data.csv
+CVE/kev-catalog.csv
 
 # Development / quarantine scratch area — not for distribution
 quarantine/
@@ -74,7 +75,6 @@ scripts/submit_tool_manifest.py
 
 # Subscriber-only / operator nuclei KB scripts — delivered via paid update channel
 scripts/merge_nuclei_kb.py
-scripts/submit_nuclei_kb.py
 
 # Tool manifest backup — created when update.sh overwrites with a new subscriber download
 tool_manifest.json.bak

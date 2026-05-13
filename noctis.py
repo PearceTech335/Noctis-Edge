@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # <https://www.gnu.org/licenses/agpl-3.0.html>
 """
-Noctis Edge — Security Through Exposure  v0.8.2
+Noctis Edge — Security Through Exposure  v0.8.4
 Implements: structured findings, verification,
 approval gates, async execution, HTML reports,
 service-specific enumerations, risk scoring,
@@ -12,7 +12,7 @@ EPSS exploit-probability scoring, NVD CVSS offline database,
 NIST CSF 2.0 compliance mapping, and OT/ICS asset classification.
 """
 
-VERSION = "v0.8.2"
+VERSION = "v0.8.4"
 
 import asyncio
 import dataclasses
