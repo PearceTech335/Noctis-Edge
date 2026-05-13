@@ -12,7 +12,7 @@ EPSS exploit-probability scoring, NVD CVSS offline database,
 NIST CSF 2.0 compliance mapping, and OT/ICS asset classification.
 """
 
-VERSION = "v0.8.4"
+VERSION = "v0.8.5"
 
 import asyncio
 import dataclasses
@@ -76,8 +76,8 @@ OLLAMA_URL     = os.getenv("NOCTIS_OLLAMA_URL", "http://localhost:11434/api/gene
 #
 #   Two-model architecture:
 #   qwen2.5-coder:3b-instruct (~2 GB)  — planning, structured JSON decisions, CVE probe scripts
-#   qwen3:8b (~5 GB)                   — narrative prose: report conclusion, remediation guidance
-#   Peak concurrent RAM during --cve-test: ~7 GB. 16 GB RAM recommended.
+#   qwen3:4b (~2.6 GB)                 — narrative prose: report conclusion, remediation guidance
+#   Peak concurrent RAM during --cve-test: ~4.6 GB. 8 GB RAM recommended.
 #   MODEL            — structured JSON tool-selection decisions
 #   SCRIPT_MODEL     — Python exploit / verification script generation
 #   CVE_SCRIPT_MODEL — CVE exploit/test script generation (falls back to SCRIPT_MODEL)
@@ -85,7 +85,7 @@ OLLAMA_URL     = os.getenv("NOCTIS_OLLAMA_URL", "http://localhost:11434/api/gene
 MODEL            = os.getenv("NOCTIS_OLLAMA_MODEL",            "qwen2.5-coder:3b-instruct")
 SCRIPT_MODEL     = os.getenv("NOCTIS_OLLAMA_SCRIPT_MODEL",     "qwen2.5-coder:3b-instruct")
 CVE_SCRIPT_MODEL = os.getenv("NOCTIS_OLLAMA_CVE_SCRIPT_MODEL", SCRIPT_MODEL)
-REPORT_MODEL     = os.getenv("NOCTIS_OLLAMA_REPORT_MODEL",     "qwen3:8b")
+REPORT_MODEL     = os.getenv("NOCTIS_OLLAMA_REPORT_MODEL",     "qwen3:4b")
 OLLAMA_TIMEOUT = int(os.getenv("NOCTIS_OLLAMA_TIMEOUT", "360"))   # seconds — 360s covers cold model reload (~3 min) after RAM eviction
 
 # Ollama inference options applied to all planning/decision calls.
@@ -5223,6 +5223,7 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
                           "keep_alive": _OLLAMA_KEEP_ALIVE,
                           "options":    {"num_ctx": 4096, "temperature": 0.3},
                           "prompt": (
+                              "/no_think\n"
                               "You are a professional penetration tester writing an executive summary "
                               "for a client-facing security assessment report. "
                               "Write exactly 4 paragraphs of professional prose in plain text. "
@@ -8560,6 +8561,7 @@ def _generate_attacker_perspective(cve: dict) -> str:
     this CVE and what could they gain?  Returns plain text or a short fallback.
     """
     prompt = (
+        "/no_think\n"
         f"You are a senior penetration tester writing the threat narrative section of a "
         f"client report.\n\n"
         f"CVE ID:        {cve.get('cve_id', 'Unknown')}\n"
@@ -8853,6 +8855,7 @@ def _build_conclusion_with_cve(report: dict, target: str) -> str:
                 "keep_alive": _OLLAMA_KEEP_ALIVE,
                 "options":    {"num_ctx": 4096, "temperature": 0.3},
                 "prompt": (
+                    "/no_think\n"
                     "You are a professional penetration tester writing an executive summary "
                     "for a client-facing security assessment report. "
                     "Write exactly 4 paragraphs of professional prose in plain text. "

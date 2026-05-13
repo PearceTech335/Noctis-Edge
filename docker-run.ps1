@@ -22,7 +22,7 @@ $ErrorActionPreference = "Stop"
 
 $OLLAMA_MODEL  = "qwen2.5-coder:3b-instruct"   # planning + scan decisions (NOCTIS_OLLAMA_MODEL)
 $SCRIPT_MODEL  = "qwen2.5-coder:3b-instruct"   # CVE scripts + tool scripts (NOCTIS_OLLAMA_SCRIPT_MODEL)
-$REPORT_MODEL  = "qwen3:8b"                     # narrative prose: conclusion, attacker perspective, remediation (NOCTIS_OLLAMA_REPORT_MODEL)
+$REPORT_MODEL  = "qwen3:4b"                     # narrative prose: conclusion, attacker perspective, remediation (NOCTIS_OLLAMA_REPORT_MODEL)
 $SCRIPT_DIR    = Split-Path -Parent $MyInvocation.MyCommand.Definition
 
 function Write-Header($msg) {

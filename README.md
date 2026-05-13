@@ -67,14 +67,14 @@ Alongside CVE probes, `tooling_knowledge_base.json` accumulates tool-performance
 | Item | Size |
 |------|------|
 | Ollama — `qwen2.5-coder:3b-instruct` (planning + scripts) | ~2 GB |
-| Ollama — `qwen3:8b` (report prose) | ~5 GB |
+| Ollama — `qwen3:4b` (report prose) | ~2.6 GB |
 | Nuclei templates | ~1.5 GB |
 | CVE offline database | ~3–5 GB |
 | SecLists wordlists | ~2 GB |
 | Tool binaries + Python venv | ~1 GB |
 | Scan session outputs | Variable |
 
-> **RAM note:** Only one model is active at a time during the main scan loop. During `--cve-test`, both models may be warm simultaneously — peak concurrent RAM is ~7 GB. 16 GB RAM recommended; 32 GB optimal.
+> **RAM note:** Only one model is active at a time during the main scan loop. During `--cve-test`, both models may be warm simultaneously — peak concurrent RAM is ~4.6 GB. 8 GB RAM recommended; 16 GB optimal.
 
 ---
 
@@ -111,7 +111,7 @@ chmod +x docker-run.sh && ./docker-run.sh
 .\docker-run.ps1
 ```
 
-The launcher script handles everything automatically: pulls latest source, builds the Docker image (all tools + offline CVE database baked in), starts the Ollama sidecar and downloads the LLM models (~7 GB total — `qwen2.5-coder:3b-instruct` ~2 GB + `qwen3:8b` ~5 GB — one-time download, stored in a Docker volume), then starts the Web UI at **http://localhost:8888**.
+The launcher script handles everything automatically: pulls latest source, builds the Docker image (all tools + offline CVE database baked in), starts the Ollama sidecar and downloads the LLM models (~4.6 GB total — `qwen2.5-coder:3b-instruct` ~2 GB + `qwen3:4b` ~2.6 GB — one-time download, stored in a Docker volume), then starts the Web UI at **http://localhost:8888**.
 
 **Useful Docker commands:**
 ```bash
@@ -146,7 +146,7 @@ chmod +x setup.sh && ./setup.sh
 | apt packages | `nmap`, `curl`, `ffuf`, `hydra`, `ssh-audit`, `dnsenum`, `dnsrecon`, `perl`, `golang-go`, `python3-tk`, and more |
 | SecLists | Wordlists via `snap install seclists` |
 | Nuclei | Go-based template scanner (`~/go/bin/nuclei`) |
-| Ollama | Local LLM server + `qwen2.5-coder:3b-instruct` + `qwen3:8b` |
+| Ollama | Local LLM server + `qwen2.5-coder:3b-instruct` + `qwen3:4b` |
 | Python venv | `.venv/` with `requests`, `jinja2`, `pycryptodome`, `flask`, `flask-sock` |
 | CVE database | `CVE/cve-offline/` → `cve-summary.csv`; EPSS scores; NVD CVSS + CWE data |
 | CWE dictionary | `CVE/cwe-data.csv` — MITRE weakness names, descriptions, consequences, mitigations (969 entries) |
@@ -342,7 +342,7 @@ Top-of-file constants in `noctis.py` (all overridable via environment variables)
 | `MODEL` | `qwen2.5-coder:3b-instruct` | `NOCTIS_OLLAMA_MODEL` | Planning, iteration decisions, structured JSON tool selection |
 | `SCRIPT_MODEL` | `qwen2.5-coder:3b-instruct` | `NOCTIS_OLLAMA_SCRIPT_MODEL` | CVE exploit scripts, verification scripts |
 | `CVE_SCRIPT_MODEL` | *(same as `SCRIPT_MODEL`)* | `NOCTIS_OLLAMA_CVE_SCRIPT_MODEL` | CVE probe generation — override with a larger model for better pivoting |
-| `REPORT_MODEL` | `qwen3:8b` | `NOCTIS_OLLAMA_REPORT_MODEL` | Report conclusion, attacker perspective, remediation guidance |
+| `REPORT_MODEL` | `qwen3:4b` | `NOCTIS_OLLAMA_REPORT_MODEL` | Report conclusion, attacker perspective, remediation guidance |
 | `OLLAMA_URL` | `http://localhost:11434/api/generate` | — | Ollama API endpoint |
 | `MAX_ITERATIONS` | `10` | — | Minimum (floor) Phase 2 iteration count — applied when few services detected |
 | `MAX_ITERATIONS_CAP` | `40` | — | Hard ceiling — dynamic budget and auto-extensions can never exceed this |
@@ -388,7 +388,7 @@ Manual install:
 ```bash
 curl -fsSL https://ollama.com/install.sh | sh
 ollama pull qwen2.5-coder:3b-instruct      # planning, CVE probe + verification scripts
-ollama pull qwen3:8b                        # report prose
+ollama pull qwen3:4b                        # report prose
 ```
 
 ### Model Roles
@@ -398,9 +398,9 @@ ollama pull qwen3:8b                        # report prose
 | `qwen2.5-coder:3b-instruct` | `NOCTIS_OLLAMA_MODEL` | Tool selection, scan planning, structured JSON decisions |
 | `qwen2.5-coder:3b-instruct` | `NOCTIS_OLLAMA_SCRIPT_MODEL` | CVE exploit and verification scripts |
 | `qwen2.5-coder:3b-instruct` | `NOCTIS_OLLAMA_CVE_SCRIPT_MODEL` | CVE probe generation (override with a larger model for better strategy pivoting) |
-| `qwen3:8b` | `NOCTIS_OLLAMA_REPORT_MODEL` | Report conclusion, attacker perspective, remediation guidance |
+| `qwen3:4b` | `NOCTIS_OLLAMA_REPORT_MODEL` | Report conclusion, attacker perspective, remediation guidance |
 
-`qwen2.5-coder:3b-instruct` is ~2 GB; `qwen3:8b` is ~5 GB. During the main scan only one model is active at a time. During `--cve-test` both may be resident simultaneously — peak combined RAM ~7 GB. Inference is typically 20–90 s per call on CPU-only hardware after the initial warm load.
+`qwen2.5-coder:3b-instruct` is ~2 GB; `qwen3:4b` is ~2.6 GB. During the main scan only one model is active at a time. During `--cve-test` both may be resident simultaneously — peak combined RAM ~4.6 GB. Inference is typically 20–90 s per call on CPU-only hardware after the initial warm load.
 
 ---
 
@@ -506,6 +506,11 @@ The worker is already deployed at `https://noctis-kb-relay.pearcetechnologies1.w
 ---
 
 ## Version History
+
+## What's New in v0.8.5
+
+- **`REPORT_MODEL` switched to `qwen3:4b`:** Default `REPORT_MODEL` changed from `qwen3:8b` to `qwen3:4b` — reducing model size from ~5 GB to ~2.6 GB and peak concurrent RAM (during `--cve-test`) from ~7 GB to ~4.6 GB. Minimum recommended RAM drops from 16 GB to 8 GB. Override via `NOCTIS_OLLAMA_REPORT_MODEL=qwen3:8b` to restore the larger model. All deployment files (`setup.sh`, `update.sh`, `docker-run.sh`, `docker-run.ps1`, `docker-compose.yml`) updated to pull `qwen3:4b` on fresh install and `./update.sh` runs.
+- **`/no_think` prefix on prose prompts:** The three prose-generation call sites (executive summary, attacker perspective, scan conclusion) now prepend `/no_think\n` to their prompts, disabling qwen3's chain-of-thought reasoning overhead. Eliminates `<think>...</think>` blocks in responses and reduces inference latency on CPU-only hardware.
 
 ## What's New in v0.8.4
 

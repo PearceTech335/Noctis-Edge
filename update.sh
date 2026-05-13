@@ -14,7 +14,7 @@ export GIT_TERMINAL_PROMPT=0
 
 OLLAMA_MODEL="qwen2.5-coder:3b-instruct"
 OLLAMA_SCRIPT_MODEL="qwen2.5-coder:3b-instruct"
-OLLAMA_REPORT_MODEL="qwen3:8b"
+OLLAMA_REPORT_MODEL="qwen3:4b"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Load per-user configuration (tokens, UUID, paid-tier flag)

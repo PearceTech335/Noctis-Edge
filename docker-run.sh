@@ -22,7 +22,7 @@ cd "$SCRIPT_DIR"
 
 OLLAMA_MODEL="qwen2.5-coder:3b-instruct"    # planning + scan decisions (NOCTIS_OLLAMA_MODEL)
 SCRIPT_MODEL="qwen2.5-coder:3b-instruct"    # CVE scripts + tool scripts (NOCTIS_OLLAMA_SCRIPT_MODEL)
-REPORT_MODEL="qwen3:8b"                     # narrative prose: conclusion, attacker perspective, remediation (NOCTIS_OLLAMA_REPORT_MODEL)
+REPORT_MODEL="qwen3:4b"                     # narrative prose: conclusion, attacker perspective, remediation (NOCTIS_OLLAMA_REPORT_MODEL)
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; CYAN='\033[1;36m'; NC='\033[0m'
 ok()   { echo -e "${GREEN}[OK]${NC}  $*"; }
 info() { echo -e "${YELLOW}[--]${NC}  $*"; }
