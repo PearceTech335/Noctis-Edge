@@ -764,6 +764,129 @@ def calculate_risk_score(finding, internet_exposed=True):
     return round(sev_w * finding.confidence * exposure * tool_conf, 3)
 
 
+# ---------------------------------------------------------------------------
+# CALIBRATED SEVERITY — report-layer downgrade/upgrade (no scan-loop impact)
+# ---------------------------------------------------------------------------
+# Finding.severity is NEVER mutated. effective_severity is computed at
+# generate_report() time and lives only in the report context dict.
+
+_SEV_LEVELS = ("info", "low", "medium", "high", "critical")
+
+
+def _cap_severity(raw: str, cap: str) -> str:
+    """Return the lower of raw and cap severity strings."""
+    raw_i = _SEV_LEVELS.index(raw.lower())  if raw.lower()  in _SEV_LEVELS else 2
+    cap_i = _SEV_LEVELS.index(cap.lower())  if cap.lower()  in _SEV_LEVELS else 2
+    return _SEV_LEVELS[min(raw_i, cap_i)]
+
+
+def _effective_severity_rules(f) -> str | None:
+    """Apply deterministic rules. Return effective severity string or None (= needs LLM).
+
+    None means the finding is ambiguous and should be sent to the LLM batch.
+    """
+    sev = f.severity.lower()
+
+    # Hard keep — authoritative evidence
+    if f.verification_status == "confirmed":
+        return sev
+    if getattr(f, "detection_method", "") == "exploit_confirmed":
+        return sev
+    # High-confidence non-nikto tools — trust their severity
+    if (
+        f.confidence >= 0.85
+        and f.tool in ("curl", "nmap", "ssh-audit", "rdpscan", "mysql", "mssql")
+    ):
+        return sev
+
+    # Banner / heuristic tools — hard cap at medium
+    if getattr(f, "detection_method", "") == "banner_analysis":
+        return _cap_severity(sev, "medium")
+    if f.tool == "nikto":
+        return _cap_severity(sev, "medium")
+
+    # Nuclei unverified high/critical → ambiguous, send to LLM
+    if f.tool == "nuclei" and not f.verified and sev in ("high", "critical"):
+        return None
+
+    # Low confidence high/critical → ambiguous
+    if f.confidence < 0.50 and sev in ("high", "critical"):
+        return None
+
+    return sev
+
+
+def _llm_recalibrate_severities(findings: list) -> dict:
+    """Batch LLM re-rating for ambiguous findings (temperature=0, structured JSON).
+
+    Uses MODEL (qwen2.5-coder:3b-instruct) — same as tool-selection calls.
+    Returns {finding_id: effective_severity_string}.
+    Falls back to conservative cap (medium) on any error or timeout.
+    """
+    if not findings:
+        return {}
+
+    fallback = {f.finding_id: _cap_severity(f.severity, "medium") for f in findings}
+
+    items = [
+        {
+            "id":       f.finding_id,
+            "tool":     f.tool,
+            "title":    f.title[:120],
+            "evidence": (f.evidence or "")[:200],
+            "severity": f.severity,
+            "confidence": round(f.confidence, 2),
+            "verified": f.verified,
+            "detection_method": getattr(f, "detection_method", ""),
+        }
+        for f in findings
+    ]
+
+    prompt = (
+        "You are a security severity calibration assistant. "
+        "Re-rate each finding's effective severity based on the quality of evidence. "
+        "Rules: if evidence only proves version/banner detection with no exploit confirmed, "
+        "downgrade high→medium and critical→high. "
+        "If the evidence shows an actual exploit payload succeeded or a dangerous "
+        "misconfiguration is directly confirmed, keep the original severity. "
+        "Reply with ONLY a JSON array, no prose, no markdown fences. "
+        "Each element: {\"id\": \"F-...\", \"effective_severity\": \"medium\", "
+        "\"reason\": \"one sentence\"}. "
+        f"Findings: {json.dumps(items, separators=(',', ':'))}"
+    )
+
+    try:
+        resp = requests.post(
+            OLLAMA_URL,
+            json={
+                "model":      MODEL,
+                "stream":     False,
+                "keep_alive": _OLLAMA_KEEP_ALIVE,
+                "options":    _OLLAMA_PLAN_OPTIONS,
+                "prompt":     prompt,
+            },
+            timeout=60,
+        )
+        raw = resp.json().get("response", "").strip()
+        # Strip optional markdown fences
+        raw = re.sub(r'^```[^\n]*\n?', '', raw).rstrip('`').strip()
+        parsed = json.loads(raw)
+        result = {}
+        for item in parsed:
+            fid = item.get("id", "")
+            sev = item.get("effective_severity", "").lower()
+            if fid and sev in _SEV_LEVELS:
+                result[fid] = sev
+        # Back-fill any missing IDs with conservative fallback
+        for f in findings:
+            if f.finding_id not in result:
+                result[f.finding_id] = fallback[f.finding_id]
+        return result
+    except Exception as e:
+        print(f"[!] Severity recalibration LLM error: {e} — using conservative fallback")
+        return fallback
+
+
 def auto_tag(finding):
     """Auto-generate tags from service / title / evidence"""
     combined = (finding.title + " " + finding.evidence + " " + finding.service).lower()
@@ -1113,16 +1236,16 @@ _NIKTO_ADMIN_PHRASES = (
 # Patterns are matched case-insensitively against the full finding text.
 _NIKTO_SEVERITY_UPGRADES: list[tuple[str, str, str]] = [
     # Critical — direct exploitation / authentication bypass
-    ("cve-",                        "high",   "CVE:"),
+    ("cve-",                        "medium", "CVE-Match:"),  # banner/version match only — no exploit attempted
     ("remote code execution",        "critical", "RCE:"),
     ("command injection",            "critical", "Injection:"),
     ("sql injection",                "critical", "SQLi:"),
     ("shellshock",                   "critical", "Shellshock:"),
     # High — dangerous misconfigs and active exploitable conditions
-    ("http trace",                   "high",   "XST:"),
-    ("trace method",                 "high",   "XST:"),
+    ("http trace",                   "medium", "XST:"),      # theoretical; dead in modern browsers without existing XSS
+    ("trace method",                 "medium", "XST:"),
     ("allowed method",               "medium", "Methods:"),
-    ("put method",                   "high",   "Upload:"),
+    ("put method",                   "medium", "Upload:"),   # OPTIONS only — actual write untested
     ("delete method",                "high",   "Dangerous:"),
     ("directory indexing",           "medium", "Dir-Listing:"),
     ("directory listing",            "medium", "Dir-Listing:"),
@@ -4596,9 +4719,11 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   </summary>
   <div style="padding:.5em">
   {% for f in findings %}
-  <details style="margin-bottom:.8em;border:1px solid {% if f.severity == 'critical' %}#ff4757{% elif f.severity == 'high' %}#ff6b35{% elif f.severity == 'medium' %}#ffa502{% elif f.severity == 'low' %}#2ed573{% else %}#70a1ff{% endif %};border-radius:6px;background:#16213e">
+  {%- set _esev = _eff_sev.get(f.finding_id, f.severity) %}
+  <details style="margin-bottom:.8em;border:1px solid {% if _esev == 'critical' %}#ff4757{% elif _esev == 'high' %}#ff6b35{% elif _esev == 'medium' %}#ffa502{% elif _esev == 'low' %}#2ed573{% else %}#70a1ff{% endif %};border-radius:6px;background:#16213e">
     <summary style="padding:10px 14px;cursor:pointer;display:flex;flex-wrap:wrap;align-items:center;gap:8px;list-style:none">
-      <span class="badge badge-{{ f.severity }}">{{ f.severity|upper }}</span>
+      <span class="badge badge-{{ _esev }}">{{ _esev|upper }}</span>
+      {%- if _esev != f.severity %}<span style="color:#666;font-size:.72em;white-space:nowrap" title="Scanner reported {{ f.severity|upper }} — downgraded due to evidence quality">scanner:&nbsp;{{ f.severity|upper }}</span>{%- endif %}
       {%- if f.finding_id in _confirmed_ids %}<span style="background:#b71c1c;color:#fff;padding:1px 6px;border-radius:8px;font-size:.72em;font-weight:700">&#10003; CONFIRMED</span>
       {%- elif f.finding_id in _probable_ids %}<span style="background:#bf360c;color:#fff;padding:1px 6px;border-radius:8px;font-size:.72em;font-weight:700">~ PROBABLE</span>
       {%- elif f.finding_id in _review_ids %}<span style="background:#37474f;color:#cfd8dc;padding:1px 6px;border-radius:8px;font-size:.72em;font-weight:700">&#9888; REVIEW</span>
@@ -5100,6 +5225,9 @@ def generate_html_report(report_data):
         remediation_effort=_REMEDIATION_EFFORT,
         time_to_fix_map=_REMEDIATION_TIME_ESTIMATE,
         cwe_db=_load_cwe_db(),
+        # Calibrated severity map: finding_id → effective severity string
+        # Falls back to the raw Finding.severity when id not present (e.g. re-rendered old reports)
+        _eff_sev=report_data.get("effective_severity_map", {}),
     )
     return Template(HTML_TEMPLATE).render(**data)
 
@@ -5131,14 +5259,42 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
     all_findings = deduplicate_findings(all_findings)
     for f in all_findings:
         f.risk_score = calculate_risk_score(f)
+
+    # ── Calibrated severity (report-layer only — Finding.severity unchanged) ─
+    # Step 1: deterministic rules — clear-cut cases resolved immediately
+    _rules_map: dict = {}
+    _ambiguous: list = []
+    for f in all_findings:
+        result = _effective_severity_rules(f)
+        if result is None:
+            _ambiguous.append(f)
+        else:
+            _rules_map[f.finding_id] = result
+    # Step 2: batch LLM re-rating for ambiguous findings (structured JSON, no prose)
+    _llm_map: dict = {}
+    if _ambiguous:
+        _sp2 = _Spinner(f"[ LLM ]  Calibrating severity for {len(_ambiguous)} ambiguous finding(s) ...").start()
+        _t_cal = time.monotonic()
+        try:
+            _llm_map = _llm_recalibrate_severities(_ambiguous)
+        finally:
+            _sp2.stop(f" done ({_fmt_dur(time.monotonic() - _t_cal)})")
+    # Merge: LLM result takes precedence for ambiguous findings
+    _eff_sev_map: dict = {**_rules_map, **_llm_map}
+    # Ensure every finding has an entry (should not happen, but safe fallback)
+    for f in all_findings:
+        if f.finding_id not in _eff_sev_map:
+            _eff_sev_map[f.finding_id] = _cap_severity(f.severity, "medium")
+
     _SEV_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
     all_findings.sort(
-        key=lambda f: (_SEV_ORDER.get(f.severity.lower(), 5), -f.risk_score)
+        key=lambda f: (_SEV_ORDER.get(_eff_sev_map.get(f.finding_id, f.severity).lower(), 5), -f.risk_score)
     )
 
     counts = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
     for f in all_findings:
-        counts[f.severity.lower()] = counts.get(f.severity.lower(), 0) + 1
+        _esev = _eff_sev_map.get(f.finding_id, f.severity).lower()
+        counts[_esev] = counts.get(_esev, 0) + 1
 
     # Partition findings into trust tiers for the report
     confirmed_findings    = [f for f in all_findings if f.verification_status == "confirmed"]
@@ -5158,7 +5314,8 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
     # Separate confirmed_counts drives the anchor sentence accuracy
     confirmed_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
     for f in confirmed_findings + probable_findings:
-        confirmed_counts[f.severity.lower()] = confirmed_counts.get(f.severity.lower(), 0) + 1
+        _esev = _eff_sev_map.get(f.finding_id, f.severity).lower()
+        confirmed_counts[_esev] = confirmed_counts.get(_esev, 0) + 1
 
     # Timed-out tools for coverage section
     timed_out_scan_records = [
@@ -5370,6 +5527,7 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
             {"tool": r.get("tool", ""), "args": str(r.get("args", "") or "")}
             for r in timed_out_scan_records
         ],
+        "effective_severity_map": _eff_sev_map,
     }
 
 
