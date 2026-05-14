@@ -1,9 +1,9 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 # Copyright (C) 2026 Pearce Technologies Pty Ltd
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # <https://www.gnu.org/licenses/agpl-3.0.html>
 """
-Noctis Edge — Security Through Exposure  v0.8.4
+Noctis Edge â€” Security Through Exposure  v0.8.4
 Implements: structured findings, verification,
 approval gates, async execution, HTML reports,
 service-specific enumerations, risk scoring,
@@ -70,39 +70,39 @@ CVE_CSV      = os.path.join(BASE_DIR, "CVE", "cve-offline", "cve-summary.csv")
 SESSION_FILE = os.path.join(BASE_DIR, "session.json")
 
 OLLAMA_URL     = os.getenv("NOCTIS_OLLAMA_URL", "http://localhost:11434/api/generate")
-# Three-role model split — tasks are always sequential, never concurrent, so RAM peaks at
+# Three-role model split â€” tasks are always sequential, never concurrent, so RAM peaks at
 # one loaded model at a time (~2 GB).  Two models can coexist in Ollama's model cache on
-# systems with ≥6 GB free RAM without any swap pressure.
+# systems with â‰¥6 GB free RAM without any swap pressure.
 #
 #   Two-model architecture:
-#   qwen2.5-coder:3b-instruct (~2 GB)  — planning, structured JSON decisions, CVE probe scripts
-#   qwen3:4b (~2.6 GB)                 — narrative prose: report conclusion, remediation guidance
+#   qwen2.5-coder:3b-instruct (~2 GB)  â€” planning, structured JSON decisions, CVE probe scripts
+#   qwen3:4b (~2.6 GB)                 â€” narrative prose: report conclusion, remediation guidance
 #   Peak concurrent RAM during --cve-test: ~4.6 GB. 8 GB RAM recommended.
-#   MODEL            — structured JSON tool-selection decisions
-#   SCRIPT_MODEL     — Python exploit / verification script generation
-#   CVE_SCRIPT_MODEL — CVE exploit/test script generation (falls back to SCRIPT_MODEL)
-#   REPORT_MODEL     — narrative prose: attacker perspective, remediation
+#   MODEL            â€” structured JSON tool-selection decisions
+#   SCRIPT_MODEL     â€” Python exploit / verification script generation
+#   CVE_SCRIPT_MODEL â€” CVE exploit/test script generation (falls back to SCRIPT_MODEL)
+#   REPORT_MODEL     â€” narrative prose: attacker perspective, remediation
 MODEL            = os.getenv("NOCTIS_OLLAMA_MODEL",            "qwen2.5-coder:3b-instruct")
 SCRIPT_MODEL     = os.getenv("NOCTIS_OLLAMA_SCRIPT_MODEL",     "qwen2.5-coder:3b-instruct")
 CVE_SCRIPT_MODEL = os.getenv("NOCTIS_OLLAMA_CVE_SCRIPT_MODEL", SCRIPT_MODEL)
 REPORT_MODEL     = os.getenv("NOCTIS_OLLAMA_REPORT_MODEL",     "qwen3:4b")
-OLLAMA_TIMEOUT = int(os.getenv("NOCTIS_OLLAMA_TIMEOUT", "360"))   # seconds — 360s covers cold model reload (~3 min) after RAM eviction
+OLLAMA_TIMEOUT = int(os.getenv("NOCTIS_OLLAMA_TIMEOUT", "360"))   # seconds â€” 360s covers cold model reload (~3 min) after RAM eviction
 
 # Ollama inference options applied to all planning/decision calls.
-# num_ctx:     2048 — bumped from 1024 to accommodate richer prompts when the
+# num_ctx:     2048 â€” bumped from 1024 to accommodate richer prompts when the
 #              tool manifest TOOL REFERENCE block is injected (~300 extra tokens).
-# temperature: 0    — deterministic; no creativity needed for tool selection JSON
-# top_p:       1    — with temp=0 this is irrelevant, set explicitly for clarity
-# num_thread:  0    — let Ollama auto-detect optimal thread count for the CPU
+# temperature: 0    â€” deterministic; no creativity needed for tool selection JSON
+# top_p:       1    â€” with temp=0 this is irrelevant, set explicitly for clarity
+# num_thread:  0    â€” let Ollama auto-detect optimal thread count for the CPU
 _OLLAMA_PLAN_OPTIONS = {"num_ctx": 2048, "temperature": 0, "top_p": 1, "num_thread": 0}
-# keep_alive value sent with every request — keeps model weights resident between scan phases.
+# keep_alive value sent with every request â€” keeps model weights resident between scan phases.
 # "1h" is a valid Go time.Duration string accepted by all Ollama versions.
 # Override via NOCTIS_OLLAMA_KEEP_ALIVE env var (e.g. "30m", "2h").
 _OLLAMA_KEEP_ALIVE: str = os.getenv("NOCTIS_OLLAMA_KEEP_ALIVE", "1h")
 
 MAX_OUTPUT           = 3000
-MAX_ITERATIONS       = 10  # floor — minimum iterations regardless of target size
-MAX_ITERATIONS_CAP   = 40  # hard ceiling — dynamic budget and extensions cannot exceed this
+MAX_ITERATIONS       = 10  # floor â€” minimum iterations regardless of target size
+MAX_ITERATIONS_CAP   = 40  # hard ceiling â€” dynamic budget and extensions cannot exceed this
 MAX_EXTEND_ONCE      = 20  # one-time operator-approved overage above hard ceiling (interactive only)
 MAX_EXTENSION_BUDGET = 8   # max extra iterations auto-granted from uninvestigated findings
                            # rate: +2 per uninvestigated finding, consumed until this budget runs out
@@ -130,7 +130,7 @@ _EPSS_CSV     = os.path.join(BASE_DIR, "CVE", "epss-scores.csv")
 _NVD_CVSS_CSV = os.path.join(BASE_DIR, "CVE", "nvd-cvss.csv")
 _CWE_DATA_CSV = os.path.join(BASE_DIR, "CVE", "cwe-data.csv")
 _KEV_CSV      = os.path.join(BASE_DIR, "CVE", "kev-catalog.csv")
-# Lazy-loaded lookup dicts — populated on first call
+# Lazy-loaded lookup dicts â€” populated on first call
 _EPSS_DB: "dict | None" = None
 _CVSS_DB: "dict | None" = None
 _CWE_DB:  "dict | None" = None
@@ -138,7 +138,7 @@ _KEV_DB:  "dict | None" = None
 
 
 def _load_epss_db() -> dict:
-    """Lazy-load CVE/epss-scores.csv → {cve_id: (epss_score, percentile)}."""
+    """Lazy-load CVE/epss-scores.csv â†’ {cve_id: (epss_score, percentile)}."""
     global _EPSS_DB
     if _EPSS_DB is not None:
         return _EPSS_DB
@@ -161,7 +161,7 @@ def _load_epss_db() -> dict:
 
 
 def _load_cvss_db() -> dict:
-    """Lazy-load CVE/nvd-cvss.csv → {cve_id: (v3_score, v3_vector, v3_severity, v4_score, v4_vector, cwe_id)}."""
+    """Lazy-load CVE/nvd-cvss.csv â†’ {cve_id: (v3_score, v3_vector, v3_severity, v4_score, v4_vector, cwe_id)}."""
     global _CVSS_DB
     if _CVSS_DB is not None:
         return _CVSS_DB
@@ -188,7 +188,7 @@ def _load_cvss_db() -> dict:
 
 
 def _load_cwe_db() -> dict:
-    """Lazy-load CVE/cwe-data.csv → {cwe_id: {name, abstraction, description, likelihood, consequences, mitigation}}."""
+    """Lazy-load CVE/cwe-data.csv â†’ {cwe_id: {name, abstraction, description, likelihood, consequences, mitigation}}."""
     global _CWE_DB
     if _CWE_DB is not None:
         return _CWE_DB
@@ -213,7 +213,7 @@ def _load_cwe_db() -> dict:
         pass
     return _CWE_DB
 def _load_kev_db() -> dict:
-    """Lazy-load CVE/kev-catalog.csv → {cve_id: {vendor, product, date_added, due_date, action}}.
+    """Lazy-load CVE/kev-catalog.csv â†’ {cve_id: {vendor, product, date_added, due_date, action}}.
 
     Build with: python scripts/build_kev_db.py
     Refresh via update.sh.
@@ -289,7 +289,7 @@ _VULN_BODY_KEYWORDS: dict = {
 }
 
 # ---------------------------------------------------------------------------
-# SAFE ARG VALIDATION — enumeration-only guardrails
+# SAFE ARG VALIDATION â€” enumeration-only guardrails
 # ---------------------------------------------------------------------------
 # Tools accept optional extra fields from the LLM. Every field is validated
 # against an allowlist before being used in subprocess.exec args to prevent
@@ -303,7 +303,7 @@ _RE_HEADER_NAME = re.compile(r'^[a-zA-Z0-9_-]+$')
 
 # HTTP methods that are read-only / do not modify server state
 _SAFE_HTTP_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "POST"})
-# PUT, DELETE, PATCH, CONNECT are excluded — they write/remove resources
+# PUT, DELETE, PATCH, CONNECT are excluded â€” they write/remove resources
 
 
 def _sanitise_url(raw_url: str) -> str:
@@ -349,7 +349,7 @@ def _safe_tool_args(tool: str, raw) -> dict:
         if method in _SAFE_HTTP_METHODS:
             cleaned["method"] = method
         else:
-            print(f"[!] [safe-args] HTTP method {method!r} not allowed — defaulting to GET")
+            print(f"[!] [safe-args] HTTP method {method!r} not allowed â€” defaulting to GET")
             cleaned["method"] = "GET"
 
         mc = str(raw.get("match_codes", "")).strip()
@@ -359,7 +359,7 @@ def _safe_tool_args(tool: str, raw) -> dict:
             else:
                 print(f"[!] [safe-args] unsafe 'match_codes' dropped: {mc!r}")
 
-        # Safe numeric caps — LLM may suggest values, but we hard-limit them
+        # Safe numeric caps â€” LLM may suggest values, but we hard-limit them
         try:
             cleaned["threads"] = max(5, min(int(raw.get("threads", 8)), 15))
         except (ValueError, TypeError):
@@ -415,7 +415,7 @@ def _safe_tool_args(tool: str, raw) -> dict:
         if method in _SAFE_HTTP_METHODS:
             cleaned["method"] = method
         else:
-            print(f"[!] [safe-args] HTTP method {method!r} not allowed — defaulting to GET")
+            print(f"[!] [safe-args] HTTP method {method!r} not allowed â€” defaulting to GET")
             cleaned["method"] = "GET"
 
         hdrs = raw.get("headers", {})
@@ -435,7 +435,7 @@ def _safe_tool_args(tool: str, raw) -> dict:
         cleaned["ssl"] = bool(raw.get("ssl", False))
 
     else:
-        # ssh_enum, rdp_enum, mysql_enum, mssql_enum, dns_enum — pass-through known fields
+        # ssh_enum, rdp_enum, mysql_enum, mssql_enum, dns_enum â€” pass-through known fields
         for key in ("host", "port", "domain"):
             if key in raw:
                 cleaned[key] = str(raw[key])
@@ -634,7 +634,7 @@ def ensure_ollama_running() -> bool:
 
     # When pointing at a remote/container Ollama host, don't try to spawn locally
     if is_remote:
-        print(f"[!] Cannot reach Ollama at {base_url} — is the Ollama container running?")
+        print(f"[!] Cannot reach Ollama at {base_url} â€” is the Ollama container running?")
         return False
 
     if shutil.which("ollama") is None:
@@ -642,7 +642,7 @@ def ensure_ollama_running() -> bool:
         print("      https://ollama.com/download")
         return False
 
-    print("[*] Ollama is not running — starting 'ollama serve' in the background …")
+    print("[*] Ollama is not running â€” starting 'ollama serve' in the background â€¦")
     try:
         # Pass OLLAMA_KEEP_ALIVE so the server-level default matches our per-request value.
         # Without this, models evict after 5 min regardless of per-request keep_alive.
@@ -699,7 +699,7 @@ def _warmup_models() -> None:
             for m in _local_models
         )
         if not _model_present:
-            print(f"[*] Model '{model}' not found locally — pulling from Ollama library …")
+            print(f"[*] Model '{model}' not found locally â€” pulling from Ollama library â€¦")
             ollama_bin = shutil.which("ollama")
             if ollama_bin:
                 pull_result = subprocess.run(
@@ -707,13 +707,13 @@ def _warmup_models() -> None:
                     timeout=600,
                 )
                 if pull_result.returncode != 0:
-                    print(f"[!] 'ollama pull {model}' failed — LLM calls may not work.")
+                    print(f"[!] 'ollama pull {model}' failed â€” LLM calls may not work.")
                 else:
                     print(f"[*] Model '{model}' pulled successfully.")
             else:
                 print(f"[!] Cannot pull '{model}': ollama binary not found.")
         try:
-            print(f"[*] Pre-loading model '{model}' into memory …")
+            print(f"[*] Pre-loading model '{model}' into memory â€¦")
             resp = requests.post(
                 gen_url,
                 json={
@@ -728,9 +728,9 @@ def _warmup_models() -> None:
             if resp.status_code == 200:
                 print(f"[*] Model '{model}' loaded and warm.")
             else:
-                print(f"[!] Warmup for '{model}' returned HTTP {resp.status_code} — continuing anyway.")
+                print(f"[!] Warmup for '{model}' returned HTTP {resp.status_code} â€” continuing anyway.")
         except Exception as e:
-            print(f"[!] Warmup for '{model}' failed: {e} — continuing anyway.")
+            print(f"[!] Warmup for '{model}' failed: {e} â€” continuing anyway.")
 
 
 def normalize_severity(sev):
@@ -750,7 +750,7 @@ def normalize_severity(sev):
 
 
 def calculate_risk_score(finding, internet_exposed=True):
-    """severity_weight × confidence × exposure × tool_confidence"""
+    """severity_weight Ã— confidence Ã— exposure Ã— tool_confidence"""
     severity_weights = {
         "critical": 1.0,
         "high":     0.8,
@@ -765,7 +765,7 @@ def calculate_risk_score(finding, internet_exposed=True):
 
 
 # ---------------------------------------------------------------------------
-# CALIBRATED SEVERITY — report-layer downgrade/upgrade (no scan-loop impact)
+# CALIBRATED SEVERITY â€” report-layer downgrade/upgrade (no scan-loop impact)
 # ---------------------------------------------------------------------------
 # Finding.severity is NEVER mutated. effective_severity is computed at
 # generate_report() time and lives only in the report context dict.
@@ -787,29 +787,29 @@ def _effective_severity_rules(f) -> str | None:
     """
     sev = f.severity.lower()
 
-    # Hard keep — authoritative evidence
+    # Hard keep â€” authoritative evidence
     if f.verification_status == "confirmed":
         return sev
     if getattr(f, "detection_method", "") == "exploit_confirmed":
         return sev
-    # High-confidence non-nikto tools — trust their severity
+    # High-confidence non-nikto tools â€” trust their severity
     if (
         f.confidence >= 0.85
         and f.tool in ("curl", "nmap", "ssh-audit", "rdpscan", "mysql", "mssql")
     ):
         return sev
 
-    # Banner / heuristic tools — hard cap at medium
+    # Banner / heuristic tools â€” hard cap at medium
     if getattr(f, "detection_method", "") == "banner_analysis":
         return _cap_severity(sev, "medium")
     if f.tool == "nikto":
         return _cap_severity(sev, "medium")
 
-    # Nuclei unverified high/critical → ambiguous, send to LLM
+    # Nuclei unverified high/critical â†’ ambiguous, send to LLM
     if f.tool == "nuclei" and not f.verified and sev in ("high", "critical"):
         return None
 
-    # Low confidence high/critical → ambiguous
+    # Low confidence high/critical â†’ ambiguous
     if f.confidence < 0.50 and sev in ("high", "critical"):
         return None
 
@@ -819,7 +819,7 @@ def _effective_severity_rules(f) -> str | None:
 def _llm_recalibrate_severities(findings: list) -> dict:
     """Batch LLM re-rating for ambiguous findings (temperature=0, structured JSON).
 
-    Uses MODEL (qwen2.5-coder:3b-instruct) — same as tool-selection calls.
+    Uses MODEL (qwen2.5-coder:3b-instruct) â€” same as tool-selection calls.
     Returns {finding_id: effective_severity_string}.
     Falls back to conservative cap (medium) on any error or timeout.
     """
@@ -846,7 +846,7 @@ def _llm_recalibrate_severities(findings: list) -> dict:
         "You are a security severity calibration assistant. "
         "Re-rate each finding's effective severity based on the quality of evidence. "
         "Rules: if evidence only proves version/banner detection with no exploit confirmed, "
-        "downgrade high→medium and critical→high. "
+        "downgrade highâ†’medium and criticalâ†’high. "
         "If the evidence shows an actual exploit payload succeeded or a dangerous "
         "misconfiguration is directly confirmed, keep the original severity. "
         "Reply with ONLY a JSON array, no prose, no markdown fences. "
@@ -883,7 +883,7 @@ def _llm_recalibrate_severities(findings: list) -> dict:
                 result[f.finding_id] = fallback[f.finding_id]
         return result
     except Exception as e:
-        print(f"[!] Severity recalibration LLM error: {e} — using conservative fallback")
+        print(f"[!] Severity recalibration LLM error: {e} â€” using conservative fallback")
         return fallback
 
 
@@ -1030,7 +1030,7 @@ def request_approval(tool, args, risk_desc=""):
         answer = input("    Approve aggressive action? [y/n]: ").strip().lower()
         return answer in ("y", "yes")
     except (EOFError, KeyboardInterrupt):
-        print("\n[!] No input — denying by default.")
+        print("\n[!] No input â€” denying by default.")
         return False
 
 
@@ -1107,7 +1107,7 @@ async def run_nikto_async(url, session_dir=None, extra_flags=None):
     if extra_flags:
         cmd.extend(extra_flags)
     raw = await run_command_async(cmd, timeout=100)
-    # Print any Nikto administrative/version messages to terminal only — they must
+    # Print any Nikto administrative/version messages to terminal only â€” they must
     # not appear in the report (parse_nikto_output already filters them as findings,
     # but they would still surface in the execution log output preview).
     clean_lines = []
@@ -1217,7 +1217,7 @@ def parse_nuclei_json(raw_output, target):
 # NIKTO FINDING PARSER
 # ---------------------------------------------------------------------------
 
-# Nikto lines that are administrative noise — should print to terminal, not appear in report.
+# Nikto lines that are administrative noise â€” should print to terminal, not appear in report.
 _NIKTO_ADMIN_PHRASES = (
     "out of date",
     "git pull",
@@ -1232,20 +1232,20 @@ _NIKTO_ADMIN_PHRASES = (
 )
 
 # Nikto severity upgrades: (substring_to_match, new_severity, title_prefix)
-# Evaluated in order — first match wins.  All findings default to 'info' unless matched.
+# Evaluated in order â€” first match wins.  All findings default to 'info' unless matched.
 # Patterns are matched case-insensitively against the full finding text.
 _NIKTO_SEVERITY_UPGRADES: list[tuple[str, str, str]] = [
-    # Critical — direct exploitation / authentication bypass
-    ("cve-",                        "medium", "CVE-Match:"),  # banner/version match only — no exploit attempted
+    # Critical â€” direct exploitation / authentication bypass
+    ("cve-",                        "medium", "CVE-Match:"),  # banner/version match only â€” no exploit attempted
     ("remote code execution",        "critical", "RCE:"),
     ("command injection",            "critical", "Injection:"),
     ("sql injection",                "critical", "SQLi:"),
     ("shellshock",                   "critical", "Shellshock:"),
-    # High — dangerous misconfigs and active exploitable conditions
+    # High â€” dangerous misconfigs and active exploitable conditions
     ("http trace",                   "medium", "XST:"),      # theoretical; dead in modern browsers without existing XSS
     ("trace method",                 "medium", "XST:"),
     ("allowed method",               "medium", "Methods:"),
-    ("put method",                   "medium", "Upload:"),   # OPTIONS only — actual write untested
+    ("put method",                   "medium", "Upload:"),   # OPTIONS only â€” actual write untested
     ("delete method",                "high",   "Dangerous:"),
     ("directory indexing",           "medium", "Dir-Listing:"),
     ("directory listing",            "medium", "Dir-Listing:"),
@@ -1293,12 +1293,12 @@ def parse_nikto_output(output, target):
         text = stripped[2:]
         if len(text) < 15:
             continue
-        # Skip Nikto admin/meta messages — they are printed to terminal by run_nikto_async
+        # Skip Nikto admin/meta messages â€” they are printed to terminal by run_nikto_async
         if any(p in text.lower() for p in _NIKTO_ADMIN_PHRASES):
             continue
         # Sanitize Perl stringified array refs before they reach report titles
         text = re.sub(r'ARRAY\(0x[0-9a-f]+\)', '[array]', text)
-        # Apply severity upgrades — first matching pattern wins
+        # Apply severity upgrades â€” first matching pattern wins
         severity = "info"
         title_prefix = ""
         text_lower = text.lower()
@@ -1361,7 +1361,7 @@ def parse_ffuf_output(output, target):
 
     ffuf silent mode prints one result per line:
         /path                   [Status: 200, Size: 1234, Words: 56, Lines: 78, ...]
-    Lines starting with '[' are metadata/warnings — skip them.
+    Lines starting with '[' are metadata/warnings â€” skip them.
     """
     findings = []
     for line in output.splitlines():
@@ -1676,20 +1676,20 @@ _SAFE_VALIDATION = {
     "Path Traversal":         "HTTP traversal probe with benign read-only path",
     "SQL Injection":          "Time-based blind probe or error-based check on test parameter",
     "XSS":                    "Reflected non-executing payload in non-destructive parameter",
-    "RCE":                    "DNS callback / canary file probe — no code execution",
+    "RCE":                    "DNS callback / canary file probe â€” no code execution",
     "Command Injection":      "DNS callback or time-delay probe",
-    "DoS":                    "Version banner check only — do not trigger on production",
+    "DoS":                    "Version banner check only â€” do not trigger on production",
     "Privilege Escalation":   "Enumerate SUID binaries and sudo rules",
     "Authentication Bypass":  "Attempt unauthenticated GET to protected resource",
     "Information Disclosure": "Unauthenticated GET to sensitive endpoint",
     "XXE":                    "Out-of-band XML entity with DNS callback",
     "Insecure Deserialization": "ysoserial gadget chain probe with DNS callback",
-    "Format String":          "Version banner check — do not send format strings to production",
+    "Format String":          "Version banner check â€” do not send format strings to production",
     "Use-After-Free":         "Version banner check only",
     "Integer Overflow":       "Version banner check only",
     "Open Redirect":          "Redirect to benign external host and inspect Location header",
     "SSRF":                    "Probe with internal address that returns a known response",
-    "Weak SSL/TLS":           "Confirm via TLS handshake — connect with a client restricted to the weak protocol/cipher",
+    "Weak SSL/TLS":           "Confirm via TLS handshake â€” connect with a client restricted to the weak protocol/cipher",
     "Weak Authentication":    "Attempt login with common default credentials or observe authentication mechanism",
     "Misconfiguration":       "Unauthenticated GET to the misconfigured endpoint and observe response",
     "Unknown":                "Version banner check and manual review",
@@ -1719,7 +1719,7 @@ _PROOF_OF_IMPACT = {
     "Unknown":                "Manual verification required",
 }
 
-# Effort estimate for each vulnerability type — how hard is this to fix?
+# Effort estimate for each vulnerability type â€” how hard is this to fix?
 # Low    = configuration change or setting toggle (< 1 hour)
 # Medium = software patch, minor code change, or policy update (hours to days)
 # High   = architectural change, upgrade, or replacement required (days to weeks)
@@ -1750,27 +1750,27 @@ _REMEDIATION_EFFORT = {
 # Estimated calendar time to fully remediate (patch + test + deploy).
 # Assumes a typical enterprise with a standard change-management cycle.
 _REMEDIATION_TIME_ESTIMATE = {
-    "Buffer Overflow":          "1–4 weeks (vendor patch + regression testing)",
-    "Path Traversal":           "1–3 days (config hardening or patch application)",
-    "SQL Injection":            "3–5 days (code changes + QA cycle)",
-    "XSS":                      "2–5 days (code changes + CSP deployment)",
-    "RCE":                      "2–4 weeks (vendor patch + full regression testing)",
-    "Command Injection":        "3–7 days (code changes + QA cycle)",
-    "DoS":                      "1–3 days (rate-limiting or patch application)",
-    "Privilege Escalation":     "3–7 days (config audit + policy update)",
+    "Buffer Overflow":          "1â€“4 weeks (vendor patch + regression testing)",
+    "Path Traversal":           "1â€“3 days (config hardening or patch application)",
+    "SQL Injection":            "3â€“5 days (code changes + QA cycle)",
+    "XSS":                      "2â€“5 days (code changes + CSP deployment)",
+    "RCE":                      "2â€“4 weeks (vendor patch + full regression testing)",
+    "Command Injection":        "3â€“7 days (code changes + QA cycle)",
+    "DoS":                      "1â€“3 days (rate-limiting or patch application)",
+    "Privilege Escalation":     "3â€“7 days (config audit + policy update)",
     "Authentication Bypass":    "< 1 day (config change or policy enforcement)",
     "Information Disclosure":   "< 1 day (config change or endpoint restriction)",
-    "XXE":                      "1–3 days (parser config change + testing)",
-    "Insecure Deserialization": "1–3 weeks (code refactor + safe serialisation migration)",
-    "Format String":            "1–2 weeks (code audit + patch)",
-    "Use-After-Free":           "1–4 weeks (vendor patch + regression testing)",
-    "Integer Overflow":         "1–2 weeks (code changes + vendor patch)",
+    "XXE":                      "1â€“3 days (parser config change + testing)",
+    "Insecure Deserialization": "1â€“3 weeks (code refactor + safe serialisation migration)",
+    "Format String":            "1â€“2 weeks (code audit + patch)",
+    "Use-After-Free":           "1â€“4 weeks (vendor patch + regression testing)",
+    "Integer Overflow":         "1â€“2 weeks (code changes + vendor patch)",
     "Open Redirect":            "< 1 day (allowlist config or code change)",
-    "SSRF":                     "2–5 days (egress firewall rules + code changes)",
+    "SSRF":                     "2â€“5 days (egress firewall rules + code changes)",
     "Weak SSL/TLS":             "< 1 day (server config change + service restart)",
-    "Weak Authentication":      "< 1 day (config change) to 2–3 days (MFA rollout)",
+    "Weak Authentication":      "< 1 day (config change) to 2â€“3 days (MFA rollout)",
     "Misconfiguration":         "< 1 day (config change or endpoint restriction)",
-    "Unknown":                  "Varies — consult vendor advisory",
+    "Unknown":                  "Varies â€” consult vendor advisory",
 }
 
 _BUSINESS_IMPACT = {
@@ -1782,7 +1782,7 @@ _BUSINESS_IMPACT = {
     ("high",     "Authentication Bypass"):  "Unauthorised access to protected systems and data",
     ("high",     "SQL Injection"):          "Database contents exposed or modified",
     ("high",     "Command Injection"):      "Arbitrary command execution on the host",
-    ("high",     "RCE"):                    "Remote code execution — full host compromise possible",
+    ("high",     "RCE"):                    "Remote code execution â€” full host compromise possible",
     ("high",     "Buffer Overflow"):        "Potential remote code execution",
     ("medium",   "Information Disclosure"): "Sensitive configuration or credential data exposed",
     ("medium",   "XSS"):                    "Session hijacking or phishing vector against users",
@@ -1791,11 +1791,11 @@ _BUSINESS_IMPACT = {
     ("low",      "DoS"):                    "Service availability impact during exploitation",
 }
 _BUSINESS_IMPACT_DEFAULT = {
-    "critical": "Critical impact — immediate remediation required",
-    "high":     "High impact — significant risk to confidentiality or integrity",
-    "medium":   "Moderate impact — risk to data exposure or system integrity",
-    "low":      "Low impact — limited exposure",
-    "unknown":  "Impact unknown — manual review required",
+    "critical": "Critical impact â€” immediate remediation required",
+    "high":     "High impact â€” significant risk to confidentiality or integrity",
+    "medium":   "Moderate impact â€” risk to data exposure or system integrity",
+    "low":      "Low impact â€” limited exposure",
+    "unknown":  "Impact unknown â€” manual review required",
 }
 
 
@@ -1843,7 +1843,7 @@ def _extract_fixed_version(summary: str) -> str:
     """Return the patched/fixed version string from a CVE summary, or '' if not determinable.
 
     Only handles 'before X' / 'prior to X' / '< X' patterns where the fixed version is
-    explicit.  Range patterns ('X through Y') are skipped — the upper bound alone is
+    explicit.  Range patterns ('X through Y') are skipped â€” the upper bound alone is
     insufficient without knowing whether it is inclusive or exclusive.
     """
     m = re.search(r'(?:before|prior to)\s+([\d][.\d\w]+)', summary, re.IGNORECASE)
@@ -1874,7 +1874,7 @@ def _version_is_suppressed(detected_ver: str, fixed_ver: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# CWE MAPPING — Vulnerability Type to Common Weakness Enumeration
+# CWE MAPPING â€” Vulnerability Type to Common Weakness Enumeration
 # ---------------------------------------------------------------------------
 
 _CWE_MAPPING = {
@@ -1988,7 +1988,7 @@ _COMPLIANCE_REASONING = {
     "SOC2 CC6.2":         "Identity must be registered and authorised before system credentials are issued",
     "SOC2 CC7.1":         "The system must detect threats to availability and respond to protect service continuity",
     "SOC2 CC7.2":         "Security incidents and anomalies must be identified, analysed, and communicated",
-    "ISO27001 A.9.2":     "User access management — access rights must be provisioned, reviewed, and revoked appropriately",
+    "ISO27001 A.9.2":     "User access management â€” access rights must be provisioned, reviewed, and revoked appropriately",
     "ISO27001 A.9.4":     "System and application access controls must restrict access to authorised users only",
     "ISO27001 A.12.6":    "Technical vulnerabilities must be identified and remediated in a timely manner",
     "ISO27001 A.14.2":    "Security must be built into development and change processes including secure coding practices",
@@ -2005,7 +2005,7 @@ _COMPLIANCE_REASONING = {
     "NIST CSF DE.CM-1":   "Networks and services must be monitored to detect adverse events",
     "NIST CSF DE.CM-4":   "Malicious code must be detected and its introduction prevented",
     "NIST CSF RS.MI-1":   "Incidents must be contained to limit their impact on systems and data",
-    "NIST CSF RS.MI-2":   "Incidents must be eradicated — the underlying causes must be fully eliminated",
+    "NIST CSF RS.MI-2":   "Incidents must be eradicated â€” the underlying causes must be fully eliminated",
 }
 
 _REMEDIATION_REFERENCES = {
@@ -2084,22 +2084,22 @@ _REMEDIATION_LONG_TERM = {
 # Reproduction steps: curl/shell snippets for independent developer verification
 # {target} and {port} are literal placeholders for the reader to substitute.
 _STEPS_TO_REPRODUCE = {
-    "Buffer Overflow":          "# Version-banner fingerprint only — do not send overflow payloads to production\ncurl -v \"http://{target}:{port}/\" -I | grep -i server",
+    "Buffer Overflow":          "# Version-banner fingerprint only â€” do not send overflow payloads to production\ncurl -v \"http://{target}:{port}/\" -I | grep -i server",
     "Path Traversal":           "curl -v \"http://{target}:{port}/../../../../etc/passwd\"\n# Also try URL-encoded: /%2e%2e/%2e%2e/%2e%2e/etc/passwd",
     "SQL Injection":            "curl -v \"http://{target}:{port}/search?q=1%27+OR+%271%27%3D%271\"\n# Check response for DB errors or unexpected rows",
     "XSS":                      "curl -v \"http://{target}:{port}/page?input=%3Cscript%3Ealert(1)%3C%2Fscript%3E\"\n# Check if payload is reflected unescaped in the response",
     "RCE":                      "curl -v \"http://{target}:{port}/\" -d \"cmd=id\"\n# Verify response contains uid= to confirm command execution",
     "Command Injection":        "curl -v \"http://{target}:{port}/?input=%3Bid\"\n# Check response for uid= output",
-    "DoS":                      "# Version-banner fingerprint only — never trigger DoS against production\ncurl -v \"http://{target}:{port}/\" -I | grep -i server",
+    "DoS":                      "# Version-banner fingerprint only â€” never trigger DoS against production\ncurl -v \"http://{target}:{port}/\" -I | grep -i server",
     "Privilege Escalation":     "# Local access required\nfind / -perm -4000 -type f 2>/dev/null\nsudo -l",
     "Authentication Bypass":    "curl -v \"http://{target}:{port}/admin/\" --head\n# A 200 response without credentials confirms bypass",
     "Information Disclosure":   "curl -v \"http://{target}:{port}/server-status\"\ncurl -v \"http://{target}:{port}/.env\"\ncurl -v \"http://{target}:{port}/phpinfo.php\"",
     "XXE":                      "curl -v \"http://{target}:{port}/api\" \\\n  -H 'Content-Type: application/xml' \\\n  -d '<?xml version=\"1.0\"?><!DOCTYPE x [<!ENTITY test \"xxe-test\">]><x>&test;</x>'\n# Check if entity value appears in response",
     "Insecure Deserialization": "# Check for Java deserialization endpoint:\ncurl -v \"http://{target}:{port}/\" \\\n  -H 'Content-Type: application/x-java-serialized-object' --head",
-    "Format String":            "# Version-banner fingerprint only — never send format strings to production\ncurl -v \"http://{target}:{port}/\" -I | grep -i server",
+    "Format String":            "# Version-banner fingerprint only â€” never send format strings to production\ncurl -v \"http://{target}:{port}/\" -I | grep -i server",
     "Use-After-Free":           "# Version-banner fingerprint only\ncurl -v \"http://{target}:{port}/\" -I | grep -i server",
     "Integer Overflow":         "# Version-banner fingerprint only\ncurl -v \"http://{target}:{port}/\" -I | grep -i server",
-    "Open Redirect":            "curl -v \"http://{target}:{port}/redirect?url=https://example.com\" -L\n# Check the Location header — confirm redirect leaves the target domain",
+    "Open Redirect":            "curl -v \"http://{target}:{port}/redirect?url=https://example.com\" -L\n# Check the Location header â€” confirm redirect leaves the target domain",
     "SSRF":                     "curl -v \"http://{target}:{port}/fetch?url=http://169.254.169.254/latest/meta-data/\"\n# A non-empty response confirms the server fetches internal URLs",
     "Unknown":                  "curl -v \"http://{target}:{port}/\" -I\n# Review server banner and response headers for version disclosure",
 }
@@ -2139,7 +2139,7 @@ def enrich_cve(cve: dict, service: dict) -> dict:
     kev_listed   = kev_entry is not None
     kev_due_date = (kev_entry or {}).get("due_date", "")
 
-    # NVD CVSS lookup — prefer authoritative NVD data over derived estimates
+    # NVD CVSS lookup â€” prefer authoritative NVD data over derived estimates
     cvss_db    = _load_cvss_db()
     cvss_entry = cvss_db.get(cve["id"].upper())
     if cvss_entry:
@@ -2206,26 +2206,26 @@ def enrich_cve(cve: dict, service: dict) -> dict:
 # ---------------------------------------------------------------------------
 # METASPLOIT VALIDATION
 # ---------------------------------------------------------------------------
-# Module registry: CVE → module metadata including safety profile and scoring.
+# Module registry: CVE â†’ module metadata including safety profile and scoring.
 # Every entry is vetted. Only modules that pass _msf_decision() are ever run.
 # RHOSTS is always set from the target; RPORT is overridden by the actual
 # discovered service port at runtime.
 #
 # Safety fields:
-#   intrusive       — check action itself can modify state or cause instability
-#   dos_risk        — "low" | "medium" | "high" risk of disrupting the target
-#   check_supported — exploit modules: does 'check' work without a payload?
+#   intrusive       â€” check action itself can modify state or cause instability
+#   dos_risk        â€” "low" | "medium" | "high" risk of disrupting the target
+#   check_supported â€” exploit modules: does 'check' work without a payload?
 #                     auxiliary modules: always False (use 'run' instead)
 #
 # Scoring fields (final_score = confidence_score - risk_score):
-#   >= 0.5  → auto-run
-#   0.2–0.5 → restricted run (tighter timeouts / thread limits)
-#   < 0.2   → skip
+#   >= 0.5  â†’ auto-run
+#   0.2â€“0.5 â†’ restricted run (tighter timeouts / thread limits)
+#   < 0.2   â†’ skip
 #
-# Hard overrides (enforced in _msf_decision — cannot be bypassed):
-#   dos_risk == "high"                             → always block
-#   intrusive == True                              → always block
-#   type == "exploit" and check_supported == False → always block
+# Hard overrides (enforced in _msf_decision â€” cannot be bypassed):
+#   dos_risk == "high"                             â†’ always block
+#   intrusive == True                              â†’ always block
+#   type == "exploit" and check_supported == False â†’ always block
 
 MSF_MODULE_REGISTRY: dict = {
     # Windows SMB
@@ -2250,7 +2250,7 @@ MSF_MODULE_REGISTRY: dict = {
         "confidence_score": 0.90, "risk_score": 0.35,
         "tags": ["smb", "windows", "rce"],
     },
-    # Windows RDP — BlueKeep check is known to trigger crashes on some systems
+    # Windows RDP â€” BlueKeep check is known to trigger crashes on some systems
     "CVE-2019-0708": {
         "module": "exploit/windows/rdp/cve_2019_0708_bluekeep_rce",
         "type": "exploit", "default_opts": {"RPORT": "3389"},
@@ -2280,7 +2280,7 @@ MSF_MODULE_REGISTRY: dict = {
         "confidence_score": 0.85, "risk_score": 0.35,
         "tags": ["http", "shellshock", "rce"],
     },
-    # OpenSSL Heartbleed — auxiliary scanner, uses 'run' not 'check'
+    # OpenSSL Heartbleed â€” auxiliary scanner, uses 'run' not 'check'
     "CVE-2014-0160": {
         "module": "auxiliary/scanner/ssl/openssl_heartbleed",
         "type": "auxiliary", "default_opts": {"RPORT": "443"},
@@ -2327,7 +2327,7 @@ MSF_MODULE_REGISTRY: dict = {
         "confidence_score": 0.90, "risk_score": 0.35,
         "tags": ["ftp", "backdoor", "rce"],
     },
-    # libssh auth bypass — auxiliary scanner
+    # libssh auth bypass â€” auxiliary scanner
     "CVE-2018-10933": {
         "module": "auxiliary/scanner/ssh/libssh_auth_bypass",
         "type": "auxiliary", "default_opts": {"RPORT": "22"},
@@ -2343,7 +2343,7 @@ MSF_MODULE_REGISTRY: dict = {
         "confidence_score": 0.85, "risk_score": 0.40,
         "tags": ["smb", "samba", "linux", "rce"],
     },
-    # CUPS 2024 chain — auxiliary scanners
+    # CUPS 2024 chain â€” auxiliary scanners
     "CVE-2024-47076": {
         "module": "auxiliary/scanner/misc/cups_ipp_bsc",
         "type": "auxiliary", "default_opts": {"RPORT": "631"},
@@ -2402,16 +2402,16 @@ MSF_MODULE_REGISTRY: dict = {
 def _msf_decision(entry: dict) -> str:
     """Determine execution tier for a registry entry.
 
-    Hard overrides (non-negotiable — enforced before scoring):
-    - dos_risk == "high"                              → "block"
-    - intrusive == True                               → "block"
-    - type == "exploit" and check_supported == False  → "block"
+    Hard overrides (non-negotiable â€” enforced before scoring):
+    - dos_risk == "high"                              â†’ "block"
+    - intrusive == True                               â†’ "block"
+    - type == "exploit" and check_supported == False  â†’ "block"
 
     Scoring model:
     - final_score = confidence_score - risk_score
-    - >= 0.5  → "auto"
-    - 0.2–0.5 → "restricted"
-    - < 0.2   → "block"
+    - >= 0.5  â†’ "auto"
+    - 0.2â€“0.5 â†’ "restricted"
+    - < 0.2   â†’ "block"
     """
     if entry.get("dos_risk") == "high":
         return "block"
@@ -2451,8 +2451,8 @@ async def _msf_run_check(module: str, options: dict, target: str, msf_path: str,
                           use_run: bool = False) -> dict:
     """Run a single MSF module against the target.
 
-    - exploit modules  → 'check' only (non-destructive, no payload)
-    - auxiliary modules → 'run' (scanners are inherently non-destructive)
+    - exploit modules  â†’ 'check' only (non-destructive, no payload)
+    - auxiliary modules â†’ 'run' (scanners are inherently non-destructive)
 
     Never calls 'exploit' or 'run' on an exploit module.
     """
@@ -2478,9 +2478,9 @@ async def _msf_run_check(module: str, options: dict, target: str, msf_path: str,
                 result_text = ln.strip()
                 break
     elif "does not support check" in lower:
-        result_text = "Module does not support safe check — manual verification required"
+        result_text = "Module does not support safe check â€” manual verification required"
     elif "check failed" in lower:
-        result_text = "Check failed — target may be unreachable or the service is not running"
+        result_text = "Check failed â€” target may be unreachable or the service is not running"
     elif "failed to load" in lower or "no module loaded" in lower:
         result_text = "Module failed to load in MSF"
 
@@ -2488,7 +2488,7 @@ async def _msf_run_check(module: str, options: dict, target: str, msf_path: str,
         "module":      module,
         "vulnerable":  vulnerable,
         "result":      result_text,
-        "method":      f"Metasploit {action} (non-destructive — no payload executed)",
+        "method":      f"Metasploit {action} (non-destructive â€” no payload executed)",
         "raw_output":  output[:600],
     }
 
@@ -2500,16 +2500,16 @@ async def run_msf_validation(report: dict, target: str, session_dir: str,
     Mutates and returns the report dict.
 
     Execution tiers (from _msf_decision):
-      auto       — run immediately (high confidence, low risk)
-      restricted — run with tighter timeouts and thread cap
-      block      — skip entirely (high dos_risk, intrusive, or unsafe check)
+      auto       â€” run immediately (high confidence, low risk)
+      restricted â€” run with tighter timeouts and thread cap
+      block      â€” skip entirely (high dos_risk, intrusive, or unsafe check)
 
     Never calls 'exploit' or 'run' on an exploit module.
     Auxiliary modules are run with 'run' (scanners are non-destructive by design).
     """
     msf_path = available_tools.get("msfconsole")
     if not msf_path:
-        print("[!] msfconsole not found in PATH — skipping MSF validation")
+        print("[!] msfconsole not found in PATH â€” skipping MSF validation")
         return report
 
     cve_matches = report.get("cve_matches", [])
@@ -2518,7 +2518,7 @@ async def run_msf_validation(report: dict, target: str, session_dir: str,
         return report
 
     if SAFE_MODE:
-        print(f"\n[!] MSF VALIDATION — APPROVAL REQUIRED")
+        print(f"\n[!] MSF VALIDATION â€” APPROVAL REQUIRED")
         print(f"    {len(cve_matches)} CVE(s) will be probed using 'check' (non-destructive).")
         print(f"    No exploit payloads will be executed. Target: {target}")
         if UNATTENDED:
@@ -2536,7 +2536,7 @@ async def run_msf_validation(report: dict, target: str, session_dir: str,
     print(f"\n{'=' * 52}")
     print(f"  MSF EXPLOITATION VALIDATION")
     print(f"  Target : {target}  |  CVEs to check : {len(cve_matches)}")
-    print(f"  Method : scored allowlist — check/run only, no payloads")
+    print(f"  Method : scored allowlist â€” check/run only, no payloads")
     print(f"{'=' * 52}")
 
     validated = 0
@@ -2559,7 +2559,7 @@ async def run_msf_validation(report: dict, target: str, session_dir: str,
                 why = ("dos_risk=high" if dos == "high" else
                        "intrusive"     if registry_entry.get("intrusive") else
                        "exploit with no safe check")
-                print(f"  [MSF] {cve_id} — BLOCKED ({why}, score {final_score:.2f})")
+                print(f"  [MSF] {cve_id} â€” BLOCKED ({why}, score {final_score:.2f})")
                 cve["msf_validation"] = {
                     "module": module, "vulnerable": None,
                     "result": f"Blocked by safety policy: {why}",
@@ -2570,16 +2570,16 @@ async def run_msf_validation(report: dict, target: str, session_dir: str,
 
             if tier == "restricted":
                 options = _msf_apply_restrictions(options)
-                print(f"  [MSF] {cve_id} — RESTRICTED run (score {final_score:.2f}) "
-                      f"→ {module}  (port {port}) ...", end=" ", flush=True)
+                print(f"  [MSF] {cve_id} â€” RESTRICTED run (score {final_score:.2f}) "
+                      f"â†’ {module}  (port {port}) ...", end=" ", flush=True)
             else:
-                print(f"  [MSF] {cve_id} — AUTO run (score {final_score:.2f}) "
-                      f"→ {module}  (port {port}) ...", end=" ", flush=True)
+                print(f"  [MSF] {cve_id} â€” AUTO run (score {final_score:.2f}) "
+                      f"â†’ {module}  (port {port}) ...", end=" ", flush=True)
 
             use_run = (mod_type == "auxiliary")
         else:
-            # CVE not in registry — search MSF, treat as restricted with unknown metadata
-            print(f"  [MSF] {cve_id} — not in registry, searching MSF ...")
+            # CVE not in registry â€” search MSF, treat as restricted with unknown metadata
+            print(f"  [MSF] {cve_id} â€” not in registry, searching MSF ...")
             module  = await _msf_search_module(cve_id, msf_path)
             options = {"RPORT": port}
             use_run = False
@@ -2587,7 +2587,7 @@ async def run_msf_validation(report: dict, target: str, session_dir: str,
             final_score = None
 
             if not module:
-                print(f"  [MSF] {cve_id} — no module found, skipping")
+                print(f"  [MSF] {cve_id} â€” no module found, skipping")
                 cve["msf_validation"] = {
                     "module": None, "vulnerable": None,
                     "result": "No Metasploit module found for this CVE",
@@ -2598,7 +2598,7 @@ async def run_msf_validation(report: dict, target: str, session_dir: str,
 
             # Apply restrictions for unvetted modules found by search
             options = _msf_apply_restrictions(options)
-            print(f"  [MSF] {cve_id} — RESTRICTED (unvetted) → {module}  (port {port}) ...",
+            print(f"  [MSF] {cve_id} â€” RESTRICTED (unvetted) â†’ {module}  (port {port}) ...",
                   end=" ", flush=True)
 
         result = await _msf_run_check(module, options, target, msf_path, use_run=use_run)
@@ -2615,7 +2615,7 @@ async def run_msf_validation(report: dict, target: str, session_dir: str,
     if validated > 0 and "msfconsole" not in report.get("tools_run", []):
         report["tools_run"].append("msfconsole")
 
-    print(f"[+] MSF validation complete — {validated} check(s) executed\n")
+    print(f"[+] MSF validation complete â€” {validated} check(s) executed\n")
     return report
 
 
@@ -2633,7 +2633,7 @@ def _load_cve_db():
         # Attempt to self-heal: build the CSV on the fly.
         build_script = os.path.join(BASE_DIR, "scripts", "build_cve_db.py")
         if os.path.exists(build_script):
-            print(f"[!] CVE database not found at {CVE_CSV} — attempting to build it now ...")
+            print(f"[!] CVE database not found at {CVE_CSV} â€” attempting to build it now ...")
             import subprocess
             result = subprocess.run(
                 [sys.executable, build_script],
@@ -2764,7 +2764,7 @@ def cves_for_service(service):
             if len(results) < 5:
                 _add([kw])
 
-    # Version suppression — filter out CVEs where the detected version is known
+    # Version suppression â€” filter out CVEs where the detected version is known
     # to be at or above the fixed/patched version stated in the CVE summary.
     # Suppressed CVEs are returned separately so the report can show them in a
     # collapsed section rather than silently dropping them.
@@ -2877,7 +2877,7 @@ def _nmap_extract_script_output(xml_data: str, batch_ports: list | None = None) 
     return results
 
 
-# Map service name → NSE scripts that give the most decision-making value.
+# Map service name â†’ NSE scripts that give the most decision-making value.
 # These are used by Phase 3 to build targeted script batches per service.
 _NSE_SCRIPT_MAP = {
     "http":        "http-title,http-headers,http-methods,http-auth-finder,http-server-header,http-security-headers,http-robots.txt",
@@ -2926,11 +2926,11 @@ def run_nmap_discovery(target: str, pinned_ports: str | None = None) -> tuple:
         only the specified ports.  Supplied by parsing host:port syntax on the
         CLI or web UI (e.g. "localhost:8080" or "192.168.0.1:80,443").
 
-    Phase 1 — Host discovery + open port list
-    Phase 2 — Service/version enumeration on discovered ports
-    Phase 3 — LLM-informed NSE script execution per service
-    Phase 4 — OS detection
-    Phase 5 — Normalise all data into a unified service list
+    Phase 1 â€” Host discovery + open port list
+    Phase 2 â€” Service/version enumeration on discovered ports
+    Phase 3 â€” LLM-informed NSE script execution per service
+    Phase 4 â€” OS detection
+    Phase 5 â€” Normalise all data into a unified service list
 
     Returns
     -------
@@ -2948,12 +2948,12 @@ def run_nmap_discovery(target: str, pinned_ports: str | None = None) -> tuple:
     }
 
     # ------------------------------------------------------------------ #
-    # Phase 1 — Host discovery + open port list                           #
+    # Phase 1 â€” Host discovery + open port list                           #
     # ------------------------------------------------------------------ #
     if pinned_ports:
         # Port-pinned mode: user supplied host:port or host:p1,p2,...
-        # Skip the full -p- scan — probe only the specified port(s).
-        print(f"\n[+] Nmap Phase 1 — Port-pinned scan ({target} / ports {pinned_ports})")
+        # Skip the full -p- scan â€” probe only the specified port(s).
+        print(f"\n[+] Nmap Phase 1 â€” Port-pinned scan ({target} / ports {pinned_ports})")
         p1_xml = _nmap_run([
             "-Pn", "-T4", "--open",
             "-p", pinned_ports,
@@ -2963,11 +2963,11 @@ def run_nmap_discovery(target: str, pinned_ports: str | None = None) -> tuple:
         ], timeout=60)
         nmap_meta["phase1_raw"] = p1_xml
     else:
-        print(f"\n[+] Nmap Phase 1 — Host discovery & port list ({target})")
+        print(f"\n[+] Nmap Phase 1 â€” Host discovery & port list ({target})")
         p1_xml = _nmap_run([
             "-Pn", "-T4", "--open",
             "-p-",                      # all 65 535 ports
-            "--min-rate", "2000",       # speed — safe on LAN, capped by congestion
+            "--min-rate", "2000",       # speed â€” safe on LAN, capped by congestion
             "--max-retries", "1",
             "-oX", "-",
             target,
@@ -2976,7 +2976,7 @@ def run_nmap_discovery(target: str, pinned_ports: str | None = None) -> tuple:
 
         # Fall back to top-1000 scan if the full-port run produced nothing
         if not p1_xml.strip() or not _parse_nmap_xml(p1_xml):
-            print("[!] Full-port scan returned nothing — falling back to top-1000")
+            print("[!] Full-port scan returned nothing â€” falling back to top-1000")
             p1_xml = _nmap_run(["-Pn", "-T4", "--open", "-oX", "-", target], timeout=120)
             nmap_meta["phase1_raw"] = p1_xml
 
@@ -2991,12 +2991,12 @@ def run_nmap_discovery(target: str, pinned_ports: str | None = None) -> tuple:
     open_ports = [s["port"] for s in p1_services]
     ports_arg  = ",".join(open_ports)
     nmap_meta["open_ports"] = open_ports
-    print(f"[+] Phase 1 complete — {len(open_ports)} open port(s): {ports_arg}")
+    print(f"[+] Phase 1 complete â€” {len(open_ports)} open port(s): {ports_arg}")
 
     # ------------------------------------------------------------------ #
-    # Phase 2 — Port & service enumeration (version + default scripts)    #
+    # Phase 2 â€” Port & service enumeration (version + default scripts)    #
     # ------------------------------------------------------------------ #
-    print(f"[+] Nmap Phase 2 — Service/version enumeration")
+    print(f"[+] Nmap Phase 2 â€” Service/version enumeration")
     p2_xml = _nmap_run([
         "-Pn", "-sV", "-sC",
         "-T4",
@@ -3012,7 +3012,7 @@ def run_nmap_discovery(target: str, pinned_ports: str | None = None) -> tuple:
     # Retry once with a lighter scan if Phase 2 returned nothing at all
     # (full timeout on high-latency targets, or -sC scripts hung).
     if not p2_services:
-        print("[!] Phase 2: no version data returned — retrying with lighter scan (no -sC, intensity 5)")
+        print("[!] Phase 2: no version data returned â€” retrying with lighter scan (no -sC, intensity 5)")
         p2_xml = _nmap_run([
             "-Pn", "-sV",
             "-T4",
@@ -3024,7 +3024,7 @@ def run_nmap_discovery(target: str, pinned_ports: str | None = None) -> tuple:
         nmap_meta["phase2_raw"] = p2_xml
         p2_services = _parse_nmap_xml(p2_xml) if p2_xml.strip() else []
         if not p2_services:
-            print("[!] Phase 2 retry also returned nothing — continuing with port-only data")
+            print("[!] Phase 2 retry also returned nothing â€” continuing with port-only data")
 
     # Merge Phase-2 version info back onto Phase-1 records.
     # Any port that Phase 2 did not enrich gets flagged with version_unknown=True
@@ -3047,15 +3047,15 @@ def run_nmap_discovery(target: str, pinned_ports: str | None = None) -> tuple:
 
     unenriched = [s["port"] for s in p1_services if s.get("version_unknown")]
     if unenriched:
-        print(f"[!] Phase 2: {len(unenriched)} port(s) not enriched — "
+        print(f"[!] Phase 2: {len(unenriched)} port(s) not enriched â€” "
               f"CVE matching may be incomplete: {', '.join(unenriched)}")
 
-    print(f"[+] Phase 2 complete — version data enriched on {len(p2_services)} port(s)")
+    print(f"[+] Phase 2 complete â€” version data enriched on {len(p2_services)} port(s)")
 
     # ------------------------------------------------------------------ #
-    # Phase 3 — Targeted NSE scripts per service                         #
+    # Phase 3 â€” Targeted NSE scripts per service                         #
     # ------------------------------------------------------------------ #
-    print(f"[+] Nmap Phase 3 — Targeted NSE script execution")
+    print(f"[+] Nmap Phase 3 â€” Targeted NSE script execution")
     # Group ports by service family to batch NSE calls
     script_groups: dict = {}  # scripts_csv -> [port, ...]
     for svc in p1_services:
@@ -3095,12 +3095,12 @@ def run_nmap_discovery(target: str, pinned_ports: str | None = None) -> tuple:
             svc["nse_summary"] = ""
 
     nse_port_count = sum(1 for p in nse_results if nse_results[p])
-    print(f"[+] Phase 3 complete — NSE data on {nse_port_count} port(s)")
+    print(f"[+] Phase 3 complete â€” NSE data on {nse_port_count} port(s)")
 
     # ------------------------------------------------------------------ #
-    # Phase 4 — OS detection                                              #
+    # Phase 4 â€” OS detection                                              #
     # ------------------------------------------------------------------ #
-    print(f"[+] Nmap Phase 4 — OS detection")
+    print(f"[+] Nmap Phase 4 â€” OS detection")
     p4_xml = _nmap_run([
         "-Pn", "-O",
         "--osscan-guess",
@@ -3132,14 +3132,14 @@ def run_nmap_discovery(target: str, pinned_ports: str | None = None) -> tuple:
             pass
     nmap_meta["phase4_os"] = os_info
     if os_info.get("name"):
-        print(f"[+] Phase 4 complete — OS: {os_info['name']} ({os_info['accuracy']}% confidence)")
+        print(f"[+] Phase 4 complete â€” OS: {os_info['name']} ({os_info['accuracy']}% confidence)")
     else:
-        print("[+] Phase 4 complete — OS fingerprint not determined")
+        print("[+] Phase 4 complete â€” OS fingerprint not determined")
 
     # ------------------------------------------------------------------ #
-    # Phase 5 — Normalise all data                                        #
+    # Phase 5 â€” Normalise all data                                        #
     # ------------------------------------------------------------------ #
-    print(f"[+] Nmap Phase 5 — Normalising discovery data")
+    print(f"[+] Nmap Phase 5 â€” Normalising discovery data")
     # p1_services now carries merged Phase-2 version data and Phase-3 NSE output.
     # Add OS context to each service so the LLM has full host context per record.
     os_str = os_info.get("name", "")
@@ -3153,13 +3153,13 @@ def run_nmap_discovery(target: str, pinned_ports: str | None = None) -> tuple:
         f"{s['port']}/{s.get('name', '?')} {s.get('product', '')} {s.get('version', '')}".strip()
         for s in p1_services
     )
-    print(f"[+] Phase 5 complete — {len(p1_services)} service(s) normalised: {port_summary}")
+    print(f"[+] Phase 5 complete â€” {len(p1_services)} service(s) normalised: {port_summary}")
 
     return p1_services, nmap_meta
 
 
 def run_nmap(target):
-    """Compatibility shim — calls the 5-phase discovery pipeline and discards metadata."""
+    """Compatibility shim â€” calls the 5-phase discovery pipeline and discards metadata."""
     services, _ = run_nmap_discovery(target)
     # Convert back to XML-based flow is no longer needed; return sentinel so
     # callers that expect XML can detect the change.
@@ -3167,7 +3167,7 @@ def run_nmap(target):
 
 
 def parse_nmap(xml_data):
-    """Legacy XML parser — kept for backward compatibility with any callers that
+    """Legacy XML parser â€” kept for backward compatibility with any callers that
     still pass raw XML.  Returns an empty list when given a list (new path)."""
     if isinstance(xml_data, list):
         return xml_data
@@ -3229,14 +3229,14 @@ def _tools_for_service(service_name, port=None):
         # Manifest present but no entry matched
         port_str = f" (port {port})" if port else ""
         print(
-            f"[*] No manifest entry matched service '{service_name}'{port_str} — "
+            f"[*] No manifest entry matched service '{service_name}'{port_str} â€” "
             f"defaulting to curl probe.  Add a matching service_keyword to "
             f"tool_manifest.json to improve routing."
         )
         return ["curl"]
 
-    # ── Manifest absent: built-in rules ──────────────────────────────────
-    # ffuf is a directory fuzzer — only useful on real HTTP/HTTPS services.
+    # â”€â”€ Manifest absent: built-in rules â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ffuf is a directory fuzzer â€” only useful on real HTTP/HTTPS services.
     if "http" in name or "ssl" in name:
         return ["curl", "nikto", "nuclei", "ffuf"]
     if "ipp" in name:
@@ -3253,7 +3253,7 @@ def _tools_for_service(service_name, port=None):
         return ["dns_enum"]
     if "ftp" in name or "smtp" in name:
         return ["curl"]
-    # Catch-all — curl is always better than nothing
+    # Catch-all â€” curl is always better than nothing
     return ["curl"]
 
 
@@ -3307,21 +3307,21 @@ async def verify_finding(finding):
                 finding.verification_status = "verified"
                 finding.confidence          = min(finding.confidence + 0.1, 1.0)
             else:
-                # Response came back but no confirming keyword — inconclusive
+                # Response came back but no confirming keyword â€” inconclusive
                 finding.verification_status = "probe_inconclusive"
                 finding.verifier_tool       = "curl"
                 finding.manual_review       = True
         elif low_confidence:
-            # No usable response AND low-confidence tool — cannot verify
+            # No usable response AND low-confidence tool â€” cannot verify
             finding.verification_status = "probe_inconclusive"
             finding.verifier_tool       = "curl"
             finding.manual_review       = True
     elif low_confidence:
-        # No matched_url and low-confidence tool — flag for manual follow-up
+        # No matched_url and low-confidence tool â€” flag for manual follow-up
         finding.verification_status = "probe_inconclusive"
         finding.manual_review       = True
     elif finding.verification_status == "discovered" and len(finding.evidence) > 80:
-        # High-confidence tool with substantial evidence — accept as verified
+        # High-confidence tool with substantial evidence â€” accept as verified
         finding.verified            = True
         finding.verification_status = "verified"
     return finding
@@ -3346,11 +3346,11 @@ def query_llm(context, broken_tools=None, available_tools=None, used_actions=Non
 
     all_tool_descs = {
         "curl":       'curl: "http://target:port"',
-        "nikto":      'nikto: {"url": "http://target:port", "ssl": false}  — optional: ssl:true to force SSL',
-        "nikto_cgi":  'nikto_cgi: {"url": "http://target:port", "ssl": false}  — nikto with -C all (scan ALL CGI directories); use after plain nikto if more coverage needed',
-        "nuclei":     'nuclei: {"url": "http://target:port", "tags": "cve,lfi,sqli", "severity": "medium,high,critical"}  — optional: tags (template filter), severity filter',
-        "ffuf":       f'ffuf: {{"url": "http://target:port", "wordlist": "{WORDLIST}", "extensions": "php,html", "method": "GET", "match_codes": "200,301,302,401,403"}}  — IMPORTANT: url must be a plain base URL with NO slash, NO asterisk, NO FUZZ suffix (FUZZ is appended automatically). Optional: extensions, method (GET/POST/HEAD/OPTIONS), match_codes, threads (5-15), rate (10-50), filter_size, filter_words, maxtime (60-600s, default 300)',
-        "curl":       'curl: {"url": "http://target:port/path", "method": "GET", "headers": {"Authorization": "Bearer token"}}  — optional: method (GET/POST/HEAD/OPTIONS), headers dict',
+        "nikto":      'nikto: {"url": "http://target:port", "ssl": false}  â€” optional: ssl:true to force SSL',
+        "nikto_cgi":  'nikto_cgi: {"url": "http://target:port", "ssl": false}  â€” nikto with -C all (scan ALL CGI directories); use after plain nikto if more coverage needed',
+        "nuclei":     'nuclei: {"url": "http://target:port", "tags": "cve,lfi,sqli", "severity": "medium,high,critical"}  â€” optional: tags (template filter), severity filter',
+        "ffuf":       f'ffuf: {{"url": "http://target:port", "wordlist": "{WORDLIST}", "extensions": "php,html", "method": "GET", "match_codes": "200,301,302,401,403"}}  â€” IMPORTANT: url must be a plain base URL with NO slash, NO asterisk, NO FUZZ suffix (FUZZ is appended automatically). Optional: extensions, method (GET/POST/HEAD/OPTIONS), match_codes, threads (5-15), rate (10-50), filter_size, filter_words, maxtime (60-600s, default 300)',
+        "curl":       'curl: {"url": "http://target:port/path", "method": "GET", "headers": {"Authorization": "Bearer token"}}  â€” optional: method (GET/POST/HEAD/OPTIONS), headers dict',
         "ssh_enum":   'ssh_enum: {"host": "...", "port": "22"}',
         "rdp_enum":   'rdp_enum: {"host": "...", "port": "3389"}',
         "dns_enum":   'dns_enum: {"domain": "..."}',
@@ -3374,7 +3374,7 @@ def query_llm(context, broken_tools=None, available_tools=None, used_actions=Non
         "target":         context["target"],
         "services":       [
             f"{s['port']}/{s.get('name','unknown')} {s.get('product','').split()[0] if s.get('product') else ''}".strip()
-            + (" [VERSION UNKNOWN — probe with curl or nmap]" if s.get("version_unknown") else "")
+            + (" [VERSION UNKNOWN â€” probe with curl or nmap]" if s.get("version_unknown") else "")
             for s in context["services"]
         ],
         "last_3_actions": context.get("history", [])[-3:],
@@ -3397,7 +3397,7 @@ def query_llm(context, broken_tools=None, available_tools=None, used_actions=Non
     kb_section = f"\n{kb_block}\n" if kb_block else ""
 
     nse_block = context.get("nse_context", "")
-    nse_section = f"\nNSE SCRIPT RESULTS (from nmap Phase 3 — use to prioritise paths):\n{nse_block}\n" if nse_block else ""
+    nse_section = f"\nNSE SCRIPT RESULTS (from nmap Phase 3 â€” use to prioritise paths):\n{nse_block}\n" if nse_block else ""
 
     # Inject a TOOL REFERENCE block only when the manifest is loaded AND there are
     # services that are untested or have no recommended_tools.  This keeps the
@@ -3409,7 +3409,7 @@ def query_llm(context, broken_tools=None, available_tools=None, used_actions=Non
         for s in _svc_list
     )
     if manifest and _needs_guidance:
-        _ref_lines = ["TOOL REFERENCE (capability guide — use for NOT_YET_TESTED or no-recommendation services):"]
+        _ref_lines = ["TOOL REFERENCE (capability guide â€” use for NOT_YET_TESTED or no-recommendation services):"]
         for _tn, _te in manifest.items():
             if _tn.startswith("_"):
                 continue
@@ -3422,12 +3422,12 @@ def query_llm(context, broken_tools=None, available_tools=None, used_actions=Non
     # Format already_run as a clear block-list the model can't miss
     already_run_sorted = sorted(used_actions)
     already_run_block = (
-        "ALREADY RUN — DO NOT REPEAT ANY OF THESE:\n"
+        "ALREADY RUN â€” DO NOT REPEAT ANY OF THESE:\n"
         + "\n".join(f"  - {a}" for a in already_run_sorted)
         if already_run_sorted else "ALREADY RUN: (none yet)"
     )
     disabled_block = (
-        "DISABLED TOOLS — DO NOT USE:\n"
+        "DISABLED TOOLS â€” DO NOT USE:\n"
         + "\n".join(f"  - {t}" for t in sorted(broken_tools))
         if broken_tools else "DISABLED TOOLS: (none)"
     )
@@ -3437,12 +3437,12 @@ def query_llm(context, broken_tools=None, available_tools=None, used_actions=Non
             for t, sks in sorted(timed_out_tools.items())
         ]
         disabled_block += (
-            "\nTIMED OUT PER SERVICE (still usable on other service types — avoid repeating on listed services):\n"
+            "\nTIMED OUT PER SERVICE (still usable on other service types â€” avoid repeating on listed services):\n"
             + "\n".join(_to_lines)
         )
 
     prompt = f"""/no_think
-### SCAN STATE — READ FIRST:
+### SCAN STATE â€” READ FIRST:
 {already_run_block}
 
 {disabled_block}
@@ -3450,11 +3450,11 @@ def query_llm(context, broken_tools=None, available_tools=None, used_actions=Non
 You are a penetration testing assistant. Reply with a single JSON object only.
 
 ### RULES:
-1. RESPONSE MUST BE VALID JSON ONLY — no prose, no markdown, no explanation.
+1. RESPONSE MUST BE VALID JSON ONLY â€” no prose, no markdown, no explanation.
 2. Only use tools listed in AVAILABLE TOOLS.
 3. NEVER suggest a tool+args pair from ALREADY RUN above.
 4. NEVER suggest a tool from DISABLED TOOLS above.
-5. Prefer tools from each service's "recommended_tools" list — use higher KB success rate tools first.  For NOT_YET_TESTED services, consult the TOOL REFERENCE block to select the most appropriate tool.
+5. Prefer tools from each service's "recommended_tools" list â€” use higher KB success rate tools first.  For NOT_YET_TESTED services, consult the TOOL REFERENCE block to select the most appropriate tool.
 6. Use NSE SCRIPT RESULTS to choose specific URLs, paths, or auth methods to test.
 7. If all recommended tools are exhausted, try a general tool (curl, nmap) with a new endpoint or argument.
 8. If there is nothing new to try, return {{"tool": "none"}}.
@@ -3508,13 +3508,13 @@ Or if exhausted:
     finally:
         _sp.stop(f" done ({_fmt_dur(time.monotonic() - _t0)})")  # always clears the line
 
-    print("[!] LLM retries exhausted — stopping.")
+    print("[!] LLM retries exhausted â€” stopping.")
     return {"tool": "none"}
 
 
 # ---------------------------------------------------------------------------
 # FAST-PATH TOOL SELECTOR
-# Pre-emptively maps well-known nmap service names → the correct first tool.
+# Pre-emptively maps well-known nmap service names â†’ the correct first tool.
 # This fires before the LLM is consulted, eliminating LLM latency for every
 # service the model would have reasoned to the same answer anyway.
 # Entries are ordered: first match wins.  Use the most specific key first.
@@ -3701,7 +3701,7 @@ def query_llm_parallel(context, broken_tools=None, available_tools=None, used_ac
 
     if fast_actions:
         covered = ", ".join(
-            f"{a['tool']}→{a['args'].get('host') or a['args'].get('url','')}" for a in fast_actions
+            f"{a['tool']}â†’{a['args'].get('host') or a['args'].get('url','')}" for a in fast_actions
         )
         print(f"[+] Fast-path assigned {len(fast_actions)} action(s): {covered}")
 
@@ -3738,7 +3738,7 @@ def query_llm_parallel(context, broken_tools=None, available_tools=None, used_ac
         for s in unmatched
     )
 
-    # Minimal context summary — no full findings dump to keep prompt short
+    # Minimal context summary â€” no full findings dump to keep prompt short
     already_run_block = (
         "DO NOT REPEAT: " + ", ".join(sorted(used_actions)) if used_actions else "ALREADY RUN: (none)"
     )
@@ -3827,7 +3827,7 @@ BROKEN_TOOL_SIGNALS = [
     "command not found",
     "cannot find",
     "flag provided but not defined",    # nuclei unknown flag
-    # NOTE: "not found" removed — too broad (matches HTTP 404 response text)
+    # NOTE: "not found" removed â€” too broad (matches HTTP 404 response text)
 
 ]
 
@@ -4008,7 +4008,7 @@ async def execute_async(action, available_tools, session_dir=None):
         wl   = args["wordlist"]
         mc   = args.get("match_codes", "200,301,302,401,403")
         meth = args.get("method", "GET")
-        # Enforce safe caps — never allow unlimited or above-threshold values
+        # Enforce safe caps â€” never allow unlimited or above-threshold values
         threads  = min(int(args.get("threads",  8)),   15)
         rate     = min(int(args.get("rate",    25)),   50)
         timeout  = min(int(args.get("timeout",  8)),   15)
@@ -4027,7 +4027,7 @@ async def execute_async(action, available_tools, session_dir=None):
             "-rate",    str(rate),
             "-timeout", str(timeout),
             "-maxtime", str(maxtime),
-            "-s",                              # silent — suppress banner noise
+            "-s",                              # silent â€” suppress banner noise
         ]
         if args.get("extensions"):
             ext_str = ",".join(f".{e}" for e in args["extensions"].split(","))
@@ -4098,9 +4098,9 @@ def query_llm_for_service(
     svc_label = f"{port}/{name}" + (f" ({product} {version})".rstrip() if product else "")
 
     all_tool_descs = {
-        "curl":       'curl: {"url": "http://target:port/path", "method": "GET", "headers": {}}  — optional: method, headers dict',
-        "nikto":      'nikto: {"url": "http://target:port", "ssl": false}  — optional: ssl:true',
-        "nikto_cgi":  'nikto_cgi: {"url": "http://target:port", "ssl": false}  — nikto with -C all',
+        "curl":       'curl: {"url": "http://target:port/path", "method": "GET", "headers": {}}  â€” optional: method, headers dict',
+        "nikto":      'nikto: {"url": "http://target:port", "ssl": false}  â€” optional: ssl:true',
+        "nikto_cgi":  'nikto_cgi: {"url": "http://target:port", "ssl": false}  â€” nikto with -C all',
         "nuclei":     f'nuclei: {{"url": "http://target:port", "tags": "cve,lfi,sqli", "severity": "medium,high,critical"}}',
         "ffuf":       f'ffuf: {{"url": "http://target:port", "wordlist": "{WORDLIST}", "extensions": "php,html", "method": "GET", "match_codes": "200,301,302,401,403", "maxtime": 300}}',
         "ssh_enum":   'ssh_enum: {"host": "...", "port": "22"}',
@@ -4123,12 +4123,12 @@ def query_llm_for_service(
         if f":{port}" in a or f":{target}" in a
     )
     already_run_block = (
-        "ALREADY RUN ON THIS SERVICE — DO NOT REPEAT:\n"
+        "ALREADY RUN ON THIS SERVICE â€” DO NOT REPEAT:\n"
         + "\n".join(f"  - {a}" for a in svc_run)
         if svc_run else "ALREADY RUN ON THIS SERVICE: (none yet)"
     )
     disabled_block = (
-        "DISABLED TOOLS — DO NOT USE: " + ", ".join(sorted(broken_tools))
+        "DISABLED TOOLS â€” DO NOT USE: " + ", ".join(sorted(broken_tools))
         if broken_tools else ""
     )
 
@@ -4138,23 +4138,23 @@ def query_llm_for_service(
         act    = h.get("action", {})
         result = h.get("result", "")[:150]
         nf     = h.get("findings", 0)
-        history_lines.append(f"  {act.get('tool','?')} → {result} [{nf} finding(s)]")
+        history_lines.append(f"  {act.get('tool','?')} â†’ {result} [{nf} finding(s)]")
     history_block = "\n".join(history_lines) if history_lines else "  (no history yet)"
 
     # Compact findings for this service
     svc_findings_lines = [
-        f"  [{f.get('severity','?').upper()}] {f.get('title','')} — {f.get('verification_status','')}"
+        f"  [{f.get('severity','?').upper()}] {f.get('title','')} â€” {f.get('verification_status','')}"
         for f in svc_findings[-5:]
     ]
     svc_findings_block = "\n".join(svc_findings_lines) if svc_findings_lines else "  (none yet)"
 
     # Cross-service context (findings from other services)
     shared_lines = [
-        f"  [{f.get('severity','?').upper()}] {f.get('service','')} — {f.get('title','')}"
+        f"  [{f.get('severity','?').upper()}] {f.get('service','')} â€” {f.get('title','')}"
         for f in shared_findings[-5:]
     ]
     shared_block = (
-        "FINDINGS FROM OTHER SERVICES (context only — do not repeat these probes):\n"
+        "FINDINGS FROM OTHER SERVICES (context only â€” do not repeat these probes):\n"
         + "\n".join(shared_lines)
         if shared_lines else ""
     )
@@ -4166,7 +4166,7 @@ def query_llm_for_service(
                   if rec_tools else "")
 
     prompt = f"""/no_think
-### SERVICE PROBE — Reply with ONE JSON object only.
+### SERVICE PROBE â€” Reply with ONE JSON object only.
 
 {already_run_block}
 {disabled_block}
@@ -4186,7 +4186,7 @@ AVAILABLE TOOLS:
 {tools_block}
 
 RULES:
-1. JSON only — no prose, no markdown.
+1. JSON only â€” no prose, no markdown.
 2. Choose the single most useful next action for THIS SERVICE.
 3. Never repeat a tool+args from ALREADY RUN ON THIS SERVICE.
 4. If you have exhausted all useful actions for this service, return {{"tool": "none"}}.
@@ -4280,7 +4280,7 @@ async def run_service_probe_batch(
         round_num += 1
 
         # --- Print batch/round header -------------------------------------------
-        svc_labels = "  ·  ".join(st.label for st in active)
+        svc_labels = "  Â·  ".join(st.label for st in active)
         print(f"\n{'=' * 52}")
         print(f"  Batch {batch_idx + 1}/{total_batches}  Round {round_num}  |  "
               f"Target: {target}  |  Services: {len(active)}")
@@ -4313,12 +4313,12 @@ async def run_service_probe_batch(
                 action = {"tool": "none"}
             tool = action.get("tool", "none")
             if tool == "none":
-                print(f"  [{st.label:<18}]  none — exhausted")
+                print(f"  [{st.label:<18}]  none â€” exhausted")
                 none_states.append(st)
                 continue
             action_key = f"{tool}:{str(action.get('args', ''))}"
             if action_key in used_actions:
-                print(f"  [{st.label:<18}]  {tool} — duplicate, skipping")
+                print(f"  [{st.label:<18}]  {tool} â€” duplicate, skipping")
                 st.rounds_left -= 1
                 if st.rounds_left > 0:
                     active_states.append(st)
@@ -4330,7 +4330,7 @@ async def run_service_probe_batch(
             wave_actions.append(action)
             active_states.append(st)
             args_preview = str(action.get("args", ""))[:60]
-            print(f"  [{st.label:<18}]  {tool} → {args_preview}")
+            print(f"  [{st.label:<18}]  {tool} â†’ {args_preview}")
 
         # --- Execute all planned actions in a parallel wave ---------------------
         if wave_actions:
@@ -4360,7 +4360,7 @@ async def run_service_probe_batch(
 
                 if broken:
                     broken_tools.add(tool)
-                    print(f"  [!] '{tool}' appears broken — disabling.")
+                    print(f"  [!] '{tool}' appears broken â€” disabling.")
                 elif timed_out_w and not findings and tool not in {"ffuf", "nikto"}:
                     _ban_key = _svc_key(tool, orig_action.get("args", ""), services_batch)
                     timed_out_tools.setdefault(tool, set()).add(_ban_key)
@@ -4380,7 +4380,7 @@ async def run_service_probe_batch(
             # Re-sync active_states based on wave results
             # (broken tools may have caused some states to need re-evaluation)
 
-        # --- Extension mechanic — grant extra rounds for uninvestigated findings -
+        # --- Extension mechanic â€” grant extra rounds for uninvestigated findings -
         for st in active_states:
             uninvestigated = [
                 f for f in st.findings
@@ -4402,7 +4402,7 @@ async def run_service_probe_batch(
             if st.rounds_left > 0:
                 next_active.append(st)
             else:
-                print(f"  [~] {st.label}: round budget exhausted — moving on")
+                print(f"  [~] {st.label}: round budget exhausted â€” moving on")
 
         active = next_active
 
@@ -4426,7 +4426,7 @@ async def run_parallel_wave(actions, available_tools, session_dir):
         batch = actions[i : i + MAX_PARALLEL_ACTIONS]
         print(f"\n[+] Parallel wave: running {len(batch)} tool(s) concurrently ...")
         for a in batch:
-            print(f"    {a['tool']:12} → {str(a.get('args', ''))[:70]}")
+            print(f"    {a['tool']:12} â†’ {str(a.get('args', ''))[:70]}")
 
         t0          = time.time()
         raw_results = await asyncio.gather(
@@ -4478,7 +4478,7 @@ async def run_parallel_wave(actions, available_tools, session_dir):
 def save_session(state):
     with open(SESSION_FILE, "w") as fh:
         json.dump(state, fh, indent=2, default=str)
-    print(f"[+] Session saved → {SESSION_FILE}")
+    print(f"[+] Session saved â†’ {SESSION_FILE}")
 
 
 def load_session():
@@ -4520,121 +4520,173 @@ def find_latest_session_dir(target):
 # HTML / PDF REPORTING
 # ---------------------------------------------------------------------------
 
-# Inline SVG logo — replicates the Noctis Edge brand mark (shield + N + circuit dots).
+# Inline SVG logo â€” replicates the Noctis Edge brand mark (shield + N + circuit dots).
 # Pure XML text: no binary, no external references, no scripts.  Safe for DLP/air-gap.
-_LOGO_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 195" role="img" aria-label="Noctis Edge — Security Through Exposure" style="width:200px;height:auto;display:block">
-  <title>Noctis Edge</title>
-  <defs>
-    <linearGradient id="ne2-sg" x1="20%" y1="0%" x2="80%" y2="100%"><stop offset="0%" stop-color="#263646"/><stop offset="50%" stop-color="#182635"/><stop offset="100%" stop-color="#0c1522"/></linearGradient>
-    <linearGradient id="ne2-bv" x1="100%" y1="10%" x2="0%" y2="90%"><stop offset="0%" stop-color="#4a6a88" stop-opacity="0.65"/><stop offset="100%" stop-color="#1a2838" stop-opacity="0.05"/></linearGradient>
-    <linearGradient id="ne2-n" x1="5%" y1="0%" x2="95%" y2="100%"><stop offset="0%" stop-color="#c8d8e6"/><stop offset="35%" stop-color="#8898a8"/><stop offset="65%" stop-color="#a8bac8"/><stop offset="100%" stop-color="#4a5a68"/></linearGradient>
-    <linearGradient id="ne2-nh" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#e2f0fe" stop-opacity="0.70"/><stop offset="100%" stop-color="#e2f0fe" stop-opacity="0.00"/></linearGradient>
-    <filter id="ne2-gl" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur in="SourceGraphic" stdDeviation="2.2" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
-    <filter id="ne2-gs" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur in="SourceGraphic" stdDeviation="1.4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
-  </defs>
-  <path d="M112 8 L64 22 L50 54 L50 92 Q54 132 112 152 Q170 132 174 92 L174 54 L160 22 Z" fill="url(#ne2-sg)" stroke="#38587a" stroke-width="1.5"/>
-  <path d="M112 8 L64 22 L50 54 L62 50 L78 24 Z" fill="url(#ne2-bv)"/>
-  <path d="M112 15 L70 27 L58 56 L58 92 Q62 127 112 145 Q162 127 166 92 L166 56 L154 27 Z" fill="none" stroke="#486888" stroke-width="0.9" opacity="0.55"/>
-  <line x1="112" y1="8" x2="50" y2="54" stroke="#6a8aa8" stroke-width="1" opacity="0.40"/>
-  <rect x="72" y="36" width="18" height="84" rx="2.5" fill="url(#ne2-n)"/>
-  <rect x="72" y="36" width="18" height="28" rx="2.5" fill="url(#ne2-nh)"/>
-  <rect x="134" y="36" width="18" height="84" rx="2.5" fill="url(#ne2-n)"/>
-  <rect x="134" y="36" width="18" height="28" rx="2.5" fill="url(#ne2-nh)"/>
-  <polygon points="90,36 108,36 134,120 116,120" fill="url(#ne2-n)"/>
-  <rect x="175" y="24" width="9" height="9" rx="1.5" fill="#1e3c58" opacity="0.90"/>
-  <rect x="187" y="24" width="9" height="9" rx="1.5" fill="#1a4870" opacity="0.84"/>
-  <rect x="199" y="24" width="8" height="8" rx="1.2" fill="#165886" opacity="0.78"/>
-  <rect x="210" y="24" width="8" height="8" rx="1.2" fill="#126898" opacity="0.73"/>
-  <rect x="220" y="24" width="7" height="7" rx="1" fill="#0e7aac" opacity="0.68" filter="url(#ne2-gs)"/>
-  <rect x="230" y="24" width="7" height="7" rx="1" fill="#088ec0" opacity="0.70" filter="url(#ne2-gs)"/>
-  <rect x="239" y="24" width="6" height="6" rx="1" fill="#04a4d4" opacity="0.73" filter="url(#ne2-gl)"/>
-  <rect x="248" y="24" width="6" height="6" rx="1" fill="#00b8e6" opacity="0.76" filter="url(#ne2-gl)"/>
-  <rect x="256" y="24" width="5" height="5" rx="0.8" fill="#00ccf4" opacity="0.78" filter="url(#ne2-gl)"/>
-  <rect x="263" y="24" width="5" height="5" rx="0.8" fill="#00d4ff" opacity="0.80" filter="url(#ne2-gl)"/>
-  <rect x="180" y="36" width="9" height="9" rx="1.5" fill="#203e5c" opacity="0.92"/>
-  <rect x="192" y="36" width="9" height="9" rx="1.5" fill="#1c4c72" opacity="0.86"/>
-  <rect x="204" y="36" width="8" height="8" rx="1.2" fill="#185a88" opacity="0.80"/>
-  <rect x="215" y="36" width="8" height="8" rx="1.2" fill="#126c9c" opacity="0.74"/>
-  <rect x="225" y="36" width="7" height="7" rx="1" fill="#0c7eb0" opacity="0.70" filter="url(#ne2-gs)"/>
-  <rect x="235" y="36" width="7" height="7" rx="1" fill="#0690c2" opacity="0.72" filter="url(#ne2-gs)"/>
-  <rect x="244" y="36" width="6" height="6" rx="1" fill="#02a6d6" opacity="0.74" filter="url(#ne2-gl)"/>
-  <rect x="253" y="36" width="6" height="6" rx="1" fill="#00bce8" opacity="0.77" filter="url(#ne2-gl)"/>
-  <rect x="261" y="36" width="5" height="5" rx="0.8" fill="#00d0f8" opacity="0.79" filter="url(#ne2-gl)"/>
-  <rect x="268" y="36" width="5" height="5" rx="0.8" fill="#00d4ff" opacity="0.82" filter="url(#ne2-gl)"/>
-  <rect x="175" y="48" width="9" height="9" rx="1.5" fill="#223e5e" opacity="0.90"/>
-  <rect x="187" y="48" width="9" height="9" rx="1.5" fill="#1c4c74" opacity="0.85"/>
-  <rect x="199" y="48" width="8" height="8" rx="1.2" fill="#165c8c" opacity="0.79"/>
-  <rect x="210" y="48" width="8" height="8" rx="1.2" fill="#106ea0" opacity="0.73"/>
-  <rect x="220" y="48" width="7" height="7" rx="1" fill="#0a80b2" opacity="0.69" filter="url(#ne2-gs)"/>
-  <rect x="230" y="48" width="7" height="7" rx="1" fill="#0494c4" opacity="0.71" filter="url(#ne2-gs)"/>
-  <rect x="239" y="48" width="6" height="6" rx="1" fill="#00a8d8" opacity="0.74" filter="url(#ne2-gl)"/>
-  <rect x="248" y="48" width="6" height="6" rx="1" fill="#00bcea" opacity="0.76" filter="url(#ne2-gl)"/>
-  <rect x="256" y="48" width="5" height="5" rx="0.8" fill="#00d0fa" opacity="0.78" filter="url(#ne2-gl)"/>
-  <rect x="263" y="48" width="5" height="5" rx="0.8" fill="#00d4ff" opacity="0.80" filter="url(#ne2-gl)"/>
-  <rect x="180" y="60" width="9" height="9" rx="1.5" fill="#223e5e" opacity="0.91"/>
-  <rect x="192" y="60" width="9" height="9" rx="1.5" fill="#1c4e76" opacity="0.85"/>
-  <rect x="204" y="60" width="8" height="8" rx="1.2" fill="#165e8e" opacity="0.79"/>
-  <rect x="215" y="60" width="8" height="8" rx="1.2" fill="#1070a2" opacity="0.73"/>
-  <rect x="225" y="60" width="7" height="7" rx="1" fill="#0884b4" opacity="0.69" filter="url(#ne2-gs)"/>
-  <rect x="235" y="60" width="7" height="7" rx="1" fill="#0498c6" opacity="0.71" filter="url(#ne2-gs)"/>
-  <rect x="244" y="60" width="6" height="6" rx="1" fill="#00aadc" opacity="0.74" filter="url(#ne2-gl)"/>
-  <rect x="253" y="60" width="6" height="6" rx="1" fill="#00beec" opacity="0.76" filter="url(#ne2-gl)"/>
-  <rect x="261" y="60" width="5" height="5" rx="0.8" fill="#00d0fa" opacity="0.78" filter="url(#ne2-gl)"/>
-  <rect x="268" y="60" width="5" height="5" rx="0.8" fill="#00d4ff" opacity="0.81" filter="url(#ne2-gl)"/>
-  <rect x="175" y="72" width="9" height="9" rx="1.5" fill="#203c5c" opacity="0.88"/>
-  <rect x="187" y="72" width="9" height="9" rx="1.5" fill="#1a4a72" opacity="0.83"/>
-  <rect x="199" y="72" width="8" height="8" rx="1.2" fill="#145888" opacity="0.77"/>
-  <rect x="210" y="72" width="8" height="8" rx="1.2" fill="#0e6898" opacity="0.71"/>
-  <rect x="220" y="72" width="7" height="7" rx="1" fill="#087cac" opacity="0.67" filter="url(#ne2-gs)"/>
-  <rect x="230" y="72" width="7" height="7" rx="1" fill="#0490be" opacity="0.69" filter="url(#ne2-gs)"/>
-  <rect x="239" y="72" width="6" height="6" rx="1" fill="#00a6d2" opacity="0.72" filter="url(#ne2-gl)"/>
-  <rect x="248" y="72" width="6" height="6" rx="1" fill="#00bae4" opacity="0.75" filter="url(#ne2-gl)"/>
-  <rect x="256" y="72" width="5" height="5" rx="0.8" fill="#00ccf4" opacity="0.77" filter="url(#ne2-gl)"/>
-  <rect x="263" y="72" width="5" height="5" rx="0.8" fill="#00d4ff" opacity="0.80" filter="url(#ne2-gl)"/>
-  <rect x="180" y="84" width="9" height="9" rx="1.5" fill="#1e3a5a" opacity="0.88"/>
-  <rect x="192" y="84" width="9" height="9" rx="1.5" fill="#1a4870" opacity="0.83"/>
-  <rect x="204" y="84" width="8" height="8" rx="1.2" fill="#145484" opacity="0.77"/>
-  <rect x="215" y="84" width="8" height="8" rx="1.2" fill="#0e6494" opacity="0.71"/>
-  <rect x="225" y="84" width="7" height="7" rx="1" fill="#0876a6" opacity="0.67" filter="url(#ne2-gs)"/>
-  <rect x="235" y="84" width="7" height="7" rx="1" fill="#028abc" opacity="0.69" filter="url(#ne2-gs)"/>
-  <rect x="244" y="84" width="6" height="6" rx="1" fill="#009ed0" opacity="0.72" filter="url(#ne2-gl)"/>
-  <rect x="253" y="84" width="6" height="6" rx="1" fill="#00b4e4" opacity="0.75" filter="url(#ne2-gl)"/>
-  <rect x="261" y="84" width="5" height="5" rx="0.8" fill="#00c8f4" opacity="0.77" filter="url(#ne2-gl)"/>
-  <rect x="268" y="84" width="5" height="5" rx="0.8" fill="#00d4ff" opacity="0.79" filter="url(#ne2-gl)"/>
-  <rect x="175" y="96" width="9" height="9" rx="1.5" fill="#1c3858" opacity="0.85"/>
-  <rect x="187" y="96" width="9" height="9" rx="1.5" fill="#184470" opacity="0.80"/>
-  <rect x="199" y="96" width="8" height="8" rx="1.2" fill="#125080" opacity="0.74"/>
-  <rect x="210" y="96" width="7" height="7" rx="1" fill="#0c608e" opacity="0.68"/>
-  <rect x="220" y="96" width="7" height="7" rx="1" fill="#0870a0" opacity="0.64" filter="url(#ne2-gs)"/>
-  <rect x="229" y="96" width="6" height="6" rx="1" fill="#0284b2" opacity="0.66" filter="url(#ne2-gs)"/>
-  <rect x="238" y="96" width="6" height="6" rx="1" fill="#0098c6" opacity="0.69" filter="url(#ne2-gl)"/>
-  <rect x="246" y="96" width="5" height="5" rx="0.8" fill="#00aeda" opacity="0.72" filter="url(#ne2-gl)"/>
-  <rect x="253" y="96" width="5" height="5" rx="0.8" fill="#00c2ec" opacity="0.74" filter="url(#ne2-gl)"/>
-  <rect x="180" y="108" width="9" height="9" rx="1.5" fill="#1a3454" opacity="0.80"/>
-  <rect x="192" y="108" width="8" height="8" rx="1.2" fill="#163e66" opacity="0.75"/>
-  <rect x="203" y="108" width="8" height="8" rx="1.2" fill="#104a78" opacity="0.68"/>
-  <rect x="214" y="108" width="7" height="7" rx="1" fill="#0a5886" opacity="0.63"/>
-  <rect x="223" y="108" width="7" height="7" rx="1" fill="#066898" opacity="0.60" filter="url(#ne2-gs)"/>
-  <rect x="232" y="108" width="6" height="6" rx="1" fill="#027cac" opacity="0.62" filter="url(#ne2-gs)"/>
-  <rect x="240" y="108" width="5" height="5" rx="0.8" fill="#0092c0" opacity="0.64" filter="url(#ne2-gl)"/>
-  <rect x="247" y="108" width="5" height="5" rx="0.8" fill="#00a8d4" opacity="0.66" filter="url(#ne2-gl)"/>
-  <line x1="175" y1="28.5" x2="268" y2="28.5" stroke="#1e6898" stroke-width="0.55" opacity="0.28"/>
-  <line x1="180" y1="40.5" x2="273" y2="40.5" stroke="#228ab0" stroke-width="0.55" opacity="0.30"/>
-  <line x1="175" y1="52.5" x2="268" y2="52.5" stroke="#228eb8" stroke-width="0.55" opacity="0.30"/>
-  <line x1="180" y1="64.5" x2="273" y2="64.5" stroke="#2090bc" stroke-width="0.55" opacity="0.30"/>
-  <line x1="175" y1="76.5" x2="268" y2="76.5" stroke="#1e8cba" stroke-width="0.55" opacity="0.28"/>
-  <line x1="180" y1="88.5" x2="273" y2="88.5" stroke="#1c88b4" stroke-width="0.55" opacity="0.28"/>
-  <line x1="175" y1="100.5" x2="256" y2="100.5" stroke="#1880a8" stroke-width="0.55" opacity="0.26"/>
-  <line x1="180" y1="112.5" x2="252" y2="112.5" stroke="#147498" stroke-width="0.55" opacity="0.22"/>
-  <circle cx="272" cy="29" r="2.2" fill="#00d4ff" opacity="0.65" filter="url(#ne2-gl)"/>
-  <circle cx="276" cy="41" r="1.8" fill="#00d4ff" opacity="0.60" filter="url(#ne2-gl)"/>
-  <circle cx="272" cy="53" r="2.0" fill="#00d4ff" opacity="0.62" filter="url(#ne2-gl)"/>
-  <circle cx="276" cy="65" r="1.8" fill="#00d4ff" opacity="0.60" filter="url(#ne2-gl)"/>
-  <circle cx="272" cy="77" r="2.0" fill="#00d4ff" opacity="0.62" filter="url(#ne2-gl)"/>
-  <circle cx="276" cy="89" r="1.8" fill="#00d4ff" opacity="0.58" filter="url(#ne2-gl)"/>
-  <text x="134" y="175" font-family="Arial,Helvetica,sans-serif" font-size="20" font-weight="700" text-anchor="middle" fill="#b2c8d8" letter-spacing="8">NOCTIS EDGE</text>
-  <text x="134" y="190" font-family="Arial,Helvetica,sans-serif" font-size="9" font-weight="400" text-anchor="middle" fill="#506070" letter-spacing="4">SECURITY THROUGH EXPOSURE</text>
-</svg>"""
+_LOGO_SVG = """
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1254 1254" role="img" aria-label="Noctis Edge â€” Security Through Exposure" style="width:200px;height:auto;display:block">
+<path d="M 631,638 L 631,667 L 630,668 L 629,667 L 629,748 L 629,741 L 630,740 L 631,741 L 631,751 Z" fill="#8d9daa" stroke="none"/>
+<path d="M 586,400 L 588,402 L 589,401 L 592,405 L 591,406 L 592,405 L 595,409 L 594,410 L 595,411 L 596,410 L 599,413 L 600,415 L 599,416 L 600,417 L 601,416 L 604,420 L 603,421 L 604,422 L 605,421 L 608,424 L 607,426 L 609,428 L 610,427 L 613,431 L 612,432 L 613,433 L 614,432 L 617,436 L 616,437 L 617,438 L 618,437 L 621,441 L 620,442 L 626,446 L 624,447 L 626,449 L 627,447 L 628,448 L 628,452 L 629,453 L 630,452 L 627,446 L 624,443 L 624,442 L 620,439 L 621,438 L 620,437 L 619,438 L 618,437 L 618,436 L 615,433 L 616,432 L 615,432 L 611,428 L 612,427 L 607,423 L 608,422 L 607,421 L 606,422 L 602,417 L 603,416 L 602,415 L 601,416 L 598,412 L 599,411 L 598,410 L 597,411 L 594,407 L 595,406 L 594,405 L 593,406 L 589,401 L 590,400 L 589,401 L 588,400 L 587,401 Z" fill="#8d9daa" stroke="none"/>
+<path d="M 528,398 L 530,448 L 530,588 L 530,416 Z" fill="#8d9daa" stroke="none"/>
+<path d="M 527,327 L 472,326 L 491,344 L 491,365 L 488,364 L 488,361 L 489,520 L 491,389 L 495,397 L 509,392 L 517,394 L 519,390 L 526,386 L 527,388 L 528,384 L 543,380 L 541,377 L 545,377 L 543,375 L 548,374 L 550,369 L 556,369 L 558,365 L 560,367 L 549,357 L 551,356 Z" fill="#8d9daa" stroke="none"/>
+<path d="M 598,229 L 537,260 L 530,242 L 475,263 L 402,284 L 401,336 L 403,300 L 406,306 L 404,315 L 412,322 L 414,335 L 418,336 L 416,342 L 421,348 L 423,339 L 423,357 L 425,328 L 424,386 L 425,299 L 466,289 L 518,270 Z" fill="#8d9daa" stroke="none"/>
+<path d="M 634,180 L 635,326 L 638,326 L 639,318 L 644,314 L 658,318 L 663,314 L 659,312 L 666,308 L 667,332 L 668,259 L 669,354 L 669,259 L 685,269 L 683,258 L 686,248 L 690,246 L 698,255 L 695,278 L 699,256 Z" fill="#8d9daa" stroke="none"/>
+<path d="M 627,170 L 627,323 L 627,318 L 629,317 L 630,320 L 631,296 L 632,327 L 631,231 L 631,239 L 629,239 L 629,236 L 629,269 L 627,269 Z" fill="#8d9daa" stroke="none"/>
+<path d="M 599,927 L 604,927 L 605,928 L 611,928 L 612,929 L 617,929 L 618,930 L 633,930 L 634,929 L 640,929 L 641,930 L 645,930 L 646,929 L 652,929 L 653,928 L 655,928 L 656,927 L 661,927 L 645,927 L 644,928 L 632,928 L 631,929 L 624,929 L 623,928 L 615,928 L 614,927 Z" fill="#26445c" stroke="none"/>
+<path d="M 846,925 L 925,925 L 926,924 L 936,924 L 856,924 L 855,925 Z" fill="#26445c" stroke="none"/>
+<path d="M 326,924 L 331,924 L 332,925 L 398,925 L 393,925 L 392,924 Z" fill="#26445c" stroke="none"/>
+<path d="M 590,922 L 606,922 L 607,921 L 618,921 L 619,920 L 637,920 L 638,921 L 649,921 L 650,922 L 666,922 L 652,922 L 651,921 L 652,920 L 654,920 L 644,920 L 643,919 L 617,919 L 616,920 L 604,920 L 605,921 L 604,922 Z" fill="#26445c" stroke="none"/>
+<path d="M 692,661 L 690,661 L 689,662 L 688,662 L 689,662 L 690,663 L 689,664 L 689,665 L 688,666 L 688,667 L 687,668 L 687,669 L 686,670 L 685,670 L 685,672 L 684,673 L 684,676 L 683,677 L 684,678 L 681,681 L 682,682 L 681,683 L 682,682 L 681,681 L 684,678 L 685,678 L 686,679 L 685,680 L 687,678 L 686,677 L 688,675 L 689,675 L 691,673 L 692,673 Z" fill="#26445c" stroke="none"/>
+<path d="M 550,652 L 566,667 L 566,669 L 569,672 L 570,671 L 573,673 L 572,674 L 574,676 L 575,675 L 576,677 L 579,680 L 580,679 L 582,682 L 583,682 L 586,685 L 590,687 L 593,690 L 594,690 L 596,692 L 600,694 L 603,697 L 603,696 L 601,694 L 598,693 L 593,688 L 592,688 L 589,685 L 588,685 L 584,681 L 583,681 L 579,677 L 578,677 L 574,673 L 573,673 L 568,668 L 567,668 Z" fill="#26445c" stroke="none"/>
+<path d="M 687,643 L 687,644 L 688,645 L 688,647 L 687,648 L 687,651 L 686,652 L 686,657 L 685,658 L 686,658 L 687,659 L 689,659 L 690,658 L 693,658 L 692,657 L 692,651 L 693,650 L 693,643 Z" fill="#26445c" stroke="none"/>
+<path d="M 678,625 L 678,631 L 679,632 L 679,640 L 678,641 L 689,641 L 687,641 L 686,640 L 687,639 L 692,639 L 692,637 L 691,637 L 690,638 L 689,637 L 689,629 L 690,628 L 690,627 L 691,626 L 692,626 L 690,626 L 689,625 L 690,624 L 692,624 L 681,624 L 680,625 Z" fill="#26445c" stroke="none"/>
+<path d="M 704,588 L 705,588 L 706,589 L 705,590 L 704,590 L 704,592 L 705,592 L 706,593 L 706,601 L 705,602 L 705,603 L 706,604 L 705,605 L 720,605 L 720,588 Z" fill="#26445c" stroke="none"/>
+<path d="M 678,585 L 678,605 L 685,605 L 685,604 L 686,603 L 691,603 L 690,603 L 688,601 L 688,600 L 687,599 L 687,588 L 686,587 L 687,586 L 692,586 L 681,586 L 680,585 Z" fill="#26445c" stroke="none"/>
+<path d="M 678,548 L 678,566 L 693,566 L 694,567 L 694,577 L 694,567 L 693,566 L 693,547 L 684,547 L 683,548 Z" fill="#26445c" stroke="none"/>
+<path d="M 831,529 L 830,528 L 825,534 L 824,533 L 822,535 L 823,536 L 816,544 L 814,543 L 730,543 L 729,545 L 730,546 L 774,546 L 775,545 L 781,545 L 782,546 L 784,545 L 810,545 L 811,546 L 814,545 L 815,546 L 829,533 Z" fill="#26445c" stroke="none"/>
+<path d="M 852,475 L 850,475 L 840,485 L 839,485 L 835,489 L 834,488 L 830,492 L 831,493 L 829,495 L 828,494 L 824,498 L 825,499 L 823,501 L 822,501 L 806,517 L 821,502 L 822,502 L 823,503 L 822,504 L 828,498 L 829,498 L 850,477 L 849,476 L 850,475 Z" fill="#26445c" stroke="none"/>
+<path d="M 817,466 L 817,476 L 826,476 L 826,466 Z" fill="#26445c" stroke="none"/>
+<path d="M 836,437 L 830,437 L 829,438 L 828,438 L 825,441 L 824,440 L 813,451 L 814,452 L 814,453 L 813,454 L 812,454 L 811,453 L 807,457 L 808,458 L 809,458 L 811,456 L 812,457 L 814,455 L 813,454 L 814,453 L 815,453 L 821,447 L 822,447 L 828,441 L 827,440 L 828,439 L 829,439 L 830,438 L 836,438 Z" fill="#26445c" stroke="none"/>
+<path d="M 679,433 L 678,525 L 684,527 L 681,528 L 681,535 L 684,538 L 684,545 L 692,545 L 693,542 L 694,545 L 692,541 L 693,525 L 683,525 L 686,523 L 693,523 L 693,506 L 685,507 L 683,505 L 685,504 L 685,493 L 691,490 L 691,488 L 687,486 L 686,472 L 691,469 L 690,470 L 685,466 L 684,453 L 688,450 L 691,450 L 692,434 L 693,448 L 695,449 L 693,450 L 709,450 L 695,449 L 693,445 L 693,434 Z" fill="#26445c" stroke="none"/>
+<path d="M 794,424 L 794,433 L 795,434 L 794,435 L 797,435 L 798,434 L 805,434 L 804,433 L 804,424 L 796,424 L 796,433 L 795,434 L 794,433 Z" fill="#26445c" stroke="none"/>
+<path d="M 527,423 L 526,454 L 525,448 L 524,451 L 516,451 L 512,449 L 513,451 L 511,452 L 508,448 L 506,449 L 505,447 L 502,447 L 503,448 L 500,451 L 497,449 L 498,450 L 495,452 L 494,451 L 493,454 L 492,434 L 491,508 L 492,502 L 493,510 L 499,506 L 504,510 L 511,510 L 513,507 L 517,511 L 523,508 L 524,505 L 522,502 L 524,502 L 523,501 L 525,499 L 526,518 Z" fill="#26445c" stroke="none"/>
+<path d="M 742,422 L 741,423 L 729,423 L 728,424 L 728,425 L 729,426 L 729,427 L 730,428 L 731,427 L 732,428 L 732,429 L 735,429 L 736,430 L 737,429 L 738,429 L 739,430 L 738,431 L 738,432 L 737,433 L 737,434 L 736,435 L 730,435 L 736,435 L 737,434 L 738,435 L 738,436 L 738,435 L 737,434 L 738,433 L 738,431 L 739,430 L 742,430 Z" fill="#26445c" stroke="none"/>
+<path d="M 879,417 L 876,414 L 870,416 L 868,418 L 869,419 L 871,417 L 872,417 L 871,416 L 872,415 L 874,415 L 875,416 L 874,417 L 876,416 L 878,419 L 877,420 L 877,422 L 878,423 L 875,426 L 874,425 L 872,425 L 871,426 L 868,424 L 869,422 L 868,423 L 868,425 L 866,427 L 865,426 L 857,434 L 864,427 L 865,428 L 865,429 L 858,436 L 856,437 L 843,437 L 848,437 L 849,438 L 856,438 L 857,437 L 858,438 L 869,427 L 871,428 L 875,428 L 877,427 L 880,423 L 880,420 L 878,419 Z" fill="#26445c" stroke="none"/>
+<path d="M 405,413 L 412,460 L 418,484 L 421,488 L 420,491 L 427,507 L 426,509 L 428,509 L 430,514 L 434,513 L 437,518 L 434,518 L 434,525 L 438,534 L 438,526 L 440,527 L 445,522 L 446,524 L 447,522 L 450,523 L 451,530 L 454,527 L 456,530 L 457,528 L 453,524 L 454,521 L 451,519 L 452,516 L 449,514 L 448,506 L 446,506 L 447,503 L 445,503 L 446,500 L 444,500 L 445,497 L 443,497 L 444,494 L 442,494 L 441,485 L 439,485 L 438,474 L 436,474 L 437,471 L 434,466 L 427,422 L 428,440 L 425,429 L 424,431 L 423,429 L 414,431 L 420,430 L 421,434 L 419,436 L 417,433 L 414,437 L 413,433 L 409,436 L 406,426 L 409,421 L 406,420 Z" fill="#26445c" stroke="none"/>
+<path d="M 708,405 L 707,406 L 706,405 L 702,405 L 701,406 L 696,406 L 696,417 L 702,417 L 703,416 L 704,417 L 706,417 L 707,416 L 708,416 Z" fill="#26445c" stroke="none"/>
+<path d="M 727,405 L 727,413 L 728,414 L 728,416 L 727,417 L 727,418 L 741,418 L 742,417 L 743,417 L 743,404 L 740,404 L 739,405 L 732,405 L 731,404 L 728,404 Z" fill="#26445c" stroke="none"/>
+<path d="M 631,404 L 631,408 L 630,409 L 629,408 L 629,407 L 629,416 L 628,417 L 627,416 L 627,409 L 627,428 L 628,429 L 628,432 L 631,432 L 632,433 L 632,409 L 631,408 Z" fill="#26445c" stroke="none"/>
+<path d="M 584,399 L 598,417 L 576,424 L 579,429 L 569,435 L 573,442 L 567,447 L 564,437 L 561,439 L 555,431 L 613,510 L 620,512 L 617,515 L 625,511 L 621,506 L 624,494 L 630,498 L 630,494 L 634,497 L 644,491 L 642,496 L 649,496 L 645,500 L 657,509 L 659,526 L 667,534 L 667,578 L 668,381 L 667,438 L 666,407 L 662,409 L 660,399 L 650,393 L 635,404 L 634,390 L 633,459 Z" fill="#26445c" stroke="none"/>
+<path d="M 710,380 L 710,392 L 709,393 L 710,392 L 711,393 L 725,393 L 724,392 L 724,379 L 723,380 L 716,380 L 715,379 L 712,379 L 711,380 Z" fill="#26445c" stroke="none"/>
+<path d="M 679,363 L 679,375 L 678,376 L 678,378 L 693,378 L 693,363 L 692,364 L 685,364 L 684,363 Z" fill="#26445c" stroke="none"/>
+<path d="M 747,335 L 747,338 L 748,339 L 748,347 L 747,348 L 747,349 L 746,350 L 748,348 L 749,349 L 760,349 L 760,335 Z" fill="#26445c" stroke="none"/>
+<path d="M 723,312 L 724,313 L 726,313 L 728,315 L 728,321 L 727,322 L 726,322 L 725,321 L 724,322 L 723,322 L 722,321 L 721,322 L 720,322 L 719,321 L 717,321 L 719,321 L 722,324 L 723,324 L 728,329 L 730,329 L 731,328 L 731,327 L 732,326 L 732,325 L 733,324 L 731,322 L 729,322 L 728,321 L 728,315 L 726,313 L 724,313 Z" fill="#26445c" stroke="none"/>
+<path d="M 693,303 L 693,310 L 691,312 L 681,312 L 680,311 L 679,312 L 679,324 L 681,324 L 682,323 L 685,323 L 687,321 L 688,321 L 689,322 L 691,322 L 692,321 L 693,322 L 693,319 L 693,320 L 692,321 L 690,319 L 690,314 L 689,313 L 690,312 L 692,312 L 693,311 Z" fill="#26445c" stroke="none"/>
+<path d="M 736,286 L 736,288 L 742,294 L 742,295 L 743,296 L 744,296 L 745,297 L 745,300 L 745,297 L 744,296 L 744,295 L 745,294 L 747,294 L 748,295 L 749,295 L 751,293 L 752,293 L 753,292 L 753,290 L 752,289 L 751,290 L 750,289 L 749,290 L 748,290 L 745,293 L 744,292 L 743,293 L 740,290 L 740,287 L 739,286 L 740,285 L 739,285 L 738,286 Z" fill="#26445c" stroke="none"/>
+<path d="M 695,229 L 695,230 L 696,231 L 696,234 L 695,235 L 695,237 L 697,237 L 698,238 L 702,238 L 702,233 L 701,232 L 701,230 L 697,230 L 696,229 Z" fill="#26445c" stroke="none"/>
+<path d="M 578,214 L 580,216 L 579,217 L 578,217 L 576,215 L 578,217 L 575,219 L 574,218 L 572,219 L 571,221 L 570,220 L 566,223 L 552,230 L 560,226 L 562,228 L 561,229 L 562,230 L 561,231 L 558,230 L 559,230 L 560,232 L 561,232 L 562,234 L 563,234 L 566,237 L 564,238 L 567,238 L 569,240 L 571,240 L 572,241 L 568,243 L 566,245 L 563,246 L 582,237 L 584,235 L 585,235 L 586,233 L 587,234 L 586,233 L 587,232 L 589,233 L 588,232 L 591,230 L 592,231 L 591,230 L 592,229 L 594,230 L 593,228 L 591,229 L 590,228 L 591,227 L 590,228 L 589,227 L 587,227 L 586,225 L 582,222 L 583,220 L 581,216 L 580,216 Z" fill="#26445c" stroke="none"/>
+<path d="M 1075,966 L 1075,988 L 1091,988 L 1091,987 L 1078,987 L 1077,986 L 1077,984 L 1076,983 L 1076,979 L 1078,977 L 1089,977 L 1089,976 L 1077,976 L 1076,975 L 1076,968 L 1078,966 L 1089,966 L 1090,967 L 1091,966 Z" fill="#e5ecef" stroke="none"/>
+<path d="M 1036,966 L 1036,988 L 1037,988 L 1037,980 L 1038,979 L 1044,979 L 1046,981 L 1046,982 L 1048,984 L 1048,985 L 1051,988 L 1053,988 L 1051,986 L 1051,985 L 1049,983 L 1049,982 L 1047,980 L 1049,978 L 1050,978 L 1053,975 L 1053,969 L 1050,966 Z" fill="#e5ecef" stroke="none"/>
+<path d="M 995,966 L 995,984 L 996,985 L 996,986 L 999,988 L 1002,988 L 1003,989 L 1004,988 L 1005,989 L 1006,988 L 1009,988 L 1012,985 L 1012,984 L 1013,983 L 1013,966 L 1012,966 L 1012,981 L 1011,982 L 1010,985 L 1008,987 L 1006,987 L 1005,988 L 1002,988 L 1001,987 L 1000,987 L 997,984 L 997,983 L 996,982 L 996,966 Z" fill="#e5ecef" stroke="none"/>
+<path d="M 892,967 L 891,967 L 890,966 L 877,966 L 877,988 L 878,988 L 878,981 L 879,980 L 887,980 L 888,979 L 891,979 L 893,977 L 893,976 L 894,975 L 894,970 L 893,969 L 893,968 Z" fill="#e5ecef" stroke="none"/>
+<path d="M 837,966 L 838,967 L 838,968 L 841,971 L 841,972 L 843,974 L 843,975 L 845,977 L 841,981 L 841,982 L 839,984 L 839,985 L 836,988 L 837,988 L 838,989 L 839,988 L 839,987 L 841,985 L 841,984 L 843,982 L 843,981 L 845,979 L 846,979 L 849,982 L 849,983 L 853,988 L 855,988 L 853,986 L 853,985 L 851,983 L 851,982 L 847,977 L 848,976 L 848,975 L 850,973 L 850,972 L 852,970 L 852,969 L 855,966 L 852,966 L 852,967 L 850,969 L 850,970 L 846,975 L 843,972 L 843,971 L 841,969 L 841,968 L 839,966 Z" fill="#e5ecef" stroke="none"/>
+<path d="M 737,966 L 737,988 L 738,988 L 738,979 L 740,977 L 752,977 L 754,979 L 754,988 L 755,988 L 755,966 L 754,966 L 754,975 L 753,976 L 739,976 L 738,975 L 738,966 Z" fill="#e5ecef" stroke="none"/>
+<path d="M 655,966 L 655,983 L 656,984 L 656,985 L 659,988 L 661,988 L 662,989 L 665,989 L 666,988 L 669,988 L 670,987 L 671,987 L 673,984 L 673,966 L 672,966 L 672,982 L 671,983 L 671,984 L 668,987 L 666,987 L 665,988 L 663,988 L 662,987 L 660,987 L 657,984 L 657,983 L 656,982 L 656,966 Z" fill="#e5ecef" stroke="none"/>
+<path d="M 573,966 L 574,967 L 573,968 L 573,988 L 575,988 L 575,980 L 576,979 L 582,979 L 584,981 L 584,982 L 586,984 L 586,985 L 588,987 L 588,988 L 590,988 L 590,987 L 588,985 L 588,984 L 585,981 L 585,979 L 586,978 L 588,978 L 590,976 L 590,975 L 591,974 L 591,970 L 590,969 L 590,968 L 587,966 Z" fill="#e5ecef" stroke="none"/>
+<path d="M 532,966 L 532,988 L 533,988 L 533,979 L 535,977 L 548,977 L 549,978 L 549,988 L 550,989 L 551,988 L 551,966 L 549,966 L 549,975 L 548,976 L 535,976 L 534,975 L 534,972 L 533,971 L 533,967 L 534,966 Z" fill="#e5ecef" stroke="none"/>
+<path d="M 512,966 L 495,966 L 495,967 L 496,966 L 497,966 L 498,967 L 501,967 L 502,968 L 502,969 L 503,970 L 503,974 L 502,975 L 502,988 L 503,989 L 504,988 L 504,968 L 506,966 L 507,967 L 508,966 L 509,967 L 510,966 Z" fill="#e5ecef" stroke="none"/>
+<path d="M 339,966 L 339,988 L 341,988 L 341,980 L 342,979 L 348,979 L 350,981 L 350,982 L 352,984 L 352,985 L 354,987 L 354,988 L 356,988 L 355,987 L 355,986 L 353,984 L 353,983 L 351,981 L 351,980 L 353,978 L 354,978 L 356,976 L 356,974 L 357,973 L 357,971 L 356,970 L 356,968 L 353,966 Z" fill="#e5ecef" stroke="none"/>
+<path d="M 298,966 L 298,982 L 299,983 L 299,985 L 302,988 L 304,988 L 305,989 L 309,989 L 310,988 L 313,988 L 316,985 L 316,983 L 317,982 L 317,966 L 315,966 L 316,967 L 316,969 L 315,970 L 315,978 L 316,979 L 316,981 L 313,986 L 312,986 L 311,987 L 309,987 L 308,988 L 307,987 L 304,987 L 300,983 L 300,968 L 299,967 L 300,966 Z" fill="#e5ecef" stroke="none"/>
+<path d="M 223,966 L 223,988 L 239,988 L 239,987 L 226,987 L 225,986 L 225,978 L 226,977 L 237,977 L 237,976 L 226,976 L 225,975 L 225,967 L 226,966 L 239,966 Z" fill="#e5ecef" stroke="none"/>
+<path d="M 963,965 L 962,966 L 960,966 L 959,967 L 958,967 L 958,968 L 957,969 L 957,973 L 959,976 L 961,976 L 962,977 L 965,977 L 966,978 L 968,978 L 972,982 L 972,983 L 971,984 L 971,985 L 969,987 L 967,987 L 966,988 L 963,988 L 962,987 L 960,987 L 957,985 L 956,986 L 957,987 L 958,987 L 959,988 L 961,988 L 962,989 L 967,989 L 968,988 L 970,988 L 973,985 L 973,980 L 970,977 L 968,977 L 967,976 L 963,976 L 962,975 L 961,975 L 958,972 L 958,970 L 962,966 L 967,966 L 968,967 L 970,967 L 971,968 L 972,968 L 972,967 L 971,966 L 968,966 L 967,965 Z" fill="#e5ecef" stroke="none"/>
+<path d="M 922,965 L 921,966 L 920,966 L 919,967 L 918,967 L 915,970 L 915,971 L 914,972 L 914,975 L 913,976 L 913,977 L 914,978 L 914,982 L 915,983 L 915,984 L 918,987 L 919,987 L 920,988 L 922,988 L 923,989 L 926,989 L 927,988 L 930,988 L 931,987 L 932,987 L 934,985 L 934,984 L 935,983 L 935,982 L 936,981 L 936,973 L 935,972 L 935,971 L 934,970 L 934,969 L 932,967 L 931,967 L 930,966 L 929,966 L 928,965 Z" fill="#e5ecef" stroke="none"/>
+<path d="M 801,965 L 801,988 L 816,988 L 816,987 L 803,987 L 802,986 L 802,978 L 803,977 L 815,977 L 815,976 L 803,976 L 802,975 L 802,968 L 804,966 L 816,966 L 802,966 Z" fill="#e5ecef" stroke="none"/>
+<path d="M 699,967 L 696,970 L 696,971 L 695,972 L 695,982 L 696,983 L 696,984 L 699,987 L 700,987 L 701,988 L 703,988 L 704,989 L 708,989 L 709,988 L 712,988 L 714,986 L 715,986 L 715,977 L 707,977 L 707,978 L 708,978 L 709,977 L 712,977 L 714,979 L 714,984 L 711,987 L 709,987 L 708,988 L 705,988 L 704,987 L 702,987 L 697,982 L 697,980 L 696,979 L 696,974 L 697,973 L 698,970 L 700,968 L 701,968 L 704,966 L 708,966 L 709,967 L 711,967 L 713,969 L 714,968 L 714,967 L 713,967 L 712,966 L 710,966 L 709,965 L 704,965 L 703,966 L 701,966 L 700,967 Z" fill="#e5ecef" stroke="none"/>
+<path d="M 621,965 L 620,966 L 617,966 L 616,967 L 615,967 L 613,969 L 613,970 L 612,971 L 612,972 L 611,973 L 611,980 L 612,981 L 612,983 L 613,984 L 613,985 L 615,987 L 616,987 L 617,988 L 620,988 L 621,989 L 624,989 L 625,988 L 627,988 L 628,987 L 629,987 L 632,984 L 632,983 L 633,982 L 633,980 L 634,979 L 634,975 L 633,974 L 633,971 L 632,970 L 632,969 L 630,967 L 629,967 L 628,966 L 626,966 L 625,965 Z" fill="#e5ecef" stroke="none"/>
+<path d="M 436,965 L 436,966 L 438,968 L 438,969 L 440,971 L 440,972 L 442,974 L 442,975 L 443,976 L 443,977 L 445,979 L 445,988 L 447,988 L 447,979 L 448,978 L 448,977 L 449,976 L 449,975 L 451,973 L 451,972 L 453,970 L 453,969 L 454,968 L 454,967 L 455,966 L 453,966 L 453,967 L 451,969 L 451,970 L 449,972 L 449,973 L 448,974 L 448,975 L 446,977 L 444,975 L 444,974 L 442,972 L 442,971 L 441,970 L 441,969 L 439,967 L 439,966 L 438,965 L 437,966 Z" fill="#e5ecef" stroke="none"/>
+<path d="M 268,965 L 267,966 L 264,966 L 262,968 L 261,968 L 261,969 L 259,971 L 259,974 L 258,975 L 258,979 L 259,980 L 259,983 L 264,988 L 267,988 L 268,989 L 271,989 L 272,988 L 275,988 L 277,986 L 277,985 L 276,985 L 274,987 L 271,987 L 270,988 L 269,988 L 268,987 L 266,987 L 265,986 L 264,986 L 260,980 L 260,974 L 261,973 L 262,970 L 265,967 L 267,967 L 268,966 L 272,966 L 273,967 L 274,967 L 276,969 L 277,969 L 278,968 L 275,966 L 272,966 L 271,965 Z" fill="#e5ecef" stroke="none"/>
+<path d="M 191,965 L 190,966 L 188,966 L 185,969 L 185,972 L 186,973 L 186,974 L 188,976 L 189,976 L 190,977 L 194,977 L 195,978 L 198,979 L 200,981 L 200,984 L 197,987 L 196,987 L 195,988 L 192,988 L 191,987 L 189,987 L 186,985 L 185,986 L 185,987 L 186,987 L 187,988 L 190,988 L 191,989 L 196,989 L 197,988 L 199,988 L 201,986 L 201,985 L 202,984 L 202,980 L 200,978 L 199,978 L 198,977 L 196,977 L 195,976 L 192,976 L 191,975 L 190,975 L 187,972 L 187,970 L 188,969 L 188,968 L 191,966 L 196,966 L 199,968 L 200,968 L 201,967 L 200,967 L 199,966 L 197,966 L 196,965 Z" fill="#e5ecef" stroke="none"/>
+<path d="M 590,924 L 601,924 L 602,925 L 603,924 L 606,924 L 607,925 L 649,925 L 650,924 L 658,924 L 638,924 L 637,923 L 621,923 L 620,924 Z" fill="#e5ecef" stroke="none"/>
+<path d="M 619,811 L 614,819 L 613,830 L 616,839 L 622,845 L 632,848 L 670,848 L 677,854 L 678,861 L 676,866 L 669,871 L 617,871 L 614,880 L 671,880 L 679,877 L 685,870 L 687,863 L 686,851 L 679,842 L 672,839 L 630,838 L 623,831 L 623,823 L 629,816 L 682,815 L 685,806 L 631,806 Z" fill="#e5ecef" stroke="none"/>
+<path d="M 571,806 L 571,823 L 572,824 L 572,868 L 571,869 L 571,876 L 572,877 L 572,879 L 571,880 L 581,880 L 581,806 Z" fill="#e5ecef" stroke="none"/>
+<path d="M 461,806 L 461,815 L 493,815 L 495,817 L 495,878 L 496,879 L 495,880 L 505,880 L 505,817 L 507,815 L 508,816 L 539,815 L 539,806 Z" fill="#e5ecef" stroke="none"/>
+<path d="M 367,812 L 361,823 L 361,864 L 364,871 L 372,878 L 378,880 L 432,880 L 432,871 L 381,871 L 372,865 L 370,859 L 370,828 L 372,822 L 377,817 L 384,815 L 432,815 L 432,806 L 380,806 Z" fill="#e5ecef" stroke="none"/>
+<path d="M 249,815 L 245,825 L 245,862 L 249,872 L 253,876 L 262,880 L 312,880 L 319,877 L 324,873 L 327,868 L 329,859 L 329,828 L 327,819 L 321,811 L 314,807 L 309,806 L 265,806 L 254,810 Z" fill="#e5ecef" stroke="none"/>
+<path d="M 134,806 L 134,880 L 144,880 L 145,821 L 203,880 L 212,880 L 212,806 L 203,806 L 202,864 L 144,806 Z" fill="#e5ecef" stroke="none"/>
+<path d="M 471,325 L 527,326 L 613,432 L 610,429 L 611,427 L 615,431 L 607,425 L 608,423 L 610,425 L 529,325 Z" fill="#e5ecef" stroke="none"/>
+<path d="M 670,260 L 670,494 L 671,379 L 674,389 L 676,367 L 676,270 Z" fill="#e5ecef" stroke="none"/>
+<path d="M 551,229 L 526,241 L 481,259 L 437,273 L 402,281 L 432,275 L 475,262 L 511,248 Z" fill="#e5ecef" stroke="none"/>
+<path d="M 628,171 L 628,269 L 628,236 L 630,239 L 630,231 L 632,231 L 633,334 L 633,180 L 639,184 L 682,235 Z" fill="#e5ecef" stroke="none"/>
+<path d="M 603,925 L 653,926 L 781,924 L 638,923 L 658,923 L 658,925 L 649,926 Z" fill="#6dc0ef" stroke="none"/>
+<path d="M 620,923 L 478,924 L 601,925 L 590,925 L 589,924 L 590,923 Z" fill="#6dc0ef" stroke="none"/>
+<path d="M 1146,806 L 1145,807 L 1144,806 L 1143,807 L 1080,807 L 1080,809 L 1079,810 L 1079,814 L 1080,815 L 1143,815 L 1144,813 L 1144,811 L 1145,810 L 1145,807 Z" fill="#6dc0ef" stroke="none"/>
+<path d="M 1046,807 L 1045,806 L 1043,807 L 995,807 L 994,808 L 990,807 L 989,809 L 987,808 L 986,810 L 985,809 L 984,811 L 983,810 L 980,815 L 977,817 L 978,818 L 976,819 L 975,822 L 975,853 L 975,829 L 976,828 L 977,829 L 977,835 L 981,834 L 982,831 L 983,832 L 983,844 L 984,846 L 984,825 L 989,818 L 997,815 L 1042,815 L 1044,814 Z" fill="#6dc0ef" stroke="none"/>
+<path d="M 867,806 L 868,813 L 867,815 L 920,815 L 928,817 L 934,823 L 935,826 L 935,854 L 936,835 L 937,834 L 938,837 L 943,834 L 944,835 L 944,860 L 944,823 L 942,818 L 936,811 L 932,810 L 931,808 L 929,809 L 928,807 L 922,808 L 921,807 L 868,807 Z" fill="#6dc0ef" stroke="none"/>
+<path d="M 765,806 L 765,880 L 834,880 L 834,871 L 833,880 L 766,879 L 767,834 L 768,839 L 773,834 L 775,839 L 829,840 L 828,847 L 776,847 L 774,852 L 776,847 L 829,847 L 830,839 L 776,839 L 775,817 L 831,815 L 834,806 Z" fill="#6dc0ef" stroke="none"/>
+<path d="M 633,591 L 633,733 L 632,751 L 630,751 L 630,741 L 629,749 L 632,755 L 631,756 L 633,751 Z" fill="#6dc0ef" stroke="none"/>
+<path d="M 600,497 L 603,500 L 603,501 L 605,503 L 605,504 L 608,507 L 608,508 L 611,511 L 611,512 L 614,515 L 614,516 L 617,519 L 617,520 L 620,523 L 620,524 L 623,527 L 623,528 L 626,531 L 626,532 L 629,535 L 631,535 L 632,536 L 630,534 L 630,533 L 627,530 L 627,529 L 623,525 L 623,524 L 620,521 L 620,520 L 617,517 L 617,516 L 614,513 L 614,512 L 611,509 L 611,508 L 607,504 L 607,503 L 605,501 L 604,502 L 603,501 L 603,500 L 604,499 L 602,497 L 601,498 Z" fill="#6dc0ef" stroke="none"/>
+<path d="M 705,490 L 768,490 L 767,490 L 766,489 L 767,488 L 770,488 L 707,488 L 710,488 L 711,489 L 710,490 Z" fill="#6dc0ef" stroke="none"/>
+<path d="M 675,367 L 671,408 L 670,695 L 677,685 L 672,691 L 670,688 L 671,528 L 674,535 L 676,530 L 676,566 Z" fill="#6dc0ef" stroke="none"/>
+<path d="M 813,366 L 774,404 L 773,455 L 760,467 L 710,467 L 710,469 L 703,469 L 761,469 L 776,454 L 776,405 Z" fill="#6dc0ef" stroke="none"/>
+<path d="M 877,298 L 877,308 L 887,308 L 887,299 L 882,299 L 881,298 Z" fill="#6dc0ef" stroke="none"/>
+<path d="M 813,297 L 802,297 L 801,299 L 801,309 L 807,312 L 807,332 L 806,334 L 759,379 L 746,379 L 745,380 L 744,379 L 744,393 L 746,394 L 760,393 L 759,381 L 809,333 L 809,312 L 811,310 L 815,310 L 815,299 Z" fill="#6dc0ef" stroke="none"/>
+<path d="M 813,268 L 812,269 L 812,278 L 813,278 L 814,279 L 822,279 L 822,270 L 820,270 L 819,269 L 816,269 L 815,268 Z" fill="#6dc0ef" stroke="none"/>
+<path d="M 731,268 L 731,282 L 746,282 L 746,268 Z" fill="#6dc0ef" stroke="none"/>
+<path d="M 672,262 L 672,263 L 673,264 L 673,265 L 675,267 L 675,268 L 677,270 L 677,271 L 678,270 L 680,272 L 681,272 L 682,273 L 681,274 L 682,273 L 684,275 L 684,276 L 685,275 L 686,276 L 687,276 L 690,279 L 691,279 L 692,278 L 690,276 L 689,277 L 686,274 L 686,273 L 683,270 L 681,270 L 680,269 L 680,268 L 677,265 L 676,266 L 674,264 L 674,263 L 673,262 Z" fill="#6dc0ef" stroke="none"/>
+<path d="M 849,257 L 849,264 L 855,264 L 856,265 L 856,258 L 854,258 L 853,257 Z" fill="#6dc0ef" stroke="none"/>
+<path d="M 757,241 L 757,253 L 760,253 L 761,254 L 769,254 L 769,242 L 758,242 Z" fill="#6dc0ef" stroke="none"/>
+<path d="M 514,618 L 520,624 L 521,623 L 523,625 L 522,627 L 527,632 L 528,631 L 530,633 L 530,635 L 531,635 L 532,637 L 533,637 L 534,639 L 552,657 L 553,657 L 565,668 L 565,667 L 560,662 L 559,662 L 524,627 L 524,626 L 518,620 L 517,621 Z" fill="#5b6f7d" stroke="none"/>
+<path d="M 548,354 L 558,367 L 544,375 L 543,381 L 528,385 L 517,395 L 509,393 L 495,398 L 492,389 L 491,450 L 492,433 L 493,453 L 502,446 L 511,451 L 514,448 L 524,450 L 525,447 L 526,453 L 527,422 L 528,482 L 528,397 L 533,399 L 549,424 L 546,424 L 569,454 L 568,445 L 573,438 L 569,434 L 572,431 L 576,433 L 576,425 L 581,420 L 582,425 L 589,421 L 588,418 L 593,419 L 598,415 Z" fill="#5b6f7d" stroke="none"/>
+<path d="M 634,310 L 635,403 L 637,402 L 637,404 L 650,392 L 651,394 L 654,394 L 655,397 L 659,397 L 656,400 L 660,398 L 661,399 L 659,402 L 662,404 L 661,406 L 662,404 L 663,408 L 664,406 L 666,406 L 663,375 L 665,365 L 664,340 L 666,329 L 666,309 L 663,309 L 660,312 L 664,314 L 662,316 L 660,315 L 660,317 L 658,317 L 658,315 L 655,318 L 649,315 L 644,315 L 640,318 L 640,324 L 638,325 L 637,323 L 638,325 L 635,327 Z" fill="#5b6f7d" stroke="none"/>
+<path d="M 405,298 L 402,302 L 402,336 L 400,336 L 400,320 L 400,373 L 400,370 L 402,370 L 402,406 L 403,401 L 405,401 L 403,415 L 406,413 L 408,421 L 406,437 L 408,432 L 409,435 L 413,434 L 414,436 L 417,432 L 418,436 L 416,437 L 420,434 L 418,430 L 422,429 L 423,433 L 423,430 L 427,431 L 428,439 L 426,429 L 427,418 L 425,420 L 422,339 L 421,349 L 419,343 L 415,342 L 417,340 L 414,339 L 417,336 L 413,334 L 416,332 L 411,327 L 411,322 L 404,317 L 405,315 L 402,312 L 405,307 Z" fill="#5b6f7d" stroke="none"/>
+<path d="M 688,245 L 690,247 L 689,248 L 687,248 L 686,249 L 685,248 L 688,251 L 687,252 L 686,252 L 687,255 L 686,256 L 685,256 L 684,255 L 683,256 L 684,255 L 685,256 L 685,257 L 684,258 L 686,260 L 684,262 L 685,261 L 686,262 L 686,263 L 685,264 L 685,266 L 684,267 L 685,268 L 684,269 L 683,269 L 676,263 L 680,267 L 681,267 L 687,273 L 688,273 L 694,279 L 693,278 L 695,276 L 695,274 L 696,273 L 696,269 L 697,268 L 697,255 L 698,254 L 699,255 L 698,254 L 697,255 L 693,251 L 693,250 L 694,249 L 695,250 L 694,249 L 693,250 Z" fill="#5b6f7d" stroke="none"/>
+<path d="M 571,241 L 569,241 L 567,239 L 564,239 L 563,238 L 566,236 L 565,235 L 564,236 L 562,235 L 561,233 L 559,232 L 560,230 L 562,231 L 560,229 L 561,228 L 560,227 L 557,229 L 555,228 L 556,229 L 555,230 L 553,229 L 554,230 L 553,231 L 551,230 L 550,232 L 549,231 L 550,232 L 549,233 L 547,232 L 546,234 L 545,233 L 530,241 L 528,241 L 518,246 L 529,241 L 531,242 L 532,251 L 536,253 L 535,254 L 536,255 L 535,257 L 537,258 L 532,261 L 535,259 L 537,259 L 542,256 L 544,256 L 555,250 L 557,250 L 563,247 L 562,246 L 563,245 L 565,246 L 564,245 L 565,244 L 567,245 L 566,244 L 568,242 Z" fill="#5b6f7d" stroke="none"/>
+<path d="M 764,925 L 845,925 L 846,924 L 855,924 L 782,924 L 781,925 Z" fill="#2e76ae" stroke="none"/>
+<path d="M 393,924 L 398,924 L 399,925 L 489,925 L 478,925 L 477,924 Z" fill="#2e76ae" stroke="none"/>
+<path d="M 1080,840 L 1080,879 L 1145,879 L 1145,871 L 1089,871 L 1088,870 L 1087,848 L 1088,847 L 1090,848 L 1088,847 L 1089,846 L 1140,846 L 1140,840 Z" fill="#2e76ae" stroke="none"/>
+<path d="M 943,835 L 938,838 L 937,835 L 936,854 L 933,864 L 928,869 L 923,871 L 878,871 L 876,862 L 877,859 L 867,849 L 867,879 L 868,878 L 869,879 L 923,879 L 924,877 L 928,878 L 927,877 L 928,876 L 932,878 L 930,876 L 932,875 L 934,877 L 932,875 L 933,874 L 936,876 L 937,875 L 936,874 L 939,871 L 940,872 L 941,871 L 940,869 L 941,868 L 942,869 L 941,867 L 942,866 L 943,867 L 944,864 Z" fill="#2e76ae" stroke="none"/>
+<path d="M 767,835 L 767,879 L 833,879 L 833,871 L 775,870 L 776,848 L 829,848 L 776,848 L 776,846 L 828,846 L 828,840 L 775,840 L 773,835 L 768,840 Z" fill="#2e76ae" stroke="none"/>
+<path d="M 976,829 L 976,853 L 974,853 L 974,833 L 974,860 L 976,859 L 976,868 L 979,868 L 977,870 L 981,871 L 980,874 L 982,876 L 984,875 L 989,878 L 995,877 L 994,879 L 1032,879 L 1019,879 L 1019,877 L 1036,878 L 1041,877 L 1043,872 L 1045,872 L 1045,865 L 1047,866 L 1047,839 L 1046,851 L 1045,841 L 1018,841 L 1017,845 L 1016,843 L 1017,847 L 1038,848 L 1038,863 L 1036,868 L 1032,871 L 995,871 L 988,868 L 985,864 L 982,832 L 981,835 L 977,836 Z" fill="#2e76ae" stroke="none"/>
+<path d="M 756,568 L 755,569 L 755,583 L 770,583 L 770,568 Z" fill="#2e76ae" stroke="none"/>
+<path d="M 714,549 L 713,550 L 713,563 L 714,564 L 713,565 L 713,566 L 730,566 L 730,549 L 729,549 L 728,550 L 715,550 Z" fill="#2e76ae" stroke="none"/>
+<path d="M 633,539 L 633,555 L 631,557 L 629,555 L 628,549 L 627,554 L 627,641 L 627,589 L 629,589 L 629,641 L 629,632 L 631,632 L 631,637 L 631,595 L 633,590 Z" fill="#2e76ae" stroke="none"/>
+<path d="M 711,507 L 711,523 L 728,523 L 727,522 L 727,509 L 728,508 L 727,507 Z" fill="#2e76ae" stroke="none"/>
+<path d="M 797,471 L 791,477 L 792,478 L 789,481 L 788,480 L 785,483 L 786,484 L 782,488 L 781,487 L 782,488 L 781,489 L 780,489 L 779,488 L 778,489 L 767,489 L 768,489 L 769,490 L 770,489 L 771,490 L 777,490 L 778,489 L 779,490 L 780,490 L 781,489 L 782,490 L 797,475 L 797,473 L 796,472 Z" fill="#2e76ae" stroke="none"/>
+<path d="M 879,468 L 875,469 L 872,474 L 849,474 L 823,500 L 839,484 L 840,484 L 844,480 L 845,481 L 850,476 L 870,476 L 868,476 L 867,475 L 868,474 L 872,474 L 873,473 L 874,475 L 872,476 L 874,479 L 874,477 L 875,476 L 876,477 L 875,476 L 875,473 L 878,470 L 879,470 Z" fill="#2e76ae" stroke="none"/>
+<path d="M 739,433 L 740,434 L 740,438 L 739,439 L 739,449 L 740,448 L 741,449 L 754,449 L 754,434 L 753,435 L 752,434 L 745,434 L 744,435 L 742,435 L 741,434 L 740,434 Z" fill="#2e76ae" stroke="none"/>
+<path d="M 677,433 L 677,566 L 675,530 L 674,536 L 672,528 L 673,691 L 676,682 L 678,684 L 693,674 L 693,659 L 684,658 L 686,643 L 693,642 L 677,641 L 677,625 L 693,624 L 693,606 L 677,605 L 677,585 L 693,584 L 693,567 L 677,566 L 677,548 L 693,546 L 693,543 L 692,546 L 683,545 L 680,528 L 683,527 L 677,525 Z" fill="#2e76ae" stroke="none"/>
+<path d="M 728,426 L 728,435 L 729,435 L 730,434 L 736,434 L 736,433 L 737,432 L 737,431 L 738,430 L 737,430 L 736,431 L 735,430 L 732,430 L 731,429 L 731,428 L 730,429 L 728,427 Z" fill="#2e76ae" stroke="none"/>
+<path d="M 879,418 L 879,419 L 879,418 L 876,415 L 875,415 L 874,414 L 871,414 L 870,415 L 869,415 L 867,417 L 867,418 L 866,419 L 866,422 L 867,423 L 866,426 L 856,436 L 850,436 L 856,436 L 857,435 L 858,435 L 859,436 L 857,438 L 867,428 L 865,430 L 864,429 L 864,428 L 867,425 L 867,423 L 868,422 L 869,423 L 869,424 L 870,424 L 871,425 L 868,422 L 868,419 L 870,417 L 869,416 L 870,415 L 871,415 L 872,416 L 874,416 L 877,419 L 876,418 L 876,417 L 877,416 Z" fill="#2e76ae" stroke="none"/>
+<path d="M 806,396 L 806,401 L 806,398 L 807,397 L 808,398 L 808,407 L 809,407 L 811,409 L 812,408 L 813,409 L 813,408 L 814,407 L 815,408 L 818,408 L 819,407 L 820,408 L 820,402 L 819,401 L 819,397 L 818,396 L 817,396 L 816,395 L 808,395 L 808,396 L 807,397 Z" fill="#2e76ae" stroke="none"/>
+<path d="M 900,354 L 896,350 L 892,351 L 891,350 L 885,356 L 878,357 L 863,357 L 862,356 L 851,356 L 850,357 L 839,357 L 838,356 L 828,357 L 827,356 L 826,357 L 825,356 L 818,361 L 795,385 L 794,384 L 789,389 L 790,390 L 785,395 L 786,396 L 780,402 L 825,358 L 886,358 L 890,363 L 896,364 L 900,360 Z" fill="#2e76ae" stroke="none"/>
+<path d="M 731,334 L 731,335 L 730,336 L 731,337 L 731,341 L 730,342 L 730,345 L 731,346 L 730,347 L 731,348 L 731,349 L 736,349 L 737,348 L 739,348 L 740,349 L 744,349 L 745,348 L 746,348 L 746,336 L 746,346 L 745,347 L 744,346 L 744,336 L 737,336 L 736,335 L 737,334 L 745,334 Z" fill="#2e76ae" stroke="none"/>
+<path d="M 694,334 L 694,349 L 710,349 L 710,348 L 709,347 L 709,336 L 710,335 L 709,336 L 708,335 L 696,335 L 695,334 Z" fill="#2e76ae" stroke="none"/>
+<path d="M 841,324 L 840,323 L 837,325 L 839,324 L 841,327 L 841,331 L 838,334 L 837,333 L 838,334 L 837,335 L 835,335 L 833,332 L 832,333 L 830,331 L 831,329 L 830,327 L 833,324 L 834,325 L 833,324 L 830,326 L 829,325 L 830,326 L 830,333 L 829,334 L 828,333 L 829,334 L 827,336 L 826,335 L 819,342 L 820,343 L 802,358 L 798,363 L 797,362 L 785,374 L 784,373 L 781,376 L 782,377 L 780,379 L 775,381 L 776,380 L 778,382 L 777,381 L 778,380 L 780,381 L 792,369 L 812,353 L 822,342 L 831,335 L 840,335 L 842,333 L 840,326 Z" fill="#2e76ae" stroke="none"/>
+<path d="M 631,317 L 631,320 L 630,321 L 629,320 L 629,318 L 629,381 L 628,382 L 628,415 L 628,407 L 629,406 L 630,397 L 632,392 L 632,340 L 631,339 L 632,337 L 632,328 L 631,327 Z" fill="#2e76ae" stroke="none"/>
+<path d="M 712,312 L 712,319 L 715,319 L 716,320 L 719,320 L 720,321 L 721,321 L 722,320 L 723,321 L 724,321 L 725,320 L 726,321 L 727,321 L 727,315 L 726,314 L 724,314 L 722,312 Z" fill="#2e76ae" stroke="none"/>
+<path d="M 759,296 L 757,296 L 758,296 L 759,297 L 758,298 L 748,298 L 747,297 L 747,298 L 748,299 L 747,300 L 747,309 L 760,309 L 759,308 L 759,299 L 760,298 L 759,297 Z" fill="#2e76ae" stroke="none"/>
+<path d="M 668,290 L 668,332 L 666,330 L 664,375 L 667,436 L 667,381 L 669,381 L 669,516 Z" fill="#2e76ae" stroke="none"/>
+<path d="M 740,286 L 741,287 L 741,290 L 742,291 L 741,292 L 742,291 L 743,292 L 744,291 L 746,293 L 749,293 L 746,293 L 745,292 L 748,289 L 749,289 L 750,288 L 751,289 L 751,288 L 748,285 L 741,285 Z" fill="#2e76ae" stroke="none"/>
+<path d="M 559,928 L 573,929 L 579,931 L 600,932 L 620,936 L 621,935 L 623,936 L 624,935 L 651,935 L 656,933 L 674,932 L 685,929 L 686,930 L 698,928 L 662,927 L 645,931 L 640,930 L 618,931 L 598,927 Z" fill="#10202e" stroke="none"/>
+<path d="M 853,923 L 936,923 L 936,925 L 926,925 L 1010,924 Z" fill="#10202e" stroke="none"/>
+<path d="M 256,924 L 263,925 L 331,925 L 326,925 L 325,924 L 326,923 L 397,923 Z" fill="#10202e" stroke="none"/>
+<path d="M 562,920 L 582,921 L 562,922 L 604,921 L 604,919 L 643,918 L 654,919 L 655,920 L 652,921 L 694,922 L 681,922 L 681,920 L 693,920 L 680,920 L 675,918 L 645,914 L 613,914 L 599,917 L 587,917 L 580,920 Z" fill="#10202e" stroke="none"/>
+<path d="M 655,718 L 654,719 L 653,718 L 652,718 L 650,715 L 649,715 L 647,717 L 646,717 L 645,716 L 645,715 L 646,714 L 645,715 L 644,714 L 643,714 L 644,715 L 643,716 L 642,716 L 641,715 L 642,716 L 640,718 L 639,718 L 639,719 L 640,719 L 641,720 L 641,721 L 640,722 L 640,725 L 638,727 L 636,727 L 635,728 L 635,739 L 636,740 L 642,740 L 643,739 L 644,740 L 643,739 L 643,738 L 644,737 L 645,738 L 644,737 L 645,736 L 646,733 L 647,732 L 648,733 L 647,732 L 647,731 L 648,730 L 647,731 L 645,729 L 645,728 L 646,727 L 648,727 L 649,728 L 650,727 L 651,728 L 650,727 L 650,726 L 651,725 L 652,726 L 651,725 L 653,722 L 654,723 L 653,722 L 653,721 L 654,720 L 655,721 L 654,720 L 654,719 Z" fill="#10202e" stroke="none"/>
+<path d="M 723,654 L 723,663 L 724,664 L 723,663 L 723,659 L 724,658 L 725,659 L 725,662 L 726,663 L 732,663 L 733,662 L 733,654 Z" fill="#10202e" stroke="none"/>
+<path d="M 753,627 L 753,636 L 752,637 L 753,638 L 758,638 L 759,637 L 761,637 L 762,638 L 763,637 L 762,636 L 762,627 L 759,627 L 758,628 L 755,628 L 754,627 Z" fill="#10202e" stroke="none"/>
+<path d="M 729,613 L 729,614 L 728,615 L 728,619 L 727,620 L 727,622 L 726,623 L 726,624 L 734,624 L 734,618 L 733,617 L 732,618 L 731,618 L 730,619 L 729,619 L 728,618 L 729,617 L 728,616 L 729,615 Z" fill="#10202e" stroke="none"/>
+<path d="M 785,602 L 785,612 L 786,613 L 787,613 L 788,612 L 794,612 L 795,613 L 796,612 L 796,605 L 795,604 L 796,603 L 795,602 Z" fill="#10202e" stroke="none"/>
+<path d="M 730,596 L 730,602 L 729,603 L 729,605 L 729,603 L 730,602 L 730,601 L 731,600 L 732,601 L 732,603 L 731,604 L 731,606 L 730,607 L 730,610 L 744,610 L 745,609 L 746,609 L 746,596 L 732,596 L 732,597 L 731,598 L 730,597 Z" fill="#10202e" stroke="none"/>
+<path d="M 720,573 L 720,576 L 723,576 L 724,577 L 724,578 L 723,579 L 724,580 L 724,581 L 725,582 L 725,583 L 730,583 L 730,575 L 729,575 L 728,574 L 728,573 L 727,572 L 723,572 L 722,573 Z" fill="#10202e" stroke="none"/>
+<path d="M 818,569 L 819,569 L 820,570 L 819,571 L 818,571 L 818,579 L 827,579 L 827,570 L 820,570 L 819,569 Z" fill="#10202e" stroke="none"/>
+<path d="M 694,548 L 695,583 L 693,585 L 681,585 L 693,586 L 687,587 L 688,599 L 692,603 L 686,605 L 694,605 L 694,624 L 690,625 L 693,626 L 690,629 L 690,637 L 692,636 L 693,639 L 687,640 L 694,641 L 694,659 L 700,660 L 706,657 L 701,652 L 708,644 L 708,641 L 712,641 L 712,639 L 722,639 L 722,625 L 721,632 L 720,627 L 711,627 L 711,640 L 707,640 L 708,626 L 720,625 L 708,625 L 709,607 L 702,608 L 698,606 L 700,602 L 701,604 L 701,588 L 700,590 L 699,586 L 696,585 L 710,584 L 711,581 L 710,567 L 694,566 Z" fill="#10202e" stroke="none"/>
+<path d="M 831,528 L 833,530 L 840,530 L 841,531 L 854,531 L 855,530 L 857,530 L 857,529 L 856,529 L 855,528 Z" fill="#10202e" stroke="none"/>
+<path d="M 694,526 L 694,542 L 695,543 L 695,545 L 694,546 L 695,545 L 696,546 L 709,546 L 710,547 L 711,546 L 711,530 L 710,529 L 695,529 L 694,528 Z" fill="#10202e" stroke="none"/>
+<path d="M 867,523 L 864,526 L 864,527 L 863,528 L 863,531 L 864,531 L 866,534 L 865,533 L 865,532 L 866,531 L 866,528 L 869,525 L 871,525 L 874,528 L 874,531 L 871,534 L 869,534 L 868,533 L 869,534 L 871,534 L 874,531 L 875,532 L 875,533 L 873,535 L 874,536 L 873,537 L 871,537 L 870,538 L 869,538 L 870,538 L 871,537 L 873,537 L 874,536 L 873,535 L 875,533 L 876,534 L 877,533 L 877,527 L 874,524 L 873,524 L 872,523 Z" fill="#10202e" stroke="none"/>
+<path d="M 746,507 L 746,523 L 747,524 L 747,525 L 748,525 L 749,526 L 753,526 L 756,523 L 758,523 L 759,522 L 768,522 L 769,521 L 769,518 L 768,519 L 767,518 L 766,519 L 762,519 L 761,518 L 761,507 Z" fill="#10202e" stroke="none"/>
+<path d="M 828,499 L 823,504 L 820,502 L 823,499 L 803,519 L 800,519 L 799,518 L 785,518 L 781,515 L 782,514 L 780,512 L 773,512 L 771,514 L 773,512 L 780,512 L 781,513 L 780,514 L 777,514 L 779,515 L 778,516 L 775,516 L 778,516 L 780,518 L 780,522 L 778,524 L 776,524 L 773,522 L 773,520 L 773,523 L 775,525 L 778,524 L 781,526 L 784,522 L 800,522 L 801,521 L 806,521 Z" fill="#10202e" stroke="none"/>
+<path d="M 798,493 L 798,501 L 806,501 L 807,502 L 810,502 L 810,493 Z" fill="#10202e" stroke="none"/>
+<path d="M 440,483 L 456,528 L 453,531 L 448,522 L 442,524 L 438,535 L 433,525 L 435,515 L 430,515 L 426,508 L 452,567 L 496,634 L 535,674 L 610,729 L 610,711 L 604,696 L 590,685 L 598,692 L 594,694 L 590,688 L 591,691 L 584,693 L 581,682 L 564,671 L 526,634 L 484,581 L 459,539 Z" fill="#10202e" stroke="none"/>
+<path d="M 585,472 L 634,537 L 635,708 L 644,705 L 640,703 L 649,699 L 647,696 L 653,697 L 647,705 L 659,714 L 668,698 L 666,534 L 658,526 L 657,508 L 651,506 L 650,501 L 645,501 L 648,496 L 642,490 L 634,498 L 630,495 L 630,499 L 626,493 L 628,495 L 624,495 L 623,501 L 617,501 L 620,495 L 614,501 L 621,502 L 620,505 L 624,503 L 625,506 L 622,506 L 626,511 L 621,515 Z" fill="#10202e" stroke="none"/>
+<path d="M 527,457 L 527,518 L 525,518 L 525,500 L 523,502 L 525,505 L 524,508 L 517,512 L 514,509 L 514,506 L 516,505 L 511,511 L 504,511 L 499,507 L 493,511 L 492,503 L 492,521 L 489,529 L 491,533 L 495,535 L 496,538 L 494,538 L 498,540 L 497,542 L 496,541 L 528,587 L 528,584 L 526,583 Z" fill="#10202e" stroke="none"/>
+<path d="M 692,435 L 692,450 L 685,453 L 685,463 L 686,466 L 690,469 L 691,468 L 692,469 L 691,471 L 687,472 L 688,473 L 688,486 L 691,487 L 692,490 L 690,492 L 686,493 L 686,504 L 684,505 L 685,506 L 692,506 L 693,505 L 694,506 L 694,523 L 693,524 L 686,524 L 684,525 L 691,525 L 694,523 L 694,494 L 692,490 L 694,485 L 693,484 L 694,483 L 694,476 L 695,475 L 696,478 L 697,478 L 698,473 L 693,470 L 694,453 L 692,450 Z" fill="#10202e" stroke="none"/>
+<path d="M 725,434 L 718,434 L 718,435 L 719,435 L 720,436 L 720,437 L 717,440 L 717,441 L 716,442 L 715,442 L 715,448 L 716,447 L 717,448 L 718,448 L 719,449 L 720,449 L 721,448 L 721,446 L 723,444 L 724,444 L 723,443 L 724,442 L 725,442 L 725,438 L 726,437 L 726,436 L 727,435 L 726,436 L 725,435 Z" fill="#10202e" stroke="none"/>
+<path d="M 696,434 L 696,437 L 697,438 L 697,442 L 697,441 L 698,440 L 699,440 L 701,442 L 704,442 L 705,443 L 705,445 L 706,446 L 705,447 L 699,447 L 697,445 L 697,444 L 697,446 L 696,447 L 695,447 L 708,447 L 709,448 L 710,447 L 711,448 L 711,447 L 710,446 L 710,434 L 707,434 L 708,434 L 709,435 L 709,436 L 708,437 L 703,437 L 702,436 L 703,435 L 701,435 L 700,434 Z" fill="#10202e" stroke="none"/>
+<path d="M 727,424 L 727,428 L 727,424 L 729,422 L 741,422 L 742,421 L 743,422 L 743,430 L 742,431 L 739,431 L 752,431 L 752,424 L 746,424 L 745,423 L 744,424 L 743,423 L 743,421 L 733,421 L 732,422 L 729,422 Z" fill="#10202e" stroke="none"/>
+<path d="M 731,402 L 731,403 L 732,404 L 739,404 L 740,403 L 743,403 L 744,404 L 744,405 L 745,404 L 751,404 L 751,403 L 750,402 L 750,401 L 748,399 L 748,397 L 747,396 L 747,395 L 747,399 L 746,400 L 745,400 L 743,402 L 742,401 L 742,400 L 741,399 L 740,400 L 738,398 L 737,398 L 736,397 L 739,394 Z" fill="#10202e" stroke="none"/>
+<path d="M 850,383 L 849,384 L 850,385 L 849,386 L 849,390 L 850,391 L 849,392 L 857,392 L 857,386 L 856,385 L 857,384 L 851,384 Z" fill="#10202e" stroke="none"/>
+<path d="M 700,380 L 700,384 L 699,385 L 699,393 L 708,393 L 709,394 L 725,394 L 709,394 L 708,393 L 709,392 L 709,389 L 708,388 L 708,382 L 707,381 L 707,379 L 706,380 L 705,379 L 703,379 L 702,380 Z" fill="#10202e" stroke="none"/>
+<path d="M 694,373 L 694,378 L 693,379 L 678,379 L 678,394 L 679,395 L 678,396 L 678,433 L 679,432 L 681,433 L 693,433 L 694,434 L 694,445 L 694,433 L 693,432 L 693,420 L 692,419 L 693,418 L 693,397 L 690,395 L 691,394 L 693,394 L 693,379 L 694,378 Z" fill="#10202e" stroke="none"/>
+<path d="M 726,361 L 725,362 L 722,362 L 721,363 L 713,363 L 712,362 L 711,362 L 711,375 L 713,377 L 718,377 L 719,376 L 726,376 L 726,373 L 727,372 L 727,362 Z" fill="#10202e" stroke="none"/>
+<path d="M 852,322 L 852,332 L 853,331 L 862,331 L 862,324 L 861,323 L 862,322 L 861,323 L 854,323 L 853,322 Z" fill="#10202e" stroke="none"/>
+<path d="M 692,322 L 691,323 L 689,323 L 687,322 L 685,324 L 682,324 L 681,325 L 679,325 L 678,327 L 678,330 L 679,331 L 679,357 L 678,358 L 678,375 L 678,363 L 679,362 L 684,362 L 685,363 L 692,363 L 686,363 L 685,362 L 685,361 L 687,360 L 689,356 L 689,354 L 687,351 L 688,349 L 683,342 L 683,340 L 682,339 L 683,337 L 683,334 L 681,332 L 681,331 L 684,329 L 686,329 L 687,328 L 693,328 L 693,323 Z" fill="#10202e" stroke="none"/>
+<path d="M 770,321 L 770,332 L 771,333 L 772,333 L 773,332 L 781,332 L 782,333 L 783,333 L 783,322 L 783,327 L 782,328 L 781,327 L 781,324 L 772,324 L 772,332 L 771,333 L 770,332 L 770,322 L 771,321 L 772,322 L 781,322 L 772,322 L 771,321 Z" fill="#10202e" stroke="none"/>
+<path d="M 690,299 L 690,301 L 688,303 L 687,303 L 686,302 L 684,302 L 681,305 L 680,305 L 679,306 L 679,311 L 680,310 L 681,311 L 691,311 L 692,310 L 692,303 L 693,302 L 694,303 L 694,311 L 692,313 L 690,313 L 691,314 L 691,319 L 692,320 L 692,319 L 693,318 L 693,312 L 694,311 L 694,303 L 693,302 L 693,300 L 692,300 L 691,299 Z" fill="#10202e" stroke="none"/>
+<path d="M 712,296 L 711,297 L 712,298 L 712,302 L 713,302 L 713,301 L 714,300 L 715,300 L 716,301 L 716,302 L 717,303 L 718,303 L 721,306 L 721,307 L 722,308 L 721,309 L 717,309 L 722,309 L 723,310 L 722,311 L 713,311 L 723,311 L 724,312 L 726,312 L 728,314 L 727,313 L 728,312 L 728,311 L 726,309 L 727,308 L 727,301 L 728,300 L 728,296 L 722,296 L 721,297 L 716,297 L 715,296 Z" fill="#10202e" stroke="none"/>
+<path d="M 780,271 L 781,272 L 780,273 L 780,280 L 781,281 L 780,282 L 783,282 L 784,281 L 787,281 L 788,282 L 792,282 L 792,272 L 782,272 L 781,271 Z" fill="#10202e" stroke="none"/>
+<path d="M 712,242 L 712,243 L 713,244 L 712,245 L 713,246 L 712,247 L 714,249 L 715,249 L 716,250 L 716,251 L 718,253 L 718,254 L 724,254 L 725,253 L 726,254 L 725,253 L 725,242 Z" fill="#10202e" stroke="none"/>
+<path d="M 611,195 L 605,198 L 603,200 L 600,201 L 598,203 L 597,203 L 596,205 L 595,204 L 593,207 L 592,206 L 593,207 L 592,208 L 590,207 L 591,208 L 589,210 L 586,211 L 581,215 L 575,218 L 578,216 L 579,216 L 580,218 L 582,217 L 583,218 L 582,220 L 583,222 L 585,223 L 584,224 L 585,223 L 587,225 L 587,226 L 589,226 L 591,228 L 593,227 L 594,228 L 593,230 L 592,230 L 590,232 L 586,234 L 590,232 L 592,230 L 599,227 L 603,223 L 608,213 L 608,210 L 609,209 L 609,205 L 610,204 L 611,205 L 611,208 Z" fill="#10202e" stroke="none"/>
+</svg>
+"""
 
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
@@ -4753,7 +4805,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 {% if timed_out_tools %}
 <div style="background:#2a1500;border:1px solid #ff6d00;border-radius:6px;padding:10px 16px;margin:0 0 14px 0;font-size:.88em">
   <strong style="color:#ff9800">&#9888; Scan Coverage Incomplete</strong>
-  <div style="color:#ffe0b2;margin-top:.4em">{{ timed_out_tools|length }} tool run(s) timed out — results may be partial:
+  <div style="color:#ffe0b2;margin-top:.4em">{{ timed_out_tools|length }} tool run(s) timed out â€” results may be partial:
     {% for t in timed_out_tools %}<code style="background:#1a0a00;padding:.1em .4em;border-radius:3px;margin:.1em">{{ t.tool }}{% if t.args %} {{ t.args[0:40] }}{% endif %}</code> {% endfor %}
   </div>
 </div>
@@ -4790,7 +4842,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <td>{{ s.product }} {{ s.version }}</td>
     <td>
       {% if s.asset_type == 'OT' %}
-      <span style="background:#7c3700;color:#ffb300;padding:2px 8px;border-radius:10px;font-size:.75em;font-weight:bold;border:1px solid #ffb300" title="{{ s.ot_protocol }}{% if s.ot_standard %} — {{ s.ot_standard }}{% endif %}">OT</span>
+      <span style="background:#7c3700;color:#ffb300;padding:2px 8px;border-radius:10px;font-size:.75em;font-weight:bold;border:1px solid #ffb300" title="{{ s.ot_protocol }}{% if s.ot_standard %} â€” {{ s.ot_standard }}{% endif %}">OT</span>
       {% else %}
       <span style="color:#777;font-size:.85em">IT</span>
       {% endif %}
@@ -4824,18 +4876,18 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <div style="display:flex;flex-wrap:wrap;gap:1.4em">
     <div>
       <strong style="color:#e0e0e0;display:block;margin-bottom:.3em">Severity</strong>
-      <span style="color:#ff4757;font-weight:700">CRITICAL</span> — Immediate exploitation risk; direct path to RCE, full compromise, or data exfiltration.<br>
-      <span style="color:#ff6b35;font-weight:700">HIGH</span> — Significant exposure; likely exploitable with moderate effort or public tooling.<br>
-      <span style="color:#ffa502;font-weight:700">MEDIUM</span> — Exploitable under specific conditions; increases attacker foothold or information exposure.<br>
-      <span style="color:#2ed573;font-weight:700">LOW</span> — Limited direct impact; useful for reconnaissance or chaining with other findings.<br>
-      <span style="color:#70a1ff;font-weight:700">INFO</span> — No exploitable risk; recorded for compliance, hardening, or asset inventory purposes.
+      <span style="color:#ff4757;font-weight:700">CRITICAL</span> â€” Immediate exploitation risk; direct path to RCE, full compromise, or data exfiltration.<br>
+      <span style="color:#ff6b35;font-weight:700">HIGH</span> â€” Significant exposure; likely exploitable with moderate effort or public tooling.<br>
+      <span style="color:#ffa502;font-weight:700">MEDIUM</span> â€” Exploitable under specific conditions; increases attacker foothold or information exposure.<br>
+      <span style="color:#2ed573;font-weight:700">LOW</span> â€” Limited direct impact; useful for reconnaissance or chaining with other findings.<br>
+      <span style="color:#70a1ff;font-weight:700">INFO</span> â€” No exploitable risk; recorded for compliance, hardening, or asset inventory purposes.
     </div>
     <div>
       <strong style="color:#e0e0e0;display:block;margin-bottom:.3em">Confidence</strong>
-      <span style="color:#c62828;font-weight:700">CONFIRMED</span> — Active curl/probe re-verified the finding against the live service; high-fidelity result.<br>
-      <span style="color:#bf360c;font-weight:700">PROBABLE</span> — Discovered by a reliable tool (confidence ≥ 60 %) but not independently re-verified; treat as likely real.<br>
-      <span style="color:#37474f;font-weight:700;color:#cfd8dc">REVIEW</span> — Probe returned inconclusive results or the reporting tool has low confidence; manual inspection recommended before actioning.<br>
-      <span style="color:#546e7a;font-weight:700">INFO</span> — Informational finding; no active verification attempted.
+      <span style="color:#c62828;font-weight:700">CONFIRMED</span> â€” Active curl/probe re-verified the finding against the live service; high-fidelity result.<br>
+      <span style="color:#bf360c;font-weight:700">PROBABLE</span> â€” Discovered by a reliable tool (confidence â‰¥ 60 %) but not independently re-verified; treat as likely real.<br>
+      <span style="color:#37474f;font-weight:700;color:#cfd8dc">REVIEW</span> â€” Probe returned inconclusive results or the reporting tool has low confidence; manual inspection recommended before actioning.<br>
+      <span style="color:#546e7a;font-weight:700">INFO</span> â€” Informational finding; no active verification attempted.
     </div>
   </div>
 </div>
@@ -4858,7 +4910,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <details style="margin-bottom:.8em;border:1px solid {% if _esev == 'critical' %}#ff4757{% elif _esev == 'high' %}#ff6b35{% elif _esev == 'medium' %}#ffa502{% elif _esev == 'low' %}#2ed573{% else %}#70a1ff{% endif %};border-radius:6px;background:#16213e">
     <summary style="padding:10px 14px;cursor:pointer;display:flex;flex-wrap:wrap;align-items:center;gap:8px;list-style:none">
       <span class="badge badge-{{ _esev }}">{{ _esev|upper }}</span>
-      {%- if _esev != f.severity %}<span style="color:#666;font-size:.72em;white-space:nowrap" title="Scanner reported {{ f.severity|upper }} — downgraded due to evidence quality">scanner:&nbsp;{{ f.severity|upper }}</span>{%- endif %}
+      {%- if _esev != f.severity %}<span style="color:#666;font-size:.72em;white-space:nowrap" title="Scanner reported {{ f.severity|upper }} â€” downgraded due to evidence quality">scanner:&nbsp;{{ f.severity|upper }}</span>{%- endif %}
       {%- if f.finding_id in _confirmed_ids %}<span style="background:#b71c1c;color:#fff;padding:1px 6px;border-radius:8px;font-size:.72em;font-weight:700">&#10003; CONFIRMED</span>
       {%- elif f.finding_id in _probable_ids %}<span style="background:#bf360c;color:#fff;padding:1px 6px;border-radius:8px;font-size:.72em;font-weight:700">~ PROBABLE</span>
       {%- elif f.finding_id in _review_ids %}<span style="background:#37474f;color:#cfd8dc;padding:1px 6px;border-radius:8px;font-size:.72em;font-weight:700">&#9888; REVIEW</span>
@@ -4900,7 +4952,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       <div style="margin-bottom:.8em;background:#1a1200;border-left:3px solid #ff9800;border-radius:0 4px 4px 0;padding:.7em 1em">
         <strong style="color:#ff9800">&#9888; Probe Inconclusive</strong>
         <div style="font-size:.85em;color:#ffe082;margin-top:.3em;line-height:1.5">
-          {% if f.verifier_tool %}Probed with <code style="background:#0d1117;padding:.1em .4em;border-radius:3px">{{ f.verifier_tool }}</code> — no confirming evidence found.{% else %}Could not be confirmed by automated verification.{% endif %}
+          {% if f.verifier_tool %}Probed with <code style="background:#0d1117;padding:.1em .4em;border-radius:3px">{{ f.verifier_tool }}</code> â€” no confirming evidence found.{% else %}Could not be confirmed by automated verification.{% endif %}
           Manual inspection recommended before treating as a confirmed finding.
         </div>
       </div>
@@ -4974,7 +5026,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   {% for c in cve_matches | sort(attribute='epss_score', reverse=True) %}
   <details style="margin-bottom:1.5em;border:1px solid #333;border-radius:6px;padding:1em;background:#16213e">
     <summary style="cursor:pointer;font-weight:600;color:#00d4ff;font-size:1.05em;display:flex;align-items:center;flex-wrap:wrap;gap:.5em">
-      <span style="flex:1;min-width:180px"><a href="https://nvd.nist.gov/vuln/detail/{{ c.cve_id }}" target="_blank" rel="noopener noreferrer" style="color:#00d4ff;text-decoration:none" title="View on NVD">{{ c.cve_id }}</a> — {{ c.vulnerability_type }} on {{ c.service }}{% if c.product and c.product != 'unknown' %} <span style="color:#78909c;font-size:.85em;font-weight:400">({{ c.product }}{% if c.version_affected and c.version_affected != 'unknown' %} {{ c.version_affected }}{% endif %})</span>{% endif %}</span>
+      <span style="flex:1;min-width:180px"><a href="https://nvd.nist.gov/vuln/detail/{{ c.cve_id }}" target="_blank" rel="noopener noreferrer" style="color:#00d4ff;text-decoration:none" title="View on NVD">{{ c.cve_id }}</a> â€” {{ c.vulnerability_type }} on {{ c.service }}{% if c.product and c.product != 'unknown' %} <span style="color:#78909c;font-size:.85em;font-weight:400">({{ c.product }}{% if c.version_affected and c.version_affected != 'unknown' %} {{ c.version_affected }}{% endif %})</span>{% endif %}</span>
       {% set _tv = c.cve_test_result.overall_verdict if c.cve_test_result else None %}
       <span class="badge badge-{{ c.severity|lower }}"{% if _tv == 'NOT_VULNERABLE' %} style="opacity:.4;text-decoration:line-through"{% endif %}>{{ c.severity|upper }}</span>
       {% if c.nvd_cvss_v3_score %}
@@ -4986,13 +5038,13 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       <span style="background:#7c4700;color:#ffb300;padding:3px 9px;border-radius:4px;font-size:.82em;font-weight:700;border:1px solid #ff8f00" title="EPSS: probability of exploitation in the wild">EPSS&nbsp;{{ "%.1f%%"|format(c.epss_score * 100) }}</span>
       {% endif %}
       {% if c.kev_listed %}
-      <span class="badge badge-kev" title="CISA Known Exploited Vulnerability — federal agencies must patch">&#9888; MUST-PATCH (KEV)</span>
+      <span class="badge badge-kev" title="CISA Known Exploited Vulnerability â€” federal agencies must patch">&#9888; MUST-PATCH (KEV)</span>
       {% endif %}
     </summary>
     
     <div style="margin-top:1em;padding-top:1em;border-top:1px solid #333">
 
-      {# ── Verification Status Banner ────────────────────────────────────── #}
+      {# â”€â”€ Verification Status Banner â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ #}
       {% set _tv = c.cve_test_result.overall_verdict if c.cve_test_result else None %}
       {% if _tv == 'CONFIRMED_VULNERABLE' %}
       <div style="background:#3d0000;border-left:4px solid #ff1744;border-radius:0 6px 6px 0;padding:.7em 1em;margin-bottom:1em;display:flex;align-items:center;gap:.7em">
@@ -5016,7 +5068,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       </div>
       {% endif %}
 
-      {# ── KEV Alert Banner ───────────────────────────────────────────────── #}
+      {# â”€â”€ KEV Alert Banner â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ #}
       {% if c.kev_listed %}
       <div style="background:#3d0000;border-left:4px solid #d32f2f;border-radius:0 6px 6px 0;padding:.7em 1em;margin-bottom:1em;display:flex;align-items:center;gap:.7em">
         <span style="color:#ef5350;font-size:1.2em">&#9888;</span>
@@ -5027,7 +5079,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       </div>
       {% endif %}
 
-      {# Immediate Remediation Path — prominent quick-win block at the top of the card #}
+      {# Immediate Remediation Path â€” prominent quick-win block at the top of the card #}
       {% if c.immediate_remediation or c.remediation_short %}
       <div style="background:#0d2010;border-left:4px solid #66bb6a;border-radius:0 6px 6px 0;padding:.8em 1em;margin-bottom:1em;display:flex;align-items:flex-start;gap:.7em">
         <span style="color:#66bb6a;font-size:1.1em;flex-shrink:0">&#10003;</span>
@@ -5111,7 +5163,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           <div style="margin-top:.9em;padding-top:.8em;border-top:1px solid #1e3a5f">
             <span style="color:#ffb300;font-weight:600;font-size:.88em">&#9888; Attacker Gain &amp; Lateral Movement Potential</span>
             <div style="color:#ffe082;font-size:.88em;margin-top:.4em;line-height:1.6;white-space:pre-wrap">{{ c.attacker_perspective }}</div>
-            <div style="color:#5d4037;font-size:.76em;margin-top:.4em;font-style:italic">AI-generated threat narrative — review against current threat intelligence.</div>
+            <div style="color:#5d4037;font-size:.76em;margin-top:.4em;font-style:italic">AI-generated threat narrative â€” review against current threat intelligence.</div>
           </div>
           {% endif %}
         </div>
@@ -5169,7 +5221,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         <div style="margin-top:.6em">
           <p style="color:#aaa;font-size:.85em;margin:.3em 0 .6em 0">Replace <code style="background:#111;padding:.1em .35em;border-radius:3px">{target}</code> and <code style="background:#111;padding:.1em .35em;border-radius:3px">{port}</code> with the actual host and service port. Run in a controlled authorised environment only.</p>
           <code style="background:#0d1117;color:#a5d6a7;padding:.6em .9em;border-radius:4px;font-size:.82em;display:block;white-space:pre-wrap;word-break:break-all">{{ c.steps_to_reproduce }}</code>
-          <div style="color:#546e7a;font-size:.78em;margin-top:.4em;font-style:italic">&#9888; These snippets verify existence of the vulnerability — do not use against systems you do not own or have explicit permission to test.</div>
+          <div style="color:#546e7a;font-size:.78em;margin-top:.4em;font-style:italic">&#9888; These snippets verify existence of the vulnerability â€” do not use against systems you do not own or have explicit permission to test.</div>
         </div>
       </details>
 
@@ -5184,7 +5236,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       </div>
       {% endif %}
 
-      {# ── Testing Evidence (MSF + active probe results) ─────────────────── #}
+      {# â”€â”€ Testing Evidence (MSF + active probe results) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ #}
       {% set _tr = c.cve_test_result %}
       {% set _msf = c.msf_validation if c.get('msf_validation') and c.msf_validation.get('module') else None %}
       {% if _tr or _msf %}
@@ -5352,7 +5404,7 @@ def generate_html_report(report_data):
         remediation_effort=_REMEDIATION_EFFORT,
         time_to_fix_map=_REMEDIATION_TIME_ESTIMATE,
         cwe_db=_load_cwe_db(),
-        # Calibrated severity map: finding_id → effective severity string
+        # Calibrated severity map: finding_id â†’ effective severity string
         # Falls back to the raw Finding.severity when id not present (e.g. re-rendered old reports)
         _eff_sev=report_data.get("effective_severity_map", {}),
         logo_svg=_LOGO_SVG,
@@ -5390,8 +5442,8 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
     for f in all_findings:
         f.risk_score = calculate_risk_score(f)
 
-    # ── Calibrated severity (report-layer only — Finding.severity unchanged) ─
-    # Step 1: deterministic rules — clear-cut cases resolved immediately
+    # â”€â”€ Calibrated severity (report-layer only â€” Finding.severity unchanged) â”€
+    # Step 1: deterministic rules â€” clear-cut cases resolved immediately
     _rules_map: dict = {}
     _ambiguous: list = []
     for f in all_findings:
@@ -5481,7 +5533,7 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
         "cves":           [f"{c['cve_id']} ({c['severity']}) on {c['service']}" for c in cve_matches[:5]],
     }
 
-    # ── Deterministic anchor sentence ────────────────────────────────────────
+    # â”€â”€ Deterministic anchor sentence â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     # Build a factually accurate first sentence from the real counts so the
     # LLM cannot hallucinate a risk level that contradicts the data.
     _c, _h, _m, _l = (counts.get(k, 0) for k in ("critical", "high", "medium", "low"))
@@ -5528,20 +5580,20 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
                               "for a client-facing security assessment report. "
                               "Write exactly 4 paragraphs of professional prose in plain text. "
                               "No bullet points, no headings, no markdown, no numbered lists. "
-                              "Each paragraph must be 3-5 sentences. Use plain business language — "
+                              "Each paragraph must be 3-5 sentences. Use plain business language â€” "
                               "avoid marketing terms, acronym soup, and vendor jargon. "
-                              "Paragraph 1: Describe the scope of the assessment — what was tested, "
+                              "Paragraph 1: Describe the scope of the assessment â€” what was tested, "
                               "what services were discovered, and how many issues were identified overall. "
                               "Give the reader a clear sense of how exposed this system is without "
                               "overstating or understating the risk. "
-                              "Paragraph 2: Walk through the finding categories — what types of weaknesses "
+                              "Paragraph 2: Walk through the finding categories â€” what types of weaknesses "
                               "were found (unpatched software, configuration problems, exposed services, "
                               "weak authentication), which services carry the most risk, and what the "
                               "spread of severity levels tells us about the overall security posture. "
                               "Paragraph 3: Identify the 2-3 most serious issues by name and explain in "
                               "plain terms what an attacker could realistically do if they exploited them "
                               "and what the business consequence would be. Focus on impact, not technique. "
-                              "Paragraph 4: Summarise the remediation urgency — what needs to be addressed "
+                              "Paragraph 4: Summarise the remediation urgency â€” what needs to be addressed "
                               "within days versus weeks, and whether any findings represent systemic "
                               "weaknesses that point to a broader process or policy gap. "
                               "Do NOT repeat the opening sentence verbatim. "
@@ -5579,7 +5631,7 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
     finally:
         _sp.stop(f" done ({_fmt_dur(time.monotonic() - _t0)})")
 
-    # ── Per-finding LLM remediation for Unknown vuln_type ────────────────────
+    # â”€â”€ Per-finding LLM remediation for Unknown vuln_type â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     # Pre-enrichment inference pass: use the static keyword map to fill in vuln_type
     # for any finding that still has an empty or Unknown vuln_type (covers nuclei,
     # ffuf, ssh-audit, nmap-service parsers that don't set it at parse time).
@@ -5673,7 +5725,7 @@ def _load_cve_kb() -> dict:
         with open(CVE_KB_PATH, "r", encoding="utf-8") as fh:
             return json.load(fh)
     except Exception as e:
-        print(f"[!] CVE KB load error ({e}) — starting with empty KB.")
+        print(f"[!] CVE KB load error ({e}) â€” starting with empty KB.")
         return {}
 
 
@@ -5708,7 +5760,7 @@ def _load_nuclei_kb() -> dict:
         with open(NUCLEI_KB_PATH, "r", encoding="utf-8") as fh:
             return json.load(fh)
     except Exception as e:
-        print(f"[!] Nuclei KB load error ({e}) — starting with empty template KB.")
+        print(f"[!] Nuclei KB load error ({e}) â€” starting with empty template KB.")
         return {}
 
 
@@ -5763,10 +5815,10 @@ def _upsert_nuclei_template(nkb: dict, template_id: str, cve_id: str, template: 
 
 
 # ---------------------------------------------------------------------------
-# TOOL KNOWLEDGE BASE — persistent performance tracking per tool per service
+# TOOL KNOWLEDGE BASE â€” persistent performance tracking per tool per service
 # ---------------------------------------------------------------------------
 
-# Canonical service key map — nmap service names → normalised protocol labels used in KB
+# Canonical service key map â€” nmap service names â†’ normalised protocol labels used in KB
 _SVC_KEY_MAP: dict = {
     "http":          "http",
     "ssl/http":      "https",
@@ -5790,7 +5842,7 @@ _SVC_KEY_MAP: dict = {
     "netbios-ssn":   "smb",
 }
 
-# Hard-coded tool→service for tools that are always tied to one service type
+# Hard-coded toolâ†’service for tools that are always tied to one service type
 _TOOL_SVC_DIRECT: dict = {
     "ssh_enum":   "ssh",
     "rdp_enum":   "rdp",
@@ -5810,7 +5862,7 @@ _TOOL_SVC_FALLBACK: dict = {
     "nxc":       "smb",
 }
 
-# nmap product string → short canonical product label.
+# nmap product string â†’ short canonical product label.
 # Longest matching prefix wins (sort by length descending at build time).
 _PRODUCT_LABEL_MAP: dict = {
     # HTTP servers
@@ -5922,7 +5974,7 @@ def _normalize_product(product: str) -> str:
     for prefix, label in _PRODUCT_LABEL_MAP.items():
         if p.startswith(prefix):
             return label
-    # Generic normalisation: lower, collapse whitespace → hyphens, cap length
+    # Generic normalisation: lower, collapse whitespace â†’ hyphens, cap length
     p = re.sub(r'\s+', '-', p)
     return p[:24] if p else ""
 
@@ -5933,7 +5985,7 @@ def _svc_key(tool: str, args, services: list) -> str:
     Format: "<product>/<protocol>" when the server software is known
     (e.g. "nginx/http", "openssh/ssh", "mssql/mssql"), otherwise just the
     protocol label (e.g. "http", "ssh").  Port numbers are intentionally
-    excluded — the KB tracks *what works against which infrastructure*, not
+    excluded â€” the KB tracks *what works against which infrastructure*, not
     against which port number a service happened to run on during one scan.
     """
     if tool in _TOOL_SVC_DIRECT:
@@ -5958,7 +6010,7 @@ def _svc_key(tool: str, args, services: list) -> str:
                     return f"{product}/{protocol}"
                 return protocol
 
-    # No port match — fall back to tool's default service type
+    # No port match â€” fall back to tool's default service type
     return _TOOL_SVC_FALLBACK.get(tool, "unknown")
 
 
@@ -6063,9 +6115,9 @@ def _load_tool_kb() -> dict:
         with open(TOOL_KB_PATH, "r", encoding="utf-8") as fh:
             kb = json.load(fh)
     except Exception as e:
-        print(f"[!] Tool KB load error ({e}) — starting with empty KB.")
+        print(f"[!] Tool KB load error ({e}) â€” starting with empty KB.")
         return {"_meta": {"version": 2}}
-    # Migrate v1 → v2 if needed
+    # Migrate v1 â†’ v2 if needed
     if kb.get("_meta", {}).get("version", 1) < 2:
         kb = _migrate_tool_kb_v1(kb)
         _save_tool_kb(kb)
@@ -6129,7 +6181,7 @@ def _tool_kb_summary(tool_kb: dict) -> str:
       1. Per-tool breakdown (success rate per port/service it has been run against)
       2. Best-tool-per-service ranking (what to use when a given port is seen open)
     """
-    # Build: { svc_key → [(tool, stats), ...] } for the per-service ranking
+    # Build: { svc_key â†’ [(tool, stats), ...] } for the per-service ranking
     svc_tools: dict = {}
     tool_lines: list = []
 
@@ -6152,7 +6204,7 @@ def _tool_kb_summary(tool_kb: dict) -> str:
             # Accumulate for per-service rankings
             svc_tools.setdefault(svc, []).append((tool, rate, avg, runs))
         if parts:
-            tool_lines.append(f"  {tool:14} → {', '.join(parts)}")
+            tool_lines.append(f"  {tool:14} â†’ {', '.join(parts)}")
 
     if not tool_lines:
         return ""
@@ -6164,11 +6216,11 @@ def _tool_kb_summary(tool_kb: dict) -> str:
         entries = ", ".join(
             f"{t}:{r:.0%}({n}r)" for t, r, _, n in ranked
         )
-        svc_lines.append(f"  {svc:16} → {entries}")
+        svc_lines.append(f"  {svc:16} â†’ {entries}")
 
-    blocks = ["TOOL KB — per-tool success rates (product/service, prior scans):"]
+    blocks = ["TOOL KB â€” per-tool success rates (product/service, prior scans):"]
     blocks += tool_lines
-    blocks += ["", "TOOL KB — best tools per service/infrastructure type:"]
+    blocks += ["", "TOOL KB â€” best tools per service/infrastructure type:"]
     blocks += svc_lines
     return "\n".join(blocks)
 
@@ -6475,10 +6527,10 @@ def _hc_ftp(target: str, port: str, svc: dict) -> list:
     findings = []
     nse: dict = svc.get("nse_output", {})
 
-    # Cleartext protocol — always flag
+    # Cleartext protocol â€” always flag
     findings.append(_hc_finding(
         svc, target,
-        title    = "FTP uses cleartext protocol — credentials unencrypted",
+        title    = "FTP uses cleartext protocol â€” credentials unencrypted",
         severity = "medium",
         evidence = f"FTP service detected on port {port}. Use SFTP or FTPS instead.",
         vuln_type= "Cleartext Credentials",
@@ -6853,7 +6905,7 @@ def _hc_snmp(target: str, port: str, svc: dict) -> list:
 
 
 def _hc_telnet(target: str, port: str, svc: dict) -> list:
-    """Check Telnet — presence alone is a finding."""
+    """Check Telnet â€” presence alone is a finding."""
     findings = []
     nse: dict = svc.get("nse_output", {})
     enc_raw = (nse.get("telnet-encryption", "") or "").lower()
@@ -6901,7 +6953,7 @@ def _hc_email_plaintext(target: str, port: str, svc: dict) -> list:
     return findings
 
 
-# Service name fragment → check function (first match wins per service)
+# Service name fragment â†’ check function (first match wins per service)
 _HC_DISPATCH: list[tuple[str, object]] = [
     ("ssh",          _hc_ssh),
     ("ssl/http",     _hc_http),
@@ -6948,7 +7000,7 @@ def _hc_banner_disclosure(target: str, port: str, svc: dict) -> list[Finding]:
 def _run_service_health_checks(services: list, target: str) -> list[Finding]:
     """
     Run deterministic, read-only health checks on every discovered service.
-    Parses NSE output already collected by nmap Phase 3 — no extra connections.
+    Parses NSE output already collected by nmap Phase 3 â€” no extra connections.
     Returns a list of Finding objects to be merged into all_findings.
     """
     results: list[Finding] = []
@@ -7031,7 +7083,7 @@ def _sanitise_script(obj: dict) -> dict | None:
                         str_ch = ch
                     result.append(ch)
                 else:
-                    if ch == "\\":          # escape sequence — keep both chars verbatim
+                    if ch == "\\":          # escape sequence â€” keep both chars verbatim
                         result.append(ch)
                         i += 1
                         if i < len(src):
@@ -7056,7 +7108,7 @@ def _sanitise_script(obj: dict) -> dict | None:
         try:
             compile(script, "<llm_script>", "exec")
         except SyntaxError as exc:
-            print(f"\n  [Script] SyntaxError in LLM output ({exc}) — discarding attempt")
+            print(f"\n  [Script] SyntaxError in LLM output ({exc}) â€” discarding attempt")
             return None
 
     result_obj = dict(obj)
@@ -7107,7 +7159,7 @@ def _parse_llm_script_response(raw: str) -> dict | None:
 
     # Strategy 3: find the outermost {...} block and sanitise embedded newlines.
     # The model often writes: {"script": "line1\nline2"} with a literal newline
-    # instead of the escaped \\n — we fix that by replacing bare newlines that
+    # instead of the escaped \\n â€” we fix that by replacing bare newlines that
     # are INSIDE a JSON string value with \\n.
     m = re.search(r'\{.*\}', text, re.DOTALL)
     if m:
@@ -7124,11 +7176,11 @@ def _parse_llm_script_response(raw: str) -> dict | None:
         except Exception:
             pass
 
-    # Strategy 4: regex field extraction — works when the model writes valid-looking
+    # Strategy 4: regex field extraction â€” works when the model writes valid-looking
     # JSON but with unbalanced braces or extra text outside.
     lang_m     = re.search(r'"language"\s*:\s*"(python)"', text)
     strategy_m = re.search(r'"strategy"\s*:\s*"([^"]{5,})"', text)
-    # Script may span multiple lines — grab everything between "script": " and the last "
+    # Script may span multiple lines â€” grab everything between "script": " and the last "
     script_m   = re.search(r'"script"\s*:\s*"(.*)"', text, re.DOTALL)
     if lang_m and strategy_m and script_m:
         script = script_m.group(1).replace("\\n", "\n").replace('\\"', '"')
@@ -7158,7 +7210,7 @@ def _parse_llm_script_response(raw: str) -> dict | None:
 
 
 # ---------------------------------------------------------------------------
-# NUCLEI TEMPLATE GENERATION — LLM → YAML → nuclei execution engine
+# NUCLEI TEMPLATE GENERATION â€” LLM â†’ YAML â†’ nuclei execution engine
 # ---------------------------------------------------------------------------
 
 # Services that are suitable for Nuclei HTTP template generation
@@ -7215,7 +7267,7 @@ def _is_nuclei_eligible(cve: dict) -> bool:
 def _valid_nuclei(obj: dict) -> bool:
     """Validate a parsed Nuclei template generation response.
 
-    Required fields: template_id (str), protocol (str), yaml_content (str ≥ 50 chars).
+    Required fields: template_id (str), protocol (str), yaml_content (str â‰¥ 50 chars).
     The yaml_content must parse as YAML and contain an id, info.name, and at least
     one http/tcp/network block with a matchers section.
     """
@@ -7231,7 +7283,7 @@ def _valid_nuclei(obj: dict) -> bool:
     if len(obj.get("yaml_content", "")) < 50:
         return False
 
-    # YAML structural check (best-effort — skip if PyYAML not installed)
+    # YAML structural check (best-effort â€” skip if PyYAML not installed)
     if _yaml is not None:
         try:
             doc = _yaml.safe_load(obj["yaml_content"])
@@ -7299,7 +7351,7 @@ def _generate_nuclei_template(cve: dict, target: str, port: int,
 
     prompt = f"""/no_think
 Generate a safe Nuclei YAML template to test whether a target is affected by a CVE.
-Reply with JSON only — no markdown, no code fences.
+Reply with JSON only â€” no markdown, no code fences.
 
 CVE: {cve_id}
 Product: {product}
@@ -7307,10 +7359,10 @@ Service: {service} on {base_url}
 Summary: {summary}
 {msf_block}
 ### TEMPLATE RULES
-- Protocol: http (use {{{{BaseURL}}}} — Nuclei substitutes the target automatically)
+- Protocol: http (use {{{{BaseURL}}}} â€” Nuclei substitutes the target automatically)
 - id MUST be: {suggested_id}
 - severity: one of info/low/medium/high/critical
-- Use at least one matcher with specific, meaningful words — NOT generic terms like "200 OK"
+- Use at least one matcher with specific, meaningful words â€” NOT generic terms like "200 OK"
 - Use negative matchers where possible to eliminate false positives
 - The probe MUST match the service and protocol type
 - Only assert version-based VULNERABLE match if the CVE has a specific affected version range
@@ -7322,7 +7374,7 @@ Summary: {summary}
 ### VERSION MATCHING
 Only match on version strings if the CVE's vulnerable range is explicitly known.
 A matcher that triggers on product name alone (e.g. contains: 'Apache') without a version
-comparison is a false-positive generator — matchers must be specific to the vulnerable version.
+comparison is a false-positive generator â€” matchers must be specific to the vulnerable version.
 Do not assume: older == vulnerable. Use extractors + matchers together for version checks.
 
 ### CONFIDENCE SCORING
@@ -7337,7 +7389,7 @@ version_banner | header_check | unauthenticated_get | error_pattern_match |
 config_disclosure | api_version_check | protocol_fingerprint
 
 Reply with ONLY this JSON:
-{{"template_id": "{suggested_id}", "probe_type": "<type>", "protocol": "http", "confidence": 0.0, "matchers_summary": "<one sentence>", "yaml_content": "id: {suggested_id}\\ninfo:\\n  name: {cve_id} — {product[:40]}\\n  severity: medium\\n\\nhttp:\\n  - method: GET\\n    path:\\n      - \\"{{{{BaseURL}}}}/\\"\\n    matchers:\\n      - type: word\\n        words:\\n          - \\"indicator-of-vulnerability\\""}}"""
+{{"template_id": "{suggested_id}", "probe_type": "<type>", "protocol": "http", "confidence": 0.0, "matchers_summary": "<one sentence>", "yaml_content": "id: {suggested_id}\\ninfo:\\n  name: {cve_id} â€” {product[:40]}\\n  severity: medium\\n\\nhttp:\\n  - method: GET\\n    path:\\n      - \\"{{{{BaseURL}}}}/\\"\\n    matchers:\\n      - type: word\\n        words:\\n          - \\"indicator-of-vulnerability\\""}}"""
 
     _t0       = time.monotonic()
     _timed_out = False
@@ -7454,7 +7506,7 @@ async def _run_nuclei_template(yaml_content: str, target_url: str,
     # Distinguish "nuclei ran but no match" from "nuclei failed completely"
     if not raw.strip() or "[ERR]" in raw or "Error" in raw:
         if not raw.strip():
-            # Empty output — nuclei ran and found nothing, OR nuclei failed
+            # Empty output â€” nuclei ran and found nothing, OR nuclei failed
             verdict = "INCONCLUSIVE"
             error = "nuclei produced no output (check template validity or nuclei binary)"
         else:
@@ -7476,7 +7528,7 @@ def _generate_known_exploit_script(cve: dict, target: str, msf_hint: dict | None
     method  = cve.get("safe_validation_method", "").strip()
     proof   = cve.get("proof_of_impact", "").strip()
     if not method and not proof:
-        return None  # no known method — skip Phase 0
+        return None  # no known method â€” skip Phase 0
 
     guidance = f"Method: {method}" if method else ""
     if proof:
@@ -7501,9 +7553,9 @@ def _generate_known_exploit_script(cve: dict, target: str, msf_hint: dict | None
 Write a Python 3 script to verify whether a CVE affects the target. Reply with JSON only.
 
 CVE: {cve.get('cve_id', '')} on {target}:{cve.get('service', '')}
-Product: {cve.get('product', '')} — {cve.get('summary', '')[:150]}
+Product: {cve.get('product', '')} â€” {cve.get('summary', '')[:150]}
 {guidance}{msf_block}
-{('Weakness class: ' + cve.get('cwe_id','') + (' — ' + cve.get('cwe_name','') if cve.get('cwe_name') else '')) if cve.get('cwe_id','').startswith('CWE-') else ''}
+{('Weakness class: ' + cve.get('cwe_id','') + (' â€” ' + cve.get('cwe_name','') if cve.get('cwe_name') else '')) if cve.get('cwe_id','').startswith('CWE-') else ''}
 ### LANGUAGE
 Python 3 only. Use subprocess for system tools where needed.
 - USE: requests, socket, ssl, subprocess, shutil, re, json, time, urllib.parse, Python standard library.
@@ -7519,21 +7571,21 @@ Python 3 only. Use subprocess for system tools where needed.
 - Use single quotes (') for all strings to avoid breaking the JSON.
 - Default timeout: 8 seconds. Maximum timeout: 15 seconds.
 - For path traversal or header injection probes: use raw socket (socket library) to send the
-  literal byte string — do NOT use requests or urllib, which normalise paths and cause 400 errors.
+  literal byte string â€” do NOT use requests or urllib, which normalise paths and cause 400 errors.
 - The probe MUST match the target protocol and service type.
   Do not generate HTTP logic for non-HTTP services.
   Do not generate TLS logic unless TLS is present or implied by the service.
 
-### VERSION MATCHING — CRITICAL RULES
+### VERSION MATCHING â€” CRITICAL RULES
 There are exactly TWO valid paths to VERDICT: VULNERABLE:
 1. VERSION CHECK: Extract a specific version string with regex and confirm it falls within
    the CVE stated vulnerable range. If no version string is parseable, output INCONCLUSIVE.
 2. BEHAVIORAL CHECK: Directly observe the vulnerable behaviour described in the CVE
    (e.g. unauthenticated file read, specific error message, exploitable protocol response).
 
-FORBIDDEN — product/service name presence alone MUST NEVER produce VERDICT: VULNERABLE:
+FORBIDDEN â€” product/service name presence alone MUST NEVER produce VERDICT: VULNERABLE:
     if 'OpenSSH' in banner: ...              # proves service exists, not that it is unpatched
-    if 'Apache' in r.headers.get('Server','') ...  # same — product presence proves nothing
+    if 'Apache' in r.headers.get('Server','') ...  # same â€” product presence proves nothing
     if b'vsftpd' in data: ...               # same
     if '200 OK' in response: ...            # generic success is not vulnerability evidence
 
@@ -7608,11 +7660,11 @@ Reply with ONLY this JSON (no markdown, no code fences):
     finally:
         _elapsed = _fmt_dur(time.monotonic() - _t0)
         if _timed_out:
-            _sp.stop(f" TIMED OUT ({_elapsed}) — try a faster model or raise OLLAMA_TIMEOUT")
+            _sp.stop(f" TIMED OUT ({_elapsed}) â€” try a faster model or raise OLLAMA_TIMEOUT")
         else:
             _sp.stop(f" done ({_elapsed})")
         if _parse_fail_raw:
-            print(f"  [LLM] Parse failure — raw response (first 300 chars): {_parse_fail_raw!r}")
+            print(f"  [LLM] Parse failure â€” raw response (first 300 chars): {_parse_fail_raw!r}")
     return None
 
 
@@ -7628,7 +7680,7 @@ def _generate_cve_test_script(cve: dict, target: str, previous_attempts: list,
     for i, a in enumerate(previous_attempts[-5:], 1):  # last 5 only to keep prompt short
         strategy = a['strategy']
         banned_strategies.append(strategy)
-        line = f"  [{i}] {strategy} → {a['verdict']}"
+        line = f"  [{i}] {strategy} â†’ {a['verdict']}"
         # Include a short output snippet so the LLM sees *why* it failed
         snippet = (a.get("output") or "").strip()
         if snippet:
@@ -7637,13 +7689,13 @@ def _generate_cve_test_script(cve: dict, target: str, previous_attempts: list,
             if first_line:
                 line += f"\n      output: {first_line[:120]}"
         prior_lines.append(line)
-    prior_block = "\n".join(prior_lines) if prior_lines else "  (none — this is attempt 1)"
+    prior_block = "\n".join(prior_lines) if prior_lines else "  (none â€” this is attempt 1)"
 
     # Explicit ban clause: enumerate each failed strategy so a small model can't miss it
     if banned_strategies:
         _banned_list = "\n".join(f"  - {s}" for s in banned_strategies)
         _banned_clause = (
-            f"\n### BANNED STRATEGIES (ALL FAILED — DO NOT REPEAT ANY OF THESE):\n{_banned_list}\n"
+            f"\n### BANNED STRATEGIES (ALL FAILED â€” DO NOT REPEAT ANY OF THESE):\n{_banned_list}\n"
             f"You MUST use a completely different technique that is NOT in the banned list above.\n"
         )
     else:
@@ -7675,9 +7727,9 @@ def _generate_cve_test_script(cve: dict, target: str, previous_attempts: list,
 Write a Python 3 script to verify whether a CVE affects the target using a FRESH strategy. Reply with JSON only.
 
 CVE: {cve.get('cve_id', '')} on {target}:{cve.get('service', '')}
-Product: {cve.get('product', '')} — {cve.get('summary', '')[:150]}
+Product: {cve.get('product', '')} â€” {cve.get('summary', '')[:150]}
 Safe method: {cve.get('safe_validation_method', '')}
-{('Weakness class: ' + cve.get('cwe_id','') + (' — ' + cve.get('cwe_name','') if cve.get('cwe_name') else '')) if cve.get('cwe_id','').startswith('CWE-') else ''}
+{('Weakness class: ' + cve.get('cwe_id','') + (' â€” ' + cve.get('cwe_name','') if cve.get('cwe_name') else '')) if cve.get('cwe_id','').startswith('CWE-') else ''}
 ### ATTEMPTS SO FAR:
 {prior_block}{kb_block}{msf_block}{_banned_clause}
 ### LANGUAGE
@@ -7695,21 +7747,21 @@ Python 3 only. Use subprocess for system tools where needed.
 - Use single quotes (') for all strings to avoid breaking the JSON.
 - Default timeout: 8 seconds. Maximum timeout: 15 seconds.
 - For path traversal or header injection probes: use raw socket (socket library) to send the
-  literal byte string — do NOT use requests or urllib, which normalise paths and cause 400 errors.
+  literal byte string â€” do NOT use requests or urllib, which normalise paths and cause 400 errors.
 - The probe MUST match the target protocol and service type.
   Do not generate HTTP logic for non-HTTP services.
   Do not generate TLS logic unless TLS is present or implied by the service.
 
-### VERSION MATCHING — CRITICAL RULES
+### VERSION MATCHING â€” CRITICAL RULES
 There are exactly TWO valid paths to VERDICT: VULNERABLE:
 1. VERSION CHECK: Extract a specific version string with regex and confirm it falls within
    the CVE stated vulnerable range. If no version string is parseable, output INCONCLUSIVE.
 2. BEHAVIORAL CHECK: Directly observe the vulnerable behaviour described in the CVE
    (e.g. unauthenticated file read, specific error message, exploitable protocol response).
 
-FORBIDDEN — product/service name presence alone MUST NEVER produce VERDICT: VULNERABLE:
+FORBIDDEN â€” product/service name presence alone MUST NEVER produce VERDICT: VULNERABLE:
     if 'OpenSSH' in banner: ...              # proves service exists, not that it is unpatched
-    if 'Apache' in r.headers.get('Server','') ...  # same — product presence proves nothing
+    if 'Apache' in r.headers.get('Server','') ...  # same â€” product presence proves nothing
     if b'vsftpd' in data: ...               # same
     if '200 OK' in response: ...            # generic success is not vulnerability evidence
 
@@ -7775,20 +7827,20 @@ Reply with ONLY this JSON (no markdown, no code fences):
                 _parse_fail_raw = raw[:300]
             except requests.exceptions.Timeout:
                 _timed_out = True
-                break  # no point retrying a timeout — LLM is too slow right now
+                break  # no point retrying a timeout â€” LLM is too slow right now
             except requests.exceptions.ConnectionError as exc:
                 print(f"\n  [LLM] Ollama connection error: {exc}")
-                break  # Ollama is down — no point retrying
+                break  # Ollama is down â€” no point retrying
             except Exception as exc:
                 print(f"\n  [LLM] Unexpected error: {exc}")
     finally:
         _elapsed = _fmt_dur(time.monotonic() - _t0)
         if _timed_out:
-            _sp.stop(f" TIMED OUT ({_elapsed}) — try a faster model or raise OLLAMA_TIMEOUT")
+            _sp.stop(f" TIMED OUT ({_elapsed}) â€” try a faster model or raise OLLAMA_TIMEOUT")
         else:
             _sp.stop(f" done ({_elapsed})")
         if _parse_fail_raw:
-            print(f"  [LLM] Parse failure — raw response (first 300 chars): {_parse_fail_raw!r}")
+            print(f"  [LLM] Parse failure â€” raw response (first 300 chars): {_parse_fail_raw!r}")
     return None
 
 
@@ -7802,9 +7854,9 @@ def _generate_verification_script(cve: dict, target: str, triggering_attempt: di
 Write a SECOND, INDEPENDENT Python 3 verification script to confirm or deny a prior VULNERABLE result. Reply with JSON only.
 
 CVE: {cve.get('cve_id', '')} on {target}:{cve.get('service', '')}
-Product: {cve.get('product', '')} — {cve.get('summary', '')[:150]}
+Product: {cve.get('product', '')} â€” {cve.get('summary', '')[:150]}
 
-### CONTRAST RULE — MANDATORY:
+### CONTRAST RULE â€” MANDATORY:
 Previous strategy: {triggering_attempt.get('strategy', '')}
 DO NOT REUSE: same endpoint, same response field, or same protocol primitive.
 Validate a DIFFERENT observable indicator of the same vulnerability.
@@ -7824,21 +7876,21 @@ Python 3 only. Use subprocess for system tools where needed.
 - Use single quotes (') for all strings to avoid breaking the JSON.
 - Default timeout: 8 seconds. Maximum timeout: 15 seconds.
 - For path traversal or header injection probes: use raw socket (socket library) to send the
-  literal byte string — do NOT use requests or urllib, which normalise paths and cause 400 errors.
+  literal byte string â€” do NOT use requests or urllib, which normalise paths and cause 400 errors.
 - The probe MUST match the target protocol and service type.
   Do not generate HTTP logic for non-HTTP services.
   Do not generate TLS logic unless TLS is present or implied by the service.
 
-### VERSION MATCHING — CRITICAL RULES
+### VERSION MATCHING â€” CRITICAL RULES
 There are exactly TWO valid paths to VERDICT: VULNERABLE:
 1. VERSION CHECK: Extract a specific version string with regex and confirm it falls within
    the CVE stated vulnerable range. If no version string is parseable, output INCONCLUSIVE.
 2. BEHAVIORAL CHECK: Directly observe the vulnerable behaviour described in the CVE
    (e.g. unauthenticated file read, specific error message, exploitable protocol response).
 
-FORBIDDEN — product/service name presence alone MUST NEVER produce VERDICT: VULNERABLE:
+FORBIDDEN â€” product/service name presence alone MUST NEVER produce VERDICT: VULNERABLE:
     if 'OpenSSH' in banner: ...              # proves service exists, not that it is unpatched
-    if 'Apache' in r.headers.get('Server','') ...  # same — product presence proves nothing
+    if 'Apache' in r.headers.get('Server','') ...  # same â€” product presence proves nothing
     if b'vsftpd' in data: ...               # same
     if '200 OK' in response: ...            # generic success is not vulnerability evidence
 
@@ -7908,17 +7960,17 @@ Reply with ONLY this JSON (no markdown, no code fences):
                 break
             except requests.exceptions.ConnectionError as exc:
                 print(f"\n  [LLM] Ollama connection error: {exc}")
-                break  # Ollama is down — no point retrying
+                break  # Ollama is down â€” no point retrying
             except Exception as exc:
                 print(f"\n  [LLM] Unexpected error: {exc}")
     finally:
         _elapsed = _fmt_dur(time.monotonic() - _t0)
         if _timed_out:
-            _sp.stop(f" TIMED OUT ({_elapsed}) — try a faster model or raise OLLAMA_TIMEOUT")
+            _sp.stop(f" TIMED OUT ({_elapsed}) â€” try a faster model or raise OLLAMA_TIMEOUT")
         else:
             _sp.stop(f" done ({_elapsed})")
         if _parse_fail_raw:
-            print(f"  [LLM] Parse failure — raw response (first 300 chars): {_parse_fail_raw!r}")
+            print(f"  [LLM] Parse failure â€” raw response (first 300 chars): {_parse_fail_raw!r}")
     return None
 
 
@@ -7981,8 +8033,8 @@ def _print_scan_eta(label: str, scan_start: datetime, frac_done: float) -> None:
         eta = scan_start + timedelta(seconds=elapsed / frac_done)
         eta_str = eta.strftime("%H:%M:%S")
     else:
-        eta_str = "calculating…"
-    print(f"[*] ── {label} | Time: {now.strftime('%H:%M:%S')} | Elapsed: {_fmt_dur(elapsed)} | Est. completion: {eta_str}")
+        eta_str = "calculatingâ€¦"
+    print(f"[*] â”€â”€ {label} | Time: {now.strftime('%H:%M:%S')} | Elapsed: {_fmt_dur(elapsed)} | Est. completion: {eta_str}")
 
 
 def _script_score(s: dict) -> float:
@@ -7992,7 +8044,7 @@ def _script_score(s: dict) -> float:
     NOT_VULNERABLE results are weighted 1x (clear negative answer is still useful).
     INCONCLUSIVE results contribute 0 (broken or unreliable).
     community_confirmations (set by the build pipeline) adds a bonus proportional
-    to the number of independent users who submitted the same script — a script
+    to the number of independent users who submitted the same script â€” a script
     confirmed by 10 users starts with a meaningful head-start over an untested one.
     Backward-compatible: fields absent in old KB entries default to safe values.
     """
@@ -8014,9 +8066,9 @@ def _select_kb_scripts(scripts: list) -> list:
     knowledge bases don't exhaust the test budget on a single CVE.
 
     Tiers:
-      Top  10 — highest-ranked scripts (most historically reliable)
-      Mid   5 — random sample from the middle third (stable but not star performers)
-      Low   5 — random sample from the bottom third (low-scorers worth re-validating)
+      Top  10 â€” highest-ranked scripts (most historically reliable)
+      Mid   5 â€” random sample from the middle third (stable but not star performers)
+      Low   5 â€” random sample from the bottom third (low-scorers worth re-validating)
 
     If the pool has <= 20 scripts the full pool is returned (sorted by score).
     """
@@ -8059,7 +8111,7 @@ def _derive_inconclusive_reason(cve: dict, attempts: list) -> str:
     llm_failures = sum(1 for a in attempts if "llm parse failure" in a.get("strategy", "").lower()
                        or "ollama unavailable" in a.get("strategy", "").lower())
     if llm_failures == len(attempts):
-        return "All probe scripts failed to generate — Ollama was unavailable or returned unparseable JSON."
+        return "All probe scripts failed to generate â€” Ollama was unavailable or returned unparseable JSON."
     if llm_failures > 0:
         return (f"{llm_failures} of {len(attempts)} scripts failed to generate (LLM parse failure); "
                 "remaining probes ran but could not confirm the vulnerability.")
@@ -8073,17 +8125,17 @@ def _derive_inconclusive_reason(cve: dict, attempts: list) -> str:
                 "The target service may be slow, filtered, or not responding on the probed port/protocol.")
     if timed_out > 0:
         return (f"{timed_out} of {len(attempts)} scripts timed out. "
-                "The remaining scripts ran but returned INCONCLUSIVE — "
+                "The remaining scripts ran but returned INCONCLUSIVE â€” "
                 "the target may be partially filtered.")
 
     # Connection-level errors
     if "connection refused" in all_outputs:
-        return ("Probes received 'Connection refused' — the service is not accepting connections "
+        return ("Probes received 'Connection refused' â€” the service is not accepting connections "
                 "on the protocol the generated scripts targeted.")
     if "connection timed out" in all_outputs:
-        return "Probes timed out at the network level — the port may be filtered or the host unreachable."
+        return "Probes timed out at the network level â€” the port may be filtered or the host unreachable."
     if "name or service not known" in all_outputs or "nodename nor servname" in all_outputs:
-        return "DNS resolution failed for the target — probes could not reach the host."
+        return "DNS resolution failed for the target â€” probes could not reach the host."
 
     # Script runtime errors
     error_count = sum(1 for a in attempts if "[error:" in a.get("output", "").lower())
@@ -8100,7 +8152,7 @@ def _derive_inconclusive_reason(cve: dict, attempts: list) -> str:
                       or "banner" in a.get("strategy", "").lower())
     if banner_only == len(attempts):
         vuln_type = cve.get("vulnerability_type", "")
-        return (f"All {len(attempts)} probes used version-banner checks only — "
+        return (f"All {len(attempts)} probes used version-banner checks only â€” "
                 f"insufficient to confirm or deny a {vuln_type or 'vulnerability'} "
                 "without an exact version string in the service response.")
 
@@ -8109,7 +8161,7 @@ def _derive_inconclusive_reason(cve: dict, attempts: list) -> str:
                      if "vulnerable" not in a.get("output", "").lower()
                      and "not_vulnerable" not in a.get("output", "").lower())
     if no_verdict == len(attempts):
-        return ("Scripts ran but produced no VERDICT token — "
+        return ("Scripts ran but produced no VERDICT token â€” "
                 "the target did not respond in a way the probes could interpret as vulnerable or safe.")
 
     # Generic HTTP probes against a non-HTTP service
@@ -8119,7 +8171,7 @@ def _derive_inconclusive_reason(cve: dict, attempts: list) -> str:
                 "The scripts could not determine vulnerability status because the port "
                 "does not speak HTTP.")
 
-    # Default — mixed inconclusive
+    # Default â€” mixed inconclusive
     return ("The probe scripts ran but could not confirm or deny the vulnerability. "
             "This typically means the target does not expose a version string or "
             "detectable behaviour that distinguishes patched from unpatched versions. "
@@ -8129,8 +8181,8 @@ def _derive_inconclusive_reason(cve: dict, attempts: list) -> str:
 def _scrub_for_kb(text: str, target_host: str) -> str:
     """
     Remove user-specific data before persisting to the CVE knowledge base:
-      - session temp-file paths from Python/shell tracebacks → bare filename
-      - the actual target host/IP → 'TARGET_HOST' placeholder
+      - session temp-file paths from Python/shell tracebacks â†’ bare filename
+      - the actual target host/IP â†’ 'TARGET_HOST' placeholder
     """
     if not text:
         return text
@@ -8149,7 +8201,7 @@ async def run_cve_tests(cve_matches: list, target: str,
                         available_tools: dict | None = None,
                         nuclei_kb: dict | None = None) -> tuple[list, dict]:
     """
-    For each CVE (sorted Critical → High → Medium → Low):
+    For each CVE (sorted Critical â†’ High â†’ Medium â†’ Low):
       0. Targeted attempt: implement the known safe_validation_method/proof_of_impact (if present).
       1a. Replay any Nuclei templates already in the nuclei KB (HTTP CVEs only).
       1b. Replay any scripts already in the knowledge base (proven techniques from prior runs).
@@ -8204,7 +8256,7 @@ async def run_cve_tests(cve_matches: list, target: str,
         verdict_counts       = {"VULNERABLE": 0, "NOT_VULNERABLE": 0, "INCONCLUSIVE": 0}
         vulnerable_found     = False
         verification_results: list = []
-        verified             = False  # True if ≥1 verifier independently confirms VULNERABLE
+        verified             = False  # True if â‰¥1 verifier independently confirms VULNERABLE
         kb_pending_vulnerable: list = []  # VULNERABLE scripts deferred until Phase 3 confirms
 
         # ------------------------------------------------------------------
@@ -8216,10 +8268,10 @@ async def run_cve_tests(cve_matches: list, target: str,
         # which runs before _run_cve_test_phase).
         msf_hint: dict | None = cve.get("msf_validation") or None
 
-        # Short-circuit: MSF already confirmed this CVE as vulnerable — no need to run
+        # Short-circuit: MSF already confirmed this CVE as vulnerable â€” no need to run
         # any LLM probes.  Record the result and move to the next CVE.
         if msf_hint and msf_hint.get("vulnerable") is True:
-            print(f"  [MSF] {cve_id} — CONFIRMED VULNERABLE by MSF check, skipping LLM probe phase")
+            print(f"  [MSF] {cve_id} â€” CONFIRMED VULNERABLE by MSF check, skipping LLM probe phase")
             attempts.append({
                 "attempt_num": 1,
                 "source":      "msf_confirmed",
@@ -8286,7 +8338,7 @@ async def run_cve_tests(cve_matches: list, target: str,
                     "verdict":     verdict,
                 })
             else:
-                print("  [P0] Known-exploit script generation failed — skipping.")
+                print("  [P0] Known-exploit script generation failed â€” skipping.")
 
         # ------------------------------------------------------------------
         # Phase 1a: Replay Nuclei templates from KB (HTTP/web CVEs only)
@@ -8333,11 +8385,11 @@ async def run_cve_tests(cve_matches: list, target: str,
                     break
 
         # ------------------------------------------------------------------
-        # Phase 1: Replay KB scripts — tiered selection by success score
+        # Phase 1: Replay KB scripts â€” tiered selection by success score
         # ------------------------------------------------------------------
         if kb_scripts:
             if kb_selected < kb_count:
-                print(f"  [KB] Pool: {kb_count} scripts — replaying {kb_selected} "
+                print(f"  [KB] Pool: {kb_count} scripts â€” replaying {kb_selected} "
                       f"(top-10 by rank + 5 mid-tier + 5 low-tier sample) ...")
             else:
                 print(f"  [KB] Replaying {kb_selected} known script(s) ...")
@@ -8453,16 +8505,16 @@ async def run_cve_tests(cve_matches: list, target: str,
                 })
                 _save_nuclei_kb(nuclei_kb)
             else:
-                print(f"  [Nuclei Gen] Template generation failed for {cve_id} — skipping.")
+                print(f"  [Nuclei Gen] Template generation failed for {cve_id} â€” skipping.")
 
         # ------------------------------------------------------------------
         # Phase 2: Generate up to CVE_FRESH_ATTEMPTS new LLM scripts one at
         #   a time.  After each run, the full result (including output) is
         #   added to `attempts` before the next script is generated, so the
-        #   LLM sees real feedback — what failed and why — and can adapt.
+        #   LLM sees real feedback â€” what failed and why â€” and can adapt.
         # ------------------------------------------------------------------
         if vulnerable_found:
-            print(f"  [Phase 2] VULNERABLE already found — skipping LLM script generation.")
+            print(f"  [Phase 2] VULNERABLE already found â€” skipping LLM script generation.")
         new_slots   = CVE_FRESH_ATTEMPTS if not vulnerable_found else 0
         done_new    = 0
 
@@ -8470,7 +8522,7 @@ async def run_cve_tests(cve_matches: list, target: str,
         # connection errors and to surface the real failure reason.
         _p2_ollama_up = _ollama_is_up() if new_slots > 0 else True
         if new_slots > 0 and not _p2_ollama_up:
-            print(f"  [Phase 2] Ollama is not reachable — skipping LLM script generation.")
+            print(f"  [Phase 2] Ollama is not reachable â€” skipping LLM script generation.")
 
         for i in range(1, new_slots + 1):
             if not _p2_ollama_up:
@@ -8517,7 +8569,7 @@ async def run_cve_tests(cve_matches: list, target: str,
             if verdict == "VULNERABLE":
                 vulnerable_found = True
 
-            print(f"  [{attempt_num:02d}] {strategy[:80]} → {verdict}")
+            print(f"  [{attempt_num:02d}] {strategy[:80]} â†’ {verdict}")
             rec = {
                 "attempt_num": attempt_num, "source": "llm_generated",
                 "strategy": strategy, "language": language, "script": script,
@@ -8576,18 +8628,18 @@ async def run_cve_tests(cve_matches: list, target: str,
                         entry["best_verdict"] = verdict
 
             if vulnerable_found:
-                break  # found one — skip remaining slots and go to Phase 3
+                break  # found one â€” skip remaining slots and go to Phase 3
 
         # ------------------------------------------------------------------
-        # Phase 2c: (removed — results are recorded inline above)
+        # Phase 2c: (removed â€” results are recorded inline above)
         # ------------------------------------------------------------------
-        # Phase 3: False-positive verification — triggered by ANY VULNERABLE
+        # Phase 3: False-positive verification â€” triggered by ANY VULNERABLE
         if vulnerable_found:
             triggering = next((a for a in attempts if a["verdict"] == "VULNERABLE"), None)
-            print(f"\n  [VERIFY] VULNERABLE found — running {CVE_VERIFY_ATTEMPTS} independent verifier(s) ...")
+            print(f"\n  [VERIFY] VULNERABLE found â€” running {CVE_VERIFY_ATTEMPTS} independent verifier(s) ...")
             _p3_ollama_up = _ollama_is_up()
             if not _p3_ollama_up:
-                print(f"  [VERIFY] Ollama is not reachable — skipping verification.")
+                print(f"  [VERIFY] Ollama is not reachable â€” skipping verification.")
             verify_confirmed = 0
             for v_i in range(1, CVE_VERIFY_ATTEMPTS + 1):
                 if not _p3_ollama_up:
@@ -8646,11 +8698,11 @@ async def run_cve_tests(cve_matches: list, target: str,
             if verified:
                 print(f"  [VERIFY] CONFIRMED ({verify_confirmed}/{CVE_VERIFY_ATTEMPTS} verifiers agree)")
             else:
-                print(f"  [VERIFY] UNCONFIRMED — possible false positive "
+                print(f"  [VERIFY] UNCONFIRMED â€” possible false positive "
                       f"({verify_confirmed}/{CVE_VERIFY_ATTEMPTS} verifiers agree)")
 
         # ------------------------------------------------------------------
-        # Flush deferred VULNERABLE KB entries — now that we know whether
+        # Flush deferred VULNERABLE KB entries â€” now that we know whether
         # Phase 3 confirmed them, write the correct verdict into the KB.
         # Unconfirmed false positives are downgraded to INCONCLUSIVE so the
         # KB doesn't accumulate noise from bad concurrent guesses.
@@ -8740,7 +8792,7 @@ async def run_cve_tests(cve_matches: list, target: str,
             remaining = total_cves - cve_idx
             elapsed   = _fmt_dur(time.monotonic() - scan_start)
             print(f"\n{'=' * 52}")
-            print(f"  CVE batch complete — {cve_idx}/{total_cves} tested  [{elapsed} elapsed]")
+            print(f"  CVE batch complete â€” {cve_idx}/{total_cves} tested  [{elapsed} elapsed]")
             print(f"  {remaining} CVE(s) remaining.")
             print(f"{'=' * 52}")
             if UNATTENDED:
@@ -8759,7 +8811,7 @@ async def run_cve_tests(cve_matches: list, target: str,
 
 
 # ---------------------------------------------------------------------------
-# SERVICE HEALTH CHECK — LLM ENRICHMENT
+# SERVICE HEALTH CHECK â€” LLM ENRICHMENT
 # ---------------------------------------------------------------------------
 
 def _enrich_hc_finding(f) -> None:
@@ -8774,9 +8826,9 @@ def _enrich_hc_finding(f) -> None:
         f"Finding:  {f.title}  ({f.severity.upper()})\n"
         f"Evidence: {(f.evidence or '')[:300]}\n\n"
         "Write two short paragraphs in plain text (no markdown, no bullet points, no headers):\n"
-        "1. Security risk — how an attacker would discover and exploit this misconfiguration, "
+        "1. Security risk â€” how an attacker would discover and exploit this misconfiguration, "
         "what access or data they could gain, and the realistic business impact.\n"
-        "2. Remediation — one specific immediate action (e.g. change a config setting, "
+        "2. Remediation â€” one specific immediate action (e.g. change a config setting, "
         "disable a service, enforce a policy) and one permanent architectural recommendation.\n\n"
         "Be specific to this finding. Keep each paragraph to 2-3 sentences. Plain text only."
     )
@@ -8809,7 +8861,7 @@ def _enrich_finding_remediation(f) -> None:
     Ask the LLM for technology-specific short and long-term remediation for a
     finding whose vuln_type is Unknown or unrecognised.  Populates
     f.llm_remediation_short and f.llm_remediation_long in-place.
-    Non-fatal — silently leaves fields empty on any failure.
+    Non-fatal â€” silently leaves fields empty on any failure.
     """
     prompt = (
         f"You are a senior penetration tester writing remediation advice for a client report.\n\n"
@@ -8817,9 +8869,9 @@ def _enrich_finding_remediation(f) -> None:
         f"Service:   {f.service}\n"
         f"Detail:    {(f.description or f.evidence or '')[:300]}\n\n"
         'Reply with JSON only, no prose outside the JSON:\n'
-        '{"short": "1-2 sentences: immediate workaround specific to this technology — '
+        '{"short": "1-2 sentences: immediate workaround specific to this technology â€” '
         'name the exact config file, command, or setting to change", '
-        '"long": "2-3 sentences: permanent architectural fix — reference the specific '
+        '"long": "2-3 sentences: permanent architectural fix â€” reference the specific '
         'service, protocol, or component by name. No generic patch language."}\n\n'
         "Be concrete. Name the technology. Do not say 'apply vendor patch' or 'follow best practices'."
     )
@@ -8847,7 +8899,7 @@ def _enrich_finding_remediation(f) -> None:
             f.llm_remediation_short = obj.get("short", "").strip()
             f.llm_remediation_long  = obj.get("long",  "").strip()
     except Exception:
-        pass  # Leave fields empty — template falls back to static map
+        pass  # Leave fields empty â€” template falls back to static map
     finally:
         _sp.stop(f" done ({_fmt_dur(time.monotonic() - _t0)})")
 
@@ -8871,9 +8923,9 @@ def _generate_attacker_perspective(cve: dict) -> str:
         f"Service:       {cve.get('service', '')}\n"
         f"Vuln type:     {cve.get('vulnerability_type', '')}\n\n"
         "In plain text (no markdown, no bullet symbols), write two short paragraphs:\n"
-        "1. How a real attacker would discover and exploit this vulnerability — initial "
+        "1. How a real attacker would discover and exploit this vulnerability â€” initial "
         "access method, tools or techniques likely used, and what level of skill is required.\n"
-        "2. What an attacker could gain once exploitation succeeds — data exposed, "
+        "2. What an attacker could gain once exploitation succeeds â€” data exposed, "
         "credentials or tokens at risk, potential for lateral movement or privilege "
         "escalation, and the realistic business impact if this is left unpatched.\n\n"
         "Be specific to the vulnerability type. Keep each paragraph to 2-4 sentences. "
@@ -8905,7 +8957,7 @@ def _generate_attacker_perspective(cve: dict) -> str:
 def _generate_immediate_remediation(cve: dict) -> str:
     """
     Ask the LLM for 3 numbered, CVE-specific steps an operator can take right now
-    to reduce exposure — before a permanent patch is available.
+    to reduce exposure â€” before a permanent patch is available.
     Returns plain text (numbered list), or a short fallback on failure.
     """
     prompt = (
@@ -8917,11 +8969,11 @@ def _generate_immediate_remediation(cve: dict) -> str:
         f"Port:          {cve.get('port', '')}\n"
         f"Vuln type:     {cve.get('vulnerability_type', '')}\n\n"
         "List exactly 3 numbered steps an operator can take TODAY to reduce exposure for this specific CVE. "
-        "Be concrete and specific — name the exact port, service name, config option, or credential type to act on. "
+        "Be concrete and specific â€” name the exact port, service name, config option, or credential type to act on. "
         "Do NOT write generic advice like 'apply the vendor patch' or 'follow best practices'. "
         "Focus on firewall rules, service isolation, config hardening, credential rotation, or access restriction "
         "that can be completed in under an hour without a full upgrade. "
-        "Format: '1. <action>  2. <action>  3. <action>' — plain text only, no markdown, no bullet symbols."
+        "Format: '1. <action>  2. <action>  3. <action>' â€” plain text only, no markdown, no bullet symbols."
     )
     _t0 = time.monotonic()
     _sp = _Spinner(f"[ LLM ]  Generating immediate remediation path for {cve.get('cve_id', 'CVE')} ...").start()
@@ -8962,7 +9014,7 @@ def _generate_remediation(cve: dict) -> str:
         "1. Immediate mitigation (quick workaround to reduce exposure now)\n"
         "2. Permanent fix (patch, config change, or upgrade path)\n"
         "3. Verification (how to confirm the fix was applied)\n\n"
-        "Keep each section to 1-3 sentences. Plain text only — no markdown, no bullet symbols."
+        "Keep each section to 1-3 sentences. Plain text only â€” no markdown, no bullet symbols."
     )
     _t0 = time.monotonic()
     _sp = _Spinner(f"[ LLM ]  Generating remediation for {cve.get('cve_id', 'CVE')} ...").start()
@@ -8990,10 +9042,10 @@ def _generate_remediation(cve: dict) -> str:
 def _derive_evidence_type(result: dict) -> str:
     """Classify the strongest evidence basis found in a CVE test result.
 
-    Active Probe  — a fresh (non-KB) script ran and observed the vulnerable behaviour
+    Active Probe  â€” a fresh (non-KB) script ran and observed the vulnerable behaviour
                     or a version string was extracted and confirmed in range.
-    KB Replay     — the verdict came from a replayed known-good KB script.
-    Banner Analysis — the service banner / version string was matched heuristically
+    KB Replay     â€” the verdict came from a replayed known-good KB script.
+    Banner Analysis â€” the service banner / version string was matched heuristically
                       without direct behavioural confirmation.
     """
     attempts = result.get("attempts", [])
@@ -9029,10 +9081,10 @@ def generate_cve_remediations(cve_test_results: list, cve_matches: list) -> None
     that were not covered by active testing (e.g. because requires_auth=True caused them
     to be skipped).  These perspectives are written directly into the cve_match record.
     """
-    # Build a quick lookup from cve_id → original cve_match record
+    # Build a quick lookup from cve_id â†’ original cve_match record
     cve_meta = {c["cve_id"]: c for c in cve_matches}
 
-    # ── Phase 1: full remediation set for actively-tested vulnerable CVEs ────
+    # â”€â”€ Phase 1: full remediation set for actively-tested vulnerable CVEs â”€â”€â”€â”€
     vulnerable_verdicts = {"CONFIRMED_VULNERABLE", "VULNERABLE"}
     targets = [r for r in cve_test_results if r.get("overall_verdict") in vulnerable_verdicts]
     if targets:
@@ -9051,7 +9103,7 @@ def generate_cve_remediations(cve_test_results: list, cve_matches: list) -> None
                 cve_meta[cve_id]["attacker_perspective"]  = result["attacker_perspective"]
             print(f"  [+] Immediate remediation + attacker perspective + remediation written for {cve_id}")
 
-    # ── Phase 2: attacker perspective for untested CRITICAL/HIGH/MEDIUM CVEs ─
+    # â”€â”€ Phase 2: attacker perspective for untested CRITICAL/HIGH/MEDIUM CVEs â”€
     # CVEs skipped during active testing (e.g. requires_auth=True) still need
     # the attacker narrative so it appears in the CVE Matches section of the report.
     tested_ids = {r["cve_id"] for r in cve_test_results}
@@ -9072,7 +9124,7 @@ def generate_cve_remediations(cve_test_results: list, cve_matches: list) -> None
 def _build_conclusion_with_cve(report: dict, target: str) -> str:
     """Rebuild the conclusion anchor after CVE test results are available.
 
-    If confirmed/vulnerable CVEs exist the conclusion must reflect that —
+    If confirmed/vulnerable CVEs exist the conclusion must reflect that â€”
     overwriting the earlier pre-CVE conclusion stored in the report.
     """
     counts = report.get("counts", {})
@@ -9104,10 +9156,10 @@ def _build_conclusion_with_cve(report: dict, target: str) -> str:
     if confirmed:
         cve_parts.append(f"{len(confirmed)} CVE(s) confirmed by active probe testing: {', '.join(confirmed)}")
     if vulnerable:
-        cve_parts.append(f"{len(vulnerable)} CVE(s) matched by version/banner analysis — manual verification recommended: {', '.join(vulnerable)}")
+        cve_parts.append(f"{len(vulnerable)} CVE(s) matched by version/banner analysis â€” manual verification recommended: {', '.join(vulnerable)}")
 
     if not _finding_parts:
-        # No scanner findings — anchor entirely on CVE results (or clean bill)
+        # No scanner findings â€” anchor entirely on CVE results (or clean bill)
         if cve_parts:
             anchor = (
                 f"The assessment of {target} identified no scanner findings but CVE testing revealed "
@@ -9161,20 +9213,20 @@ def _build_conclusion_with_cve(report: dict, target: str) -> str:
                     "for a client-facing security assessment report. "
                     "Write exactly 4 paragraphs of professional prose in plain text. "
                     "No bullet points, no headings, no markdown, no numbered lists. "
-                    "Each paragraph must be 3-5 sentences. Use plain business language — "
+                    "Each paragraph must be 3-5 sentences. Use plain business language â€” "
                     "avoid marketing terms, acronym soup, and vendor jargon. "
-                    "Paragraph 1: Describe the scope of the assessment — what was tested, "
+                    "Paragraph 1: Describe the scope of the assessment â€” what was tested, "
                     "what services were discovered, and how many issues were identified overall. "
                     "Give the reader a clear sense of how exposed this device is without "
                     "overstating or understating the risk. "
-                    "Paragraph 2: Walk through the finding categories — what types of weaknesses "
+                    "Paragraph 2: Walk through the finding categories â€” what types of weaknesses "
                     "were found (authentication issues, unpatched software, configuration "
                     "problems, exposed services), which services carry the most risk, and "
                     "what the spread of severity levels tells us about the security posture. "
                     "Paragraph 3: Identify the 2-3 most serious issues by name and explain in "
                     "plain terms what an attacker could realistically do if they exploited them "
                     "and what the business consequence would be. Focus on impact, not technique. "
-                    "Paragraph 4: Summarise the remediation urgency — what needs to be addressed "
+                    "Paragraph 4: Summarise the remediation urgency â€” what needs to be addressed "
                     "within days versus weeks, and whether any findings represent systemic "
                     "weaknesses that point to a broader process or policy gap. "
                     "Do NOT repeat the opening sentence verbatim. "
@@ -9227,9 +9279,9 @@ async def _run_cve_test_phase(report: dict, target: str, session_dir: str,
 
     if SAFE_MODE:
         print(f"\n{'!' * 52}")
-        print(f"  CVE TEST — APPROVAL REQUIRED")
+        print(f"  CVE TEST â€” APPROVAL REQUIRED")
         print(f"  {len(cve_matches)} CVE(s) will be tested with LLM-generated scripts.")
-        print(f"  Scripts are read-only probes — no destructive payloads.")
+        print(f"  Scripts are read-only probes â€” no destructive payloads.")
         print(f"  Target: {target}")
         print(f"{'!' * 52}")
         if UNATTENDED:
@@ -9257,12 +9309,12 @@ async def _run_cve_test_phase(report: dict, target: str, session_dir: str,
         # Ensure KBs are persisted even if the scan is interrupted mid-loop.
         _save_cve_kb(kb)
         _save_nuclei_kb(nuclei_kb)
-    print(f"[+] CVE knowledge base updated → {CVE_KB_PATH}")
+    print(f"[+] CVE knowledge base updated â†’ {CVE_KB_PATH}")
     _nuclei_added = len(nuclei_kb) - _nuclei_kb_before
     if _nuclei_added > 0:
-        print(f"[+] Nuclei template KB updated ({_nuclei_added} new template(s)) → {NUCLEI_KB_PATH}")
+        print(f"[+] Nuclei template KB updated ({_nuclei_added} new template(s)) â†’ {NUCLEI_KB_PATH}")
     else:
-        print(f"[i] Nuclei template KB unchanged (no HTTP/web CVEs tested this run) → {NUCLEI_KB_PATH}")
+        print(f"[i] Nuclei template KB unchanged (no HTTP/web CVEs tested this run) â†’ {NUCLEI_KB_PATH}")
 
     # Generate LLM remediation suggestions for each confirmed/vulnerable CVE
     generate_cve_remediations(cve_test_results, cve_matches)
@@ -9288,7 +9340,7 @@ async def gather_target_info(target: str, available_tools: dict, airgap: bool = 
         ip = target
         info.ip_address = target
 
-    # Step 2: Reverse DNS (synchronous stdlib call — fast enough)
+    # Step 2: Reverse DNS (synchronous stdlib call â€” fast enough)
     try:
         rdns_result = socket.gethostbyaddr(ip)
         info.rdns_hostname = rdns_result[0]
@@ -9560,14 +9612,14 @@ async def main_async():
     SESSION_FILE = os.path.join(session_dir, "session.json")
 
     print(f"\n{'=' * 60}")
-    print(f"  Noctis Edge — Security Through Exposure  {VERSION}")
+    print(f"  Noctis Edge â€” Security Through Exposure  {VERSION}")
     print(f"{'=' * 60}")
     print(f"  Target  : {target}")
     print(f"  Profile : {profile['name']}")
     mode_str = "AGGRESSIVE" if not SAFE_MODE else "SAFE (approval required for aggressive tools)"
     print(f"  Mode    : {mode_str}")
     if not AIRGAP_MODE:
-        print(f"  DNS     : ENABLED — {', '.join(sorted(INTERNET_ONLY_TOOLS))} active")
+        print(f"  DNS     : ENABLED â€” {', '.join(sorted(INTERNET_ONLY_TOOLS))} active")
     else:
         print(f"  DNS     : disabled (use --dns to enable DNS enumeration)")
     print(f"  Session : {session_id}")
@@ -9595,13 +9647,13 @@ async def main_async():
             print(f"[+] Resuming session for {resume_state.get('target', target)} "
                   f"(iteration {resume_state.get('iteration', '?')})")
         else:
-            print("[!] No saved session found — starting fresh.")
+            print("[!] No saved session found â€” starting fresh.")
 
     # ---------------------------------------------------------------------------
     # Nmap 5-Phase Discovery
     # ---------------------------------------------------------------------------
     print(f"\n{'=' * 52}")
-    print("  Nmap Discovery — 5 Phases")
+    print("  Nmap Discovery â€” 5 Phases")
     print(f"{'=' * 52}")
     services, nmap_meta = run_nmap_discovery(target, pinned_ports=pinned_ports)
     _print_scan_eta("Nmap discovery done", scan_start, 0.12)
@@ -9662,9 +9714,9 @@ async def main_async():
     kb_text = _tool_kb_summary(tool_kb)
     if kb_text:
         context["tool_kb_text"] = kb_text
-        print(f"[+] Tool KB loaded — {sum(len(v) for k, v in tool_kb.items() if not k.startswith('_'))} service-slot(s) tracked")
+        print(f"[+] Tool KB loaded â€” {sum(len(v) for k, v in tool_kb.items() if not k.startswith('_'))} service-slot(s) tracked")
     else:
-        print("[+] Tool KB: no prior data — will start building from this scan")
+        print("[+] Tool KB: no prior data â€” will start building from this scan")
 
     # Validate manifest coverage against the tool list and warn on gaps
     _validate_manifest_coverage([
@@ -9674,7 +9726,7 @@ async def main_async():
     ])
 
     broken_tools: set = set()               # tools structurally broken (binary missing / permission denied)
-    timed_out_tools: dict[str, set] = {}    # tool → set of svc_keys where it timed out with no findings
+    timed_out_tools: dict[str, set] = {}    # tool â†’ set of svc_keys where it timed out with no findings
     nmap_phase_cmd = (
         f"nmap -Pn -T4 --open -p- --min-rate 2000 {target} | "
         f"-sV -sC -p <ports> | --script <nse> | -O"
@@ -9704,17 +9756,17 @@ async def main_async():
         print("[+] No misconfigurations detected by automated health checks")
 
     # ---------------------------------------------------------------------------
-    # Phase 1 — Parallel initial scan (one tool per service, all concurrent)
+    # Phase 1 â€” Parallel initial scan (one tool per service, all concurrent)
     # ---------------------------------------------------------------------------
     if not (resume and resume_state):
         print(f"\n{'=' * 52}")
-        print("  Phase 1 — Parallel Initial Scan")
+        print("  Phase 1 â€” Parallel Initial Scan")
         print(f"{'=' * 52}")
         initial_actions = query_llm_parallel(context, broken_tools, available_tools, used_actions, timed_out_tools)
         if initial_actions:
             print(f"[+] LLM planned {len(initial_actions)} parallel action(s):")
             for a in initial_actions:
-                print(f"    {a['tool']:12} → {str(a.get('args', ''))[:70]}")
+                print(f"    {a['tool']:12} â†’ {str(a.get('args', ''))[:70]}")
             wave_results, wave_records = await run_parallel_wave(
                 initial_actions, available_tools, session_dir
             )
@@ -9731,11 +9783,11 @@ async def main_async():
                 )
                 if broken:
                     broken_tools.add(tool)
-                    print(f"[!] '{tool}' appears broken — disabling for this session.")
+                    print(f"[!] '{tool}' appears broken â€” disabling for this session.")
                 elif timed_out_w and not findings and tool not in {"ffuf", "nikto"}:
                     _p1_ban_key = _svc_key(tool, args, services)
                     timed_out_tools.setdefault(tool, set()).add(_p1_ban_key)
-                    print(f"[!] '{tool}' timed out with no findings on '{_p1_ban_key}' (Phase 1) — "
+                    print(f"[!] '{tool}' timed out with no findings on '{_p1_ban_key}' (Phase 1) â€” "
                           f"skipping this service type in later iterations.")
                 else:
                     preview = output[:300].replace("\n", " | ")
@@ -9751,18 +9803,18 @@ async def main_async():
                 })
             scan_records.extend(wave_records)
             phase1_count = sum(r.get("findings_count", 0) for r in wave_records)
-            print(f"\n[+] Phase 1 complete — {len(wave_records)} tool(s) run, {phase1_count} finding(s)")
+            print(f"\n[+] Phase 1 complete â€” {len(wave_records)} tool(s) run, {phase1_count} finding(s)")
             _print_scan_eta("Phase 1 done", scan_start, 0.20)
             # Persist KB and refresh context so sequential loop gets updated rates
             _save_tool_kb(tool_kb)
             context["tool_kb_text"] = _tool_kb_summary(tool_kb)
         else:
-            print("[!] Phase 1 returned no actions — proceeding to sequential loop.")
+            print("[!] Phase 1 returned no actions â€” proceeding to sequential loop.")
 
     loop_start = time.monotonic()
 
     # ---------------------------------------------------------------------------
-    # Phase 2 — Service-batched concurrent deep probe loop
+    # Phase 2 â€” Service-batched concurrent deep probe loop
     # Services are grouped into batches of PROBE_BATCH_SIZE.  Within each batch
     # every service gets its own LLM query per round; all non-none actions run
     # concurrently via run_parallel_wave.  Services drop out when the LLM returns
@@ -9774,7 +9826,7 @@ async def main_async():
 
     total_batches = max(1, -(-len(services) // PROBE_BATCH_SIZE))  # ceiling div
     print(f"\n{'=' * 52}")
-    print(f"  Phase 2 — Batched Service Probe Loop")
+    print(f"  Phase 2 â€” Batched Service Probe Loop")
     print(f"  Services: {len(services)}  |  "
           f"Batch size: {PROBE_BATCH_SIZE}  |  "
           f"Batches: {total_batches}  |  "
@@ -9784,7 +9836,7 @@ async def main_async():
     for batch_idx, svc_batch in enumerate(_chunks(services, PROBE_BATCH_SIZE)):
         print(f"\n[+] Starting batch {batch_idx + 1}/{total_batches} "
               f"({len(svc_batch)} service(s)): "
-              + "  ·  ".join(
+              + "  Â·  ".join(
                   f"{s.get('port','?')}/{s.get('name','?')}" for s in svc_batch
               ))
         batch_findings = await run_service_probe_batch(
@@ -9805,18 +9857,18 @@ async def main_async():
         _save_tool_kb(tool_kb)
         context["tool_kb_text"] = _tool_kb_summary(tool_kb)
         context["findings"] = [dataclasses.asdict(f) for f in all_findings[-5:]]
-        print(f"[+] Batch {batch_idx + 1}/{total_batches} complete — "
+        print(f"[+] Batch {batch_idx + 1}/{total_batches} complete â€” "
               f"{len(batch_findings)} finding(s) this batch, "
               f"{len(all_findings)} total so far")
 
         # Early exit if all tools are broken
         active_tools = set(available_tools.keys()) - broken_tools
         if not active_tools:
-            print("[!] All available tools disabled — stopping early.")
+            print("[!] All available tools disabled â€” stopping early.")
             break
 
     print(f"\n{'=' * 52}")
-    print(f"[+] Phase 2 complete — {len(all_findings)} total finding(s) on {target}")
+    print(f"[+] Phase 2 complete â€” {len(all_findings)} total finding(s) on {target}")
     print(f"[+] Total scan time: {_fmt_dur(time.monotonic() - loop_start)}")
     print(f"{'=' * 52}")
     _print_scan_eta("Iterations complete", scan_start, 0.70)
@@ -9852,12 +9904,12 @@ async def main_async():
     # Save base report immediately so it survives an interrupted CVE test phase
     with open(json_path, "w") as fh:
         json.dump(report, fh, indent=2, default=str)
-    print(f"[+] JSON report → {json_path}")
+    print(f"[+] JSON report â†’ {json_path}")
 
     html_content = generate_html_report(report)
     with open(html_path, "w") as fh:
         fh.write(html_content)
-    print(f"[+] HTML report → {html_path}")
+    print(f"[+] HTML report â†’ {html_path}")
     _print_scan_eta("Base reports saved", scan_start, 0.88 if CVE_TEST else (0.94 if MSF_VALIDATE else 0.97))
 
     if CVE_TEST:
@@ -9914,7 +9966,7 @@ async def main_async():
         for c in cve_matches[:5]:
             verdict = _cve_verdicts.get(c.get("cve_id", ""), "")
             label = verdict if verdict else c.get("severity", "?")
-            print(f"    [{label:<14}] {c.get('cve_id','')} — {c.get('summary','')[:55]}")
+            print(f"    [{label:<14}] {c.get('cve_id','')} â€” {c.get('summary','')[:55]}")
 
     msf_results = [c for c in cve_matches if c.get("msf_validation")]
     if msf_results:
@@ -9972,7 +10024,7 @@ def _report_from_json(json_path: str):
     html_content = generate_html_report(report)
     with open(html_path, "w", encoding="utf-8") as fh:
         fh.write(html_content)
-    print(f"[+] HTML report → {html_path}")
+    print(f"[+] HTML report â†’ {html_path}")
 
     target = report.get("target", "unknown")
     counts = report.get("counts", {})
@@ -10001,7 +10053,7 @@ def _report_from_json(json_path: str):
         for c in cve_matches[:5]:
             verdict = _cve_verdicts.get(c.get("cve_id", ""), "")
             label = verdict if verdict else c.get("severity", "?")
-            print(f"    [{label:<14}] {c.get('cve_id', '')} — {c.get('summary', '')[:55]}")
+            print(f"    [{label:<14}] {c.get('cve_id', '')} â€” {c.get('summary', '')[:55]}")
 
     print(f"\n  Conclusion : {report.get('conclusion', '')}")
     print(f"\n  Reports:")
