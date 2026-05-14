@@ -670,6 +670,21 @@ except Exception:
 fi
 
 # =============================================================================
+# Ensure runtime KB files exist for bare (non-Docker) installs
+# =============================================================================
+TOOL_KB_FILE="$SCRIPT_DIR/tool_knowledge_base.json"
+if [[ ! -f "$TOOL_KB_FILE" ]]; then
+    echo '{}' > "$TOOL_KB_FILE"
+    ok "tool_knowledge_base.json created"
+fi
+
+NUCLEI_KB_FILE="$SCRIPT_DIR/nuclei_kb.json"
+if [[ ! -f "$NUCLEI_KB_FILE" ]]; then
+    echo '{}' > "$NUCLEI_KB_FILE"
+    ok "nuclei_kb.json created"
+fi
+
+# =============================================================================
 # Done
 # =============================================================================
 echo ""

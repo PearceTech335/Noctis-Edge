@@ -48,6 +48,26 @@ nikto_*.txt
 
 # Database files
 reconotron.db
+
+# Per-user configuration — contains installation UUID and license key
+# Generated automatically by setup.sh / docker-entrypoint.sh
+noctis.conf
+
+# Tool knowledge base (runtime accumulated tool performance data)
+tool_knowledge_base.json
+
+# Tool manifest (subscriber artifact — downloaded via ./update.sh with license key)
+# Subscribers receive this via the community relay; not committed to the public repo
+tool_manifest.json
+
+# Internal development notes — not for public distribution
+improvements/
+
+# Logo — downloaded at install time by setup.sh
+noctis_logo.png
+
+# Log files
+*.log
 *.db
 *.sqlite
 

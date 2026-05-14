@@ -3,7 +3,8 @@
 #  Noctis Edge — Update Script
 #  Run: ./update.sh
 #  Updates: apt packages, snap, pip deps, nuclei, Ollama models, CVE database,
-#           CVE knowledge base (submit + pull), Tool knowledge base (submit + pull)
+#           CVE knowledge base (submit + pull), Nuclei KB (submit + pull),
+#           Tool knowledge base (submit + pull), Tool manifest (subscribers only)
 # =============================================================================
 
 set -euo pipefail

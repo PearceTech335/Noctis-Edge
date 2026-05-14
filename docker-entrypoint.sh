@@ -21,7 +21,7 @@ DATA_DIR="/data"
 # host at "docker compose up" time, Docker bind-mounts them as empty
 # directories instead of files, breaking json.load().  Bootstrap them here.
 # ---------------------------------------------------------------------------
-for KB_FILE in /app/cve_knowledge_base.json /app/tool_knowledge_base.json; do
+for KB_FILE in /app/cve_knowledge_base.json /app/tool_knowledge_base.json /app/nuclei_kb.json; do
     if [[ -d "$KB_FILE" ]]; then
         echo "[!] $KB_FILE was created as a directory by Docker — removing and replacing with empty JSON."
         rm -rf "$KB_FILE"
