@@ -413,6 +413,58 @@ def api_update():
     return jsonify({"ok": True})
 
 
+# ── License key helpers ──────────────────────────────────────────────────────
+_CONF_FILE = os.path.join(BASE_DIR, "noctis.conf")
+
+
+def _read_license_key() -> str:
+    """Return the raw KB_LICENSE_KEY value from noctis.conf, or ''."""
+    try:
+        with open(_CONF_FILE, "r", encoding="utf-8") as f:
+            for line in f:
+                m = re.match(r'^KB_LICENSE_KEY=["\']?([^"\']*)["\']?', line.strip())
+                if m:
+                    return m.group(1).strip()
+    except Exception:
+        pass
+    return ""
+
+
+def _write_license_key(key: str) -> None:
+    """Replace KB_LICENSE_KEY line in noctis.conf."""
+    try:
+        with open(_CONF_FILE, "r", encoding="utf-8") as f:
+            content = f.read()
+        new_line = f'KB_LICENSE_KEY="{key}"'
+        new_content = re.sub(r'^KB_LICENSE_KEY=.*$', new_line, content, flags=re.MULTILINE)
+        if 'KB_LICENSE_KEY=' not in new_content:
+            new_content += f'\n{new_line}\n'
+        with open(_CONF_FILE, "w", encoding="utf-8") as f:
+            f.write(new_content)
+    except Exception as exc:
+        raise RuntimeError(f"Could not write noctis.conf: {exc}")
+
+
+@app.route("/api/license-key", methods=["GET"])
+def api_get_license_key():
+    key = _read_license_key()
+    if key:
+        masked = "****-****-****-" + key[-4:] if len(key) >= 4 else "****"
+        return jsonify({"set": True, "masked": masked})
+    return jsonify({"set": False, "masked": ""})
+
+
+@app.route("/api/license-key", methods=["POST"])
+def api_set_license_key():
+    data = request.get_json(force=True) or {}
+    key = (data.get("key") or "").strip()
+    try:
+        _write_license_key(key)
+        return jsonify({"ok": True})
+    except RuntimeError as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @app.route("/api/sessions")
 def api_sessions():
     """List available JSON reports from the sessions directory."""
@@ -812,6 +864,49 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 #modal-footer { display: flex; gap: 8px; justify-content: flex-end; }
 #modal-ok     { background: var(--btn-run); color: var(--btn-fg); }
 #modal-cancel { background: var(--bg-input); color: var(--fg); }
+
+/* ── Settings modal ──────────────────────────────────────────────────── */
+#settings-modal-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.65);
+  z-index: 200;
+  align-items: center;
+  justify-content: center;
+}
+#settings-modal-overlay.open { display: flex; }
+#settings-modal {
+  background: var(--bg-panel);
+  border: 1px solid #555;
+  border-radius: 5px;
+  padding: 20px 24px;
+  min-width: 420px;
+  max-width: 90vw;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+#settings-modal h2 { font-size: 13px; color: #ff9800; }
+#settings-modal label { font-size: 10px; color: var(--fg-dim); display: block; margin-bottom: 4px; }
+#settings-modal input[type="password"], #settings-modal input[type="text"] {
+  width: 100%;
+  background: var(--bg-input);
+  color: var(--fg);
+  border: 1px solid #555;
+  border-radius: var(--radius);
+  padding: 4px 8px;
+  font-family: inherit;
+  font-size: 10px;
+  box-sizing: border-box;
+}
+#settings-modal .lic-status { font-size: 10px; color: var(--fg-dim); }
+#settings-modal .lic-status.active { color: #66bb6a; }
+#settings-modal-footer { display: flex; gap: 8px; justify-content: flex-end; }
+#settings-modal-ok     { background: #1a6b8a; color: var(--btn-fg); }
+#settings-modal-cancel { background: var(--bg-input); color: var(--fg); }
+#btn-settings { background: var(--bg-input); color: var(--fg); font-size: 14px; padding: 4px 8px; }
+#lic-badge { font-size: 9px; color: var(--fg-dim); margin-right: 4px; white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -868,6 +963,8 @@ button:disabled { opacity: .45; cursor: not-allowed; }
     <button id="btn-report" onclick="openReportModal()">Report</button>
     <span id="cmd-label"></span>
     <button id="btn-update" onclick="runUpdate()">&#8635;  Update</button>
+    <button id="btn-settings" onclick="openSettingsModal()" title="Subscription &amp; License">&#9881;</button>
+    <span id="lic-badge"></span>
   </div>
 
 </div>
@@ -924,6 +1021,24 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   </div>
 </div>
 
+<!-- Settings modal -->
+<div id="settings-modal-overlay">
+  <div id="settings-modal">
+    <h2>&#9881; Subscription &amp; License Key</h2>
+    <div>
+      <p class="lic-status" id="lic-status-text">Checking…</p>
+    </div>
+    <div>
+      <label for="lic-key-input">Enter or update your license key:</label>
+      <input id="lic-key-input" type="password" placeholder="XXXX-XXXX-XXXX-XXXX" spellcheck="false" autocomplete="off">
+    </div>
+    <div id="settings-modal-footer">
+      <button id="settings-modal-cancel" onclick="closeSettingsModal()">Cancel</button>
+      <button id="settings-modal-ok" onclick="saveLicenseKey()">Save</button>
+    </div>
+  </div>
+</div>
+
 <script>
 /* ── WebSocket connection ─────────────────────────────────────────────── */
 const term    = document.getElementById('terminal');
@@ -933,6 +1048,7 @@ const btnRun  = document.getElementById('btn-run');
 const btnStop = document.getElementById('btn-stop');
 const btnUpdate = document.getElementById('btn-update');
 const btnResume = document.getElementById('btn-resume');
+const licBadge  = document.getElementById('lic-badge');
 let   running = false;
 let   spinnerEl = null;   // current spinner <div> element
 
@@ -1236,12 +1352,63 @@ document.getElementById('modal-overlay').addEventListener('click', e => {
   if (e.target === document.getElementById('modal-overlay')) closeReportModal();
 });
 
+/* ── Settings / License modal ────────────────────────────────────────── */
+function loadLicenseStatus() {
+  fetch('/api/license-key').then(r => r.json()).then(d => {
+    const el = document.getElementById('lic-status-text');
+    if (d.set) {
+      el.textContent = 'License key set: ' + d.masked;
+      el.className = 'lic-status active';
+      licBadge.textContent = 'Licensed';
+      licBadge.style.color = '#66bb6a';
+    } else {
+      el.textContent = 'No license key configured.';
+      el.className = 'lic-status';
+      licBadge.textContent = '';
+    }
+  }).catch(() => {
+    licBadge.textContent = '';
+  });
+}
+
+function openSettingsModal() {
+  document.getElementById('lic-key-input').value = '';
+  loadLicenseStatus();
+  document.getElementById('settings-modal-overlay').classList.add('open');
+}
+
+function closeSettingsModal() {
+  document.getElementById('settings-modal-overlay').classList.remove('open');
+}
+
+function saveLicenseKey() {
+  const key = document.getElementById('lic-key-input').value.trim();
+  fetch('/api/license-key', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ key }),
+  }).then(r => r.json()).then(d => {
+    if (d.ok) {
+      loadLicenseStatus();
+      closeSettingsModal();
+    } else {
+      alert('Error saving license key: ' + (d.error || 'unknown error'));
+    }
+  });
+}
+
+document.getElementById('settings-modal-overlay').addEventListener('click', e => {
+  if (e.target === document.getElementById('settings-modal-overlay')) closeSettingsModal();
+});
+
 /* ── Sync run state on page load ─────────────────────────────────────── */
 fetch('/api/status').then(r => r.json()).then(d => {
   running = d.running;
   setRunning(d.running);
   if (d.running) status.textContent = 'Running…';
 });
+
+loadLicenseStatus();
 </script>
 </body>
 </html>
