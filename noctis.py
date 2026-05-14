@@ -4522,72 +4522,118 @@ def find_latest_session_dir(target):
 
 # Inline SVG logo — replicates the Noctis Edge brand mark (shield + N + circuit dots).
 # Pure XML text: no binary, no external references, no scripts.  Safe for DLP/air-gap.
-_LOGO_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 162"
-     role="img" aria-label="Noctis Edge — Security Through Exposure"
-     style="width:180px;height:auto;display:block">
+_LOGO_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 195" role="img" aria-label="Noctis Edge — Security Through Exposure" style="width:200px;height:auto;display:block">
   <title>Noctis Edge</title>
   <defs>
-    <linearGradient id="ne-sg" x1="25%" y1="0%" x2="75%" y2="100%">
-      <stop offset="0%"   stop-color="#2c3e50"/>
-      <stop offset="100%" stop-color="#0d1b2a"/>
-    </linearGradient>
-    <linearGradient id="ne-lf" x1="100%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%"   stop-color="#3a5a7a" stop-opacity="0.35"/>
-      <stop offset="100%" stop-color="#0a1520" stop-opacity="0.05"/>
-    </linearGradient>
-    <linearGradient id="ne-ng" x1="5%" y1="5%" x2="95%" y2="95%">
-      <stop offset="0%"   stop-color="#d0dce8"/>
-      <stop offset="50%"  stop-color="#8a9aaa"/>
-      <stop offset="100%" stop-color="#4a5a6a"/>
-    </linearGradient>
-    <linearGradient id="ne-nh" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%"   stop-color="#e8f0f8" stop-opacity="0.55"/>
-      <stop offset="100%" stop-color="#e8f0f8" stop-opacity="0"/>
-    </linearGradient>
+    <linearGradient id="ne2-sg" x1="20%" y1="0%" x2="80%" y2="100%"><stop offset="0%" stop-color="#263646"/><stop offset="50%" stop-color="#182635"/><stop offset="100%" stop-color="#0c1522"/></linearGradient>
+    <linearGradient id="ne2-bv" x1="100%" y1="10%" x2="0%" y2="90%"><stop offset="0%" stop-color="#4a6a88" stop-opacity="0.65"/><stop offset="100%" stop-color="#1a2838" stop-opacity="0.05"/></linearGradient>
+    <linearGradient id="ne2-n" x1="5%" y1="0%" x2="95%" y2="100%"><stop offset="0%" stop-color="#c8d8e6"/><stop offset="35%" stop-color="#8898a8"/><stop offset="65%" stop-color="#a8bac8"/><stop offset="100%" stop-color="#4a5a68"/></linearGradient>
+    <linearGradient id="ne2-nh" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#e2f0fe" stop-opacity="0.70"/><stop offset="100%" stop-color="#e2f0fe" stop-opacity="0.00"/></linearGradient>
+    <filter id="ne2-gl" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur in="SourceGraphic" stdDeviation="2.2" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <filter id="ne2-gs" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur in="SourceGraphic" stdDeviation="1.4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
   </defs>
-  <!-- Shield body -->
-  <path d="M110 10 L163 31 L163 78 Q161 115 110 135 Q59 115 57 78 L57 31 Z"
-        fill="url(#ne-sg)" stroke="#3d5a78" stroke-width="1.5"/>
-  <!-- Left-face glancing light — gives 3-D facet feel -->
-  <path d="M110 10 L57 31 L57 78 Q59 102 80 118 L110 135 Z"
-        fill="url(#ne-lf)"/>
-  <!-- Inner rim -->
-  <path d="M110 17 L157 35 L157 78 Q155 110 110 128 Q65 110 63 78 L63 35 Z"
-        fill="none" stroke="#4a6a8a" stroke-width="0.8" opacity="0.65"/>
-  <!-- N — left vertical bar -->
-  <rect x="76" y="38" width="14" height="66" rx="1.5" fill="url(#ne-ng)"/>
-  <!-- N — right vertical bar -->
-  <rect x="130" y="38" width="14" height="66" rx="1.5" fill="url(#ne-ng)"/>
-  <!-- N — diagonal stroke (parallelogram: top-right of left bar → bottom-left of right bar) -->
-  <polygon points="90,38 108,38 130,104 112,104" fill="url(#ne-ng)"/>
-  <!-- Highlight on top of each bar -->
-  <rect x="76"  y="38" width="14" height="20" rx="1.5" fill="url(#ne-nh)"/>
-  <rect x="130" y="38" width="14" height="20" rx="1.5" fill="url(#ne-nh)"/>
-  <!-- Circuit dot cluster — upper right -->
-  <circle cx="152" cy="29" r="2.4" fill="#00d4ff" opacity="0.9"/>
-  <circle cx="161" cy="38" r="1.7" fill="#00d4ff" opacity="0.8"/>
-  <circle cx="155" cy="48" r="2.0" fill="#29b6f6" opacity="0.75"/>
-  <circle cx="163" cy="56" r="1.5" fill="#00d4ff" opacity="0.65"/>
-  <circle cx="148" cy="44" r="1.5" fill="#29b6f6" opacity="0.70"/>
-  <circle cx="157" cy="60" r="1.8" fill="#00d4ff" opacity="0.65"/>
-  <circle cx="164" cy="46" r="1.2" fill="#29b6f6" opacity="0.50"/>
-  <!-- Circuit trace lines -->
-  <polyline points="152,29 161,38 155,48 163,56 157,60"
-            fill="none" stroke="#00d4ff" stroke-width="0.8" opacity="0.50"/>
-  <line x1="155" y1="48" x2="148" y2="44" stroke="#29b6f6" stroke-width="0.7" opacity="0.45"/>
-  <line x1="161" y1="38" x2="164" y2="46" stroke="#29b6f6" stroke-width="0.6" opacity="0.40"/>
-  <!-- Bright dot centres -->
-  <circle cx="152" cy="29" r="1.1" fill="#a0f0ff" opacity="0.65"/>
-  <circle cx="161" cy="38" r="0.9" fill="#a0f0ff" opacity="0.50"/>
-  <circle cx="155" cy="48" r="0.9" fill="#a0f0ff" opacity="0.50"/>
-  <!-- Wordmark -->
-  <text x="110" y="150"
-        font-family="Arial,Helvetica,sans-serif" font-size="13" font-weight="700"
-        text-anchor="middle" fill="#c8d4e0" letter-spacing="4.5">NOCTIS EDGE</text>
-  <!-- Tagline -->
-  <text x="110" y="161"
-        font-family="Arial,Helvetica,sans-serif" font-size="7.5" font-weight="400"
-        text-anchor="middle" fill="#6a7a8a" letter-spacing="2.5">SECURITY THROUGH EXPOSURE</text>
+  <path d="M112 8 L64 22 L50 54 L50 92 Q54 132 112 152 Q170 132 174 92 L174 54 L160 22 Z" fill="url(#ne2-sg)" stroke="#38587a" stroke-width="1.5"/>
+  <path d="M112 8 L64 22 L50 54 L62 50 L78 24 Z" fill="url(#ne2-bv)"/>
+  <path d="M112 15 L70 27 L58 56 L58 92 Q62 127 112 145 Q162 127 166 92 L166 56 L154 27 Z" fill="none" stroke="#486888" stroke-width="0.9" opacity="0.55"/>
+  <line x1="112" y1="8" x2="50" y2="54" stroke="#6a8aa8" stroke-width="1" opacity="0.40"/>
+  <rect x="72" y="36" width="18" height="84" rx="2.5" fill="url(#ne2-n)"/>
+  <rect x="72" y="36" width="18" height="28" rx="2.5" fill="url(#ne2-nh)"/>
+  <rect x="134" y="36" width="18" height="84" rx="2.5" fill="url(#ne2-n)"/>
+  <rect x="134" y="36" width="18" height="28" rx="2.5" fill="url(#ne2-nh)"/>
+  <polygon points="90,36 108,36 134,120 116,120" fill="url(#ne2-n)"/>
+  <rect x="175" y="24" width="9" height="9" rx="1.5" fill="#1e3c58" opacity="0.90"/>
+  <rect x="187" y="24" width="9" height="9" rx="1.5" fill="#1a4870" opacity="0.84"/>
+  <rect x="199" y="24" width="8" height="8" rx="1.2" fill="#165886" opacity="0.78"/>
+  <rect x="210" y="24" width="8" height="8" rx="1.2" fill="#126898" opacity="0.73"/>
+  <rect x="220" y="24" width="7" height="7" rx="1" fill="#0e7aac" opacity="0.68" filter="url(#ne2-gs)"/>
+  <rect x="230" y="24" width="7" height="7" rx="1" fill="#088ec0" opacity="0.70" filter="url(#ne2-gs)"/>
+  <rect x="239" y="24" width="6" height="6" rx="1" fill="#04a4d4" opacity="0.73" filter="url(#ne2-gl)"/>
+  <rect x="248" y="24" width="6" height="6" rx="1" fill="#00b8e6" opacity="0.76" filter="url(#ne2-gl)"/>
+  <rect x="256" y="24" width="5" height="5" rx="0.8" fill="#00ccf4" opacity="0.78" filter="url(#ne2-gl)"/>
+  <rect x="263" y="24" width="5" height="5" rx="0.8" fill="#00d4ff" opacity="0.80" filter="url(#ne2-gl)"/>
+  <rect x="180" y="36" width="9" height="9" rx="1.5" fill="#203e5c" opacity="0.92"/>
+  <rect x="192" y="36" width="9" height="9" rx="1.5" fill="#1c4c72" opacity="0.86"/>
+  <rect x="204" y="36" width="8" height="8" rx="1.2" fill="#185a88" opacity="0.80"/>
+  <rect x="215" y="36" width="8" height="8" rx="1.2" fill="#126c9c" opacity="0.74"/>
+  <rect x="225" y="36" width="7" height="7" rx="1" fill="#0c7eb0" opacity="0.70" filter="url(#ne2-gs)"/>
+  <rect x="235" y="36" width="7" height="7" rx="1" fill="#0690c2" opacity="0.72" filter="url(#ne2-gs)"/>
+  <rect x="244" y="36" width="6" height="6" rx="1" fill="#02a6d6" opacity="0.74" filter="url(#ne2-gl)"/>
+  <rect x="253" y="36" width="6" height="6" rx="1" fill="#00bce8" opacity="0.77" filter="url(#ne2-gl)"/>
+  <rect x="261" y="36" width="5" height="5" rx="0.8" fill="#00d0f8" opacity="0.79" filter="url(#ne2-gl)"/>
+  <rect x="268" y="36" width="5" height="5" rx="0.8" fill="#00d4ff" opacity="0.82" filter="url(#ne2-gl)"/>
+  <rect x="175" y="48" width="9" height="9" rx="1.5" fill="#223e5e" opacity="0.90"/>
+  <rect x="187" y="48" width="9" height="9" rx="1.5" fill="#1c4c74" opacity="0.85"/>
+  <rect x="199" y="48" width="8" height="8" rx="1.2" fill="#165c8c" opacity="0.79"/>
+  <rect x="210" y="48" width="8" height="8" rx="1.2" fill="#106ea0" opacity="0.73"/>
+  <rect x="220" y="48" width="7" height="7" rx="1" fill="#0a80b2" opacity="0.69" filter="url(#ne2-gs)"/>
+  <rect x="230" y="48" width="7" height="7" rx="1" fill="#0494c4" opacity="0.71" filter="url(#ne2-gs)"/>
+  <rect x="239" y="48" width="6" height="6" rx="1" fill="#00a8d8" opacity="0.74" filter="url(#ne2-gl)"/>
+  <rect x="248" y="48" width="6" height="6" rx="1" fill="#00bcea" opacity="0.76" filter="url(#ne2-gl)"/>
+  <rect x="256" y="48" width="5" height="5" rx="0.8" fill="#00d0fa" opacity="0.78" filter="url(#ne2-gl)"/>
+  <rect x="263" y="48" width="5" height="5" rx="0.8" fill="#00d4ff" opacity="0.80" filter="url(#ne2-gl)"/>
+  <rect x="180" y="60" width="9" height="9" rx="1.5" fill="#223e5e" opacity="0.91"/>
+  <rect x="192" y="60" width="9" height="9" rx="1.5" fill="#1c4e76" opacity="0.85"/>
+  <rect x="204" y="60" width="8" height="8" rx="1.2" fill="#165e8e" opacity="0.79"/>
+  <rect x="215" y="60" width="8" height="8" rx="1.2" fill="#1070a2" opacity="0.73"/>
+  <rect x="225" y="60" width="7" height="7" rx="1" fill="#0884b4" opacity="0.69" filter="url(#ne2-gs)"/>
+  <rect x="235" y="60" width="7" height="7" rx="1" fill="#0498c6" opacity="0.71" filter="url(#ne2-gs)"/>
+  <rect x="244" y="60" width="6" height="6" rx="1" fill="#00aadc" opacity="0.74" filter="url(#ne2-gl)"/>
+  <rect x="253" y="60" width="6" height="6" rx="1" fill="#00beec" opacity="0.76" filter="url(#ne2-gl)"/>
+  <rect x="261" y="60" width="5" height="5" rx="0.8" fill="#00d0fa" opacity="0.78" filter="url(#ne2-gl)"/>
+  <rect x="268" y="60" width="5" height="5" rx="0.8" fill="#00d4ff" opacity="0.81" filter="url(#ne2-gl)"/>
+  <rect x="175" y="72" width="9" height="9" rx="1.5" fill="#203c5c" opacity="0.88"/>
+  <rect x="187" y="72" width="9" height="9" rx="1.5" fill="#1a4a72" opacity="0.83"/>
+  <rect x="199" y="72" width="8" height="8" rx="1.2" fill="#145888" opacity="0.77"/>
+  <rect x="210" y="72" width="8" height="8" rx="1.2" fill="#0e6898" opacity="0.71"/>
+  <rect x="220" y="72" width="7" height="7" rx="1" fill="#087cac" opacity="0.67" filter="url(#ne2-gs)"/>
+  <rect x="230" y="72" width="7" height="7" rx="1" fill="#0490be" opacity="0.69" filter="url(#ne2-gs)"/>
+  <rect x="239" y="72" width="6" height="6" rx="1" fill="#00a6d2" opacity="0.72" filter="url(#ne2-gl)"/>
+  <rect x="248" y="72" width="6" height="6" rx="1" fill="#00bae4" opacity="0.75" filter="url(#ne2-gl)"/>
+  <rect x="256" y="72" width="5" height="5" rx="0.8" fill="#00ccf4" opacity="0.77" filter="url(#ne2-gl)"/>
+  <rect x="263" y="72" width="5" height="5" rx="0.8" fill="#00d4ff" opacity="0.80" filter="url(#ne2-gl)"/>
+  <rect x="180" y="84" width="9" height="9" rx="1.5" fill="#1e3a5a" opacity="0.88"/>
+  <rect x="192" y="84" width="9" height="9" rx="1.5" fill="#1a4870" opacity="0.83"/>
+  <rect x="204" y="84" width="8" height="8" rx="1.2" fill="#145484" opacity="0.77"/>
+  <rect x="215" y="84" width="8" height="8" rx="1.2" fill="#0e6494" opacity="0.71"/>
+  <rect x="225" y="84" width="7" height="7" rx="1" fill="#0876a6" opacity="0.67" filter="url(#ne2-gs)"/>
+  <rect x="235" y="84" width="7" height="7" rx="1" fill="#028abc" opacity="0.69" filter="url(#ne2-gs)"/>
+  <rect x="244" y="84" width="6" height="6" rx="1" fill="#009ed0" opacity="0.72" filter="url(#ne2-gl)"/>
+  <rect x="253" y="84" width="6" height="6" rx="1" fill="#00b4e4" opacity="0.75" filter="url(#ne2-gl)"/>
+  <rect x="261" y="84" width="5" height="5" rx="0.8" fill="#00c8f4" opacity="0.77" filter="url(#ne2-gl)"/>
+  <rect x="268" y="84" width="5" height="5" rx="0.8" fill="#00d4ff" opacity="0.79" filter="url(#ne2-gl)"/>
+  <rect x="175" y="96" width="9" height="9" rx="1.5" fill="#1c3858" opacity="0.85"/>
+  <rect x="187" y="96" width="9" height="9" rx="1.5" fill="#184470" opacity="0.80"/>
+  <rect x="199" y="96" width="8" height="8" rx="1.2" fill="#125080" opacity="0.74"/>
+  <rect x="210" y="96" width="7" height="7" rx="1" fill="#0c608e" opacity="0.68"/>
+  <rect x="220" y="96" width="7" height="7" rx="1" fill="#0870a0" opacity="0.64" filter="url(#ne2-gs)"/>
+  <rect x="229" y="96" width="6" height="6" rx="1" fill="#0284b2" opacity="0.66" filter="url(#ne2-gs)"/>
+  <rect x="238" y="96" width="6" height="6" rx="1" fill="#0098c6" opacity="0.69" filter="url(#ne2-gl)"/>
+  <rect x="246" y="96" width="5" height="5" rx="0.8" fill="#00aeda" opacity="0.72" filter="url(#ne2-gl)"/>
+  <rect x="253" y="96" width="5" height="5" rx="0.8" fill="#00c2ec" opacity="0.74" filter="url(#ne2-gl)"/>
+  <rect x="180" y="108" width="9" height="9" rx="1.5" fill="#1a3454" opacity="0.80"/>
+  <rect x="192" y="108" width="8" height="8" rx="1.2" fill="#163e66" opacity="0.75"/>
+  <rect x="203" y="108" width="8" height="8" rx="1.2" fill="#104a78" opacity="0.68"/>
+  <rect x="214" y="108" width="7" height="7" rx="1" fill="#0a5886" opacity="0.63"/>
+  <rect x="223" y="108" width="7" height="7" rx="1" fill="#066898" opacity="0.60" filter="url(#ne2-gs)"/>
+  <rect x="232" y="108" width="6" height="6" rx="1" fill="#027cac" opacity="0.62" filter="url(#ne2-gs)"/>
+  <rect x="240" y="108" width="5" height="5" rx="0.8" fill="#0092c0" opacity="0.64" filter="url(#ne2-gl)"/>
+  <rect x="247" y="108" width="5" height="5" rx="0.8" fill="#00a8d4" opacity="0.66" filter="url(#ne2-gl)"/>
+  <line x1="175" y1="28.5" x2="268" y2="28.5" stroke="#1e6898" stroke-width="0.55" opacity="0.28"/>
+  <line x1="180" y1="40.5" x2="273" y2="40.5" stroke="#228ab0" stroke-width="0.55" opacity="0.30"/>
+  <line x1="175" y1="52.5" x2="268" y2="52.5" stroke="#228eb8" stroke-width="0.55" opacity="0.30"/>
+  <line x1="180" y1="64.5" x2="273" y2="64.5" stroke="#2090bc" stroke-width="0.55" opacity="0.30"/>
+  <line x1="175" y1="76.5" x2="268" y2="76.5" stroke="#1e8cba" stroke-width="0.55" opacity="0.28"/>
+  <line x1="180" y1="88.5" x2="273" y2="88.5" stroke="#1c88b4" stroke-width="0.55" opacity="0.28"/>
+  <line x1="175" y1="100.5" x2="256" y2="100.5" stroke="#1880a8" stroke-width="0.55" opacity="0.26"/>
+  <line x1="180" y1="112.5" x2="252" y2="112.5" stroke="#147498" stroke-width="0.55" opacity="0.22"/>
+  <circle cx="272" cy="29" r="2.2" fill="#00d4ff" opacity="0.65" filter="url(#ne2-gl)"/>
+  <circle cx="276" cy="41" r="1.8" fill="#00d4ff" opacity="0.60" filter="url(#ne2-gl)"/>
+  <circle cx="272" cy="53" r="2.0" fill="#00d4ff" opacity="0.62" filter="url(#ne2-gl)"/>
+  <circle cx="276" cy="65" r="1.8" fill="#00d4ff" opacity="0.60" filter="url(#ne2-gl)"/>
+  <circle cx="272" cy="77" r="2.0" fill="#00d4ff" opacity="0.62" filter="url(#ne2-gl)"/>
+  <circle cx="276" cy="89" r="1.8" fill="#00d4ff" opacity="0.58" filter="url(#ne2-gl)"/>
+  <text x="134" y="175" font-family="Arial,Helvetica,sans-serif" font-size="20" font-weight="700" text-anchor="middle" fill="#b2c8d8" letter-spacing="8">NOCTIS EDGE</text>
+  <text x="134" y="190" font-family="Arial,Helvetica,sans-serif" font-size="9" font-weight="400" text-anchor="middle" fill="#506070" letter-spacing="4">SECURITY THROUGH EXPOSURE</text>
 </svg>"""
 
 HTML_TEMPLATE = """<!DOCTYPE html>
