@@ -44,7 +44,7 @@ if __name__ == "__main__":
         os.execve(_BOOTSTRAP_VENV, [_BOOTSTRAP_VENV, __file__, *sys.argv[1:]], env)
 
 import requests
-from jinja2 import Template
+from jinja2 import Environment as _JinjaEnv
 
 # Force line-buffered stdout so output is visible immediately when piped/tee'd
 sys.stdout.reconfigure(line_buffering=True)
@@ -4524,6 +4524,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline';">
 <title>Noctis Edge Report</title>
 <style>
   body{font-family:'Segoe UI',Arial,sans-serif;background:#1a1a2e;color:#e0e0e0;margin:0;padding:24px}
@@ -4560,10 +4561,27 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   .report-hero-left .meta{color:#ccc;font-size:.92em;line-height:1.9}
   .report-hero-left .meta strong{color:#00d4ff}
   .report-hero-logo{flex-shrink:0;display:flex;align-items:stretch}
-  .report-hero-logo img{width:auto;max-width:220px;object-fit:contain;display:block;align-self:stretch}
+  @media print{
+    body{background:#fff!important;color:#000!important;padding:12px}
+    h1,h2{color:#000!important;border-color:#000!important}
+    .box{background:#fff!important;border-color:#ccc!important;color:#000!important}
+    .box .num,.critical,.high,.medium,.low,.info{color:#000!important}
+    th{background:#ddd!important;color:#000!important}
+    td{color:#000!important;border-color:#ccc!important}
+    tr:hover{background:transparent!important}
+    .ev,.conclusion{background:#f5f5f5!important;color:#000!important}
+    .tag{background:#eee!important;color:#000!important;border:1px solid #ccc}
+    .badge{border:1px solid #000!important;color:#000!important;background:#eee!important}
+    footer{color:#000!important}
+    details{display:block}
+    .report-hero-logo div{border-color:#000!important;color:#000!important}
+    .report-hero-logo span{color:#555!important}
+    .handling-notice{background:#fffde7!important;border-color:#f9a825!important}
+  }
 </style>
 </head>
 <body>
+<div class="handling-notice" style="background:#1a0a0a;border:1px solid #ff4757;border-radius:4px;padding:.5em 1.2em;margin-bottom:14px;font-size:.82em;display:flex;align-items:center;gap:.8em"><span style="color:#ff4757;font-weight:700;white-space:nowrap">&#9888; SECURITY SENSITIVE</span><span style="color:#ffcdd2">This document contains vulnerability details, CVE data, and exploitation evidence. Handle in accordance with your organisation&#39;s information security policy. Do not transmit over unencrypted channels, store on unclassified systems, or forward to personnel without a need-to-know.</span></div>
 <div class="report-hero">
   <div class="report-hero-left">
     <h1>Noctis Edge Report</h1>
@@ -4574,11 +4592,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       <strong>Profile:</strong> {{ profile }}
     </div>
   </div>
-{% if logo_b64 %}
-  <div class="report-hero-logo">
-    <img src="data:image/png;base64,{{ logo_b64 }}" alt="Noctis Edge logo">
+  <div class="report-hero-logo" style="align-self:center">
+    <div style="font-family:monospace;font-size:1.3em;font-weight:700;color:#00d4ff;letter-spacing:.15em;padding:10px 20px;border:2px solid #00d4ff;border-radius:6px;text-align:center;line-height:1.5">NOCTIS<br><span style="font-size:.55em;color:#aaa;letter-spacing:.25em">EDGE</span></div>
   </div>
-{% endif %}
 </div>
 
 {% if target_info %}
@@ -4745,7 +4761,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         {%- set _cwe_info = cwe_db.get(f.cwe_id, {}) %}
         <div>
           <strong style="color:#00d4ff">CWE</strong><br>
-          <a href="https://cwe.mitre.org/data/definitions/{{ f.cwe_id[4:] }}.html" target="_blank" style="color:#90caf9;text-decoration:none;font-family:monospace;font-size:.92em">{{ f.cwe_id }}</a>
+          <a href="https://cwe.mitre.org/data/definitions/{{ f.cwe_id[4:] }}.html" target="_blank" rel="noopener noreferrer" style="color:#90caf9;text-decoration:none;font-family:monospace;font-size:.92em">{{ f.cwe_id }}</a>
           {% if _cwe_info.get('name') %}<span style="color:#b0bec5;font-size:.85em;margin-left:.35em">&mdash; {{ _cwe_info.name }}</span>{% endif %}
         </div>
         {% endif %}
@@ -4794,7 +4810,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       <div>
         <strong style="color:#00d4ff;display:block;margin-bottom:.3em">References</strong>
         <ul style="margin:.3em 0;padding-left:1.2em;font-size:.85em">
-          {% for ref in f.references %}<li style="margin:.2em 0"><a href="{{ ref }}" target="_blank" style="color:#29b6f6;text-decoration:none">{{ ref | truncate(80) }}</a></li>{% endfor %}
+          {% for ref in f.references %}<li style="margin:.2em 0"><a href="{{ ref | safe_url }}" target="_blank" rel="noopener noreferrer" style="color:#29b6f6;text-decoration:none">{{ ref | truncate(80) }}</a></li>{% endfor %}
         </ul>
       </div>
       {% endif %}
@@ -4839,7 +4855,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   {% for c in cve_matches | sort(attribute='epss_score', reverse=True) %}
   <details style="margin-bottom:1.5em;border:1px solid #333;border-radius:6px;padding:1em;background:#16213e">
     <summary style="cursor:pointer;font-weight:600;color:#00d4ff;font-size:1.05em;display:flex;align-items:center;flex-wrap:wrap;gap:.5em">
-      <span style="flex:1;min-width:180px"><a href="https://nvd.nist.gov/vuln/detail/{{ c.cve_id }}" target="_blank" style="color:#00d4ff;text-decoration:none" title="View on NVD">{{ c.cve_id }}</a> — {{ c.vulnerability_type }} on {{ c.service }}{% if c.product and c.product != 'unknown' %} <span style="color:#78909c;font-size:.85em;font-weight:400">({{ c.product }}{% if c.version_affected and c.version_affected != 'unknown' %} {{ c.version_affected }}{% endif %})</span>{% endif %}</span>
+      <span style="flex:1;min-width:180px"><a href="https://nvd.nist.gov/vuln/detail/{{ c.cve_id }}" target="_blank" rel="noopener noreferrer" style="color:#00d4ff;text-decoration:none" title="View on NVD">{{ c.cve_id }}</a> — {{ c.vulnerability_type }} on {{ c.service }}{% if c.product and c.product != 'unknown' %} <span style="color:#78909c;font-size:.85em;font-weight:400">({{ c.product }}{% if c.version_affected and c.version_affected != 'unknown' %} {{ c.version_affected }}{% endif %})</span>{% endif %}</span>
       {% set _tv = c.cve_test_result.overall_verdict if c.cve_test_result else None %}
       <span class="badge badge-{{ c.severity|lower }}"{% if _tv == 'NOT_VULNERABLE' %} style="opacity:.4;text-decoration:line-through"{% endif %}>{{ c.severity|upper }}</span>
       {% if c.nvd_cvss_v3_score %}
@@ -4926,7 +4942,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         <div{% if c.cwe_name %} style="grid-column:1/-1"{% endif %}>
           <strong style="color:#00d4ff">CWE</strong><br>
           {% if c.cwe_id and c.cwe_id.startswith('CWE-') %}
-          <a href="https://cwe.mitre.org/data/definitions/{{ c.cwe_id[4:] }}.html" target="_blank" style="color:#90caf9;text-decoration:none;font-family:monospace">{{ c.cwe_id }}</a>
+          <a href="https://cwe.mitre.org/data/definitions/{{ c.cwe_id[4:] }}.html" target="_blank" rel="noopener noreferrer" style="color:#90caf9;text-decoration:none;font-family:monospace">{{ c.cwe_id }}</a>
           {% if c.cwe_name %}<span style="color:#b0bec5;margin-left:.5em;font-size:.92em">&mdash; {{ c.cwe_name }}</span>{% endif %}
           {% if c.cwe_abstraction %}<span style="background:#1a2a3a;color:#78909c;font-size:.78em;padding:.1em .45em;border-radius:3px;margin-left:.4em;font-family:monospace">{{ c.cwe_abstraction }}</span>{% endif %}
           {% else %}
@@ -5043,7 +5059,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         <strong style="color:#00d4ff;display:block;margin-bottom:.5em">&#x1F4DA; References</strong>
         <ul style="margin:.5em 0;padding-left:1.5em;font-size:.9em">
           {% for ref in c.references %}
-          <li style="margin:.3em 0"><a href="{{ ref }}" target="_blank" style="color:#29b6f6;text-decoration:none">{{ ref | truncate(80) }}</a></li>
+          <li style="margin:.3em 0"><a href="{{ ref | safe_url }}" target="_blank" rel="noopener noreferrer" style="color:#29b6f6;text-decoration:none">{{ ref | truncate(80) }}</a></li>
           {% endfor %}
         </ul>
       </div>
@@ -5156,7 +5172,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     {% for c in suppressed_cve_matches %}
     <div style="margin-bottom:.7em;border:1px solid #37474f;border-radius:5px;padding:.7em 1em;background:#121e27">
       <div style="display:flex;flex-wrap:wrap;align-items:center;gap:.5em;margin-bottom:.3em">
-        <a href="https://nvd.nist.gov/vuln/detail/{{ c.cve_id }}" target="_blank" style="color:#546e7a;text-decoration:none;font-weight:700;font-family:monospace">{{ c.cve_id }}</a>
+        <a href="https://nvd.nist.gov/vuln/detail/{{ c.cve_id }}" target="_blank" rel="noopener noreferrer" style="color:#546e7a;text-decoration:none;font-weight:700;font-family:monospace">{{ c.cve_id }}</a>
         <span class="badge badge-{{ c.severity|lower }}" style="opacity:.5;text-decoration:line-through">{{ c.severity|upper }}</span>
         {% if c.epss_score %}<span style="background:#1a1a1a;color:#78909c;padding:2px 7px;border-radius:4px;font-size:.8em;border:1px solid #37474f">EPSS {{ "%.1f%%"|format(c.epss_score * 100) }}</span>{% endif %}
         <span style="color:#607d8b;font-size:.85em">&mdash; {{ c.service }}</span>
@@ -5192,13 +5208,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
 
 def generate_html_report(report_data):
-    import base64
-    logo_b64 = ""
-    logo_path = os.path.join(BASE_DIR, "noctis_logo.png")
-    if os.path.isfile(logo_path):
-        with open(logo_path, "rb") as fh:
-            logo_b64 = base64.b64encode(fh.read()).decode()
-
     # Back-fill inconclusive_reason for reports generated before this field existed
     cve_results = report_data.get("cve_test_results", [])
     for r in cve_results:
@@ -5217,7 +5226,6 @@ def generate_html_report(report_data):
 
     data = dict(
         report_data,
-        logo_b64=logo_b64,
         rem_short_map=_REMEDIATION_SHORT_TERM,
         rem_long_map=_REMEDIATION_LONG_TERM,
         steps_map=_STEPS_TO_REPRODUCE,
@@ -5229,7 +5237,9 @@ def generate_html_report(report_data):
         # Falls back to the raw Finding.severity when id not present (e.g. re-rendered old reports)
         _eff_sev=report_data.get("effective_severity_map", {}),
     )
-    return Template(HTML_TEMPLATE).render(**data)
+    _env = _JinjaEnv(autoescape=True)
+    _env.filters['safe_url'] = lambda u: u if isinstance(u, str) and u.startswith(('https://', 'http://')) else '#'
+    return _env.from_string(HTML_TEMPLATE).render(**data)
 
 
 def generate_pdf_report(html_content, pdf_path):
