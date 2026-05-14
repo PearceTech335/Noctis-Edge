@@ -59,7 +59,7 @@ Alongside CVE probes, `tooling_knowledge_base.json` accumulates tool-performance
 | **RAM** | 8 GB (16 GB recommended) |
 | **Storage** | 15 GB free |
 | **CPU** | 4 cores |
-| **OS** | Kali / Parrot / Ubuntu / Debian-based |
+| **OS** | Kali / Parrot / Ubuntu / Debian-based / Docker on Linux/Mac/Windows |
 | **Python** | 3.10+ |
 
 **Storage breakdown (approximate):**
