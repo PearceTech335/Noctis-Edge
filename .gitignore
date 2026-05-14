@@ -63,9 +63,6 @@ tool_manifest.json
 # Internal development notes — not for public distribution
 improvements/
 
-# Logo — downloaded at install time by setup.sh
-noctis_logo.png
-
 # Log files
 *.log
 *.db

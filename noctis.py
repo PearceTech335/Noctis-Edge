@@ -4523,7 +4523,7 @@ def find_latest_session_dir(target):
 # Inline SVG logo — replicates the Noctis Edge brand mark (shield + N + circuit dots).
 # Pure XML text: no binary, no external references, no scripts.  Safe for DLP/air-gap.
 _LOGO_SVG = """
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1254 1254" role="img" aria-label="Noctis Edge — Security Through Exposure" style="width:200px;height:auto;display:block">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1254 960" role="img" aria-label="Noctis Edge — Security Through Exposure" style="width:200px;height:auto;display:block">
 <path d="M 631,638 L 631,667 L 630,668 L 629,667 L 629,748 L 629,741 L 630,740 L 631,741 L 631,751 Z" fill="#8d9daa" stroke="none"/>
 <path d="M 586,400 L 588,402 L 589,401 L 592,405 L 591,406 L 592,405 L 595,409 L 594,410 L 595,411 L 596,410 L 599,413 L 600,415 L 599,416 L 600,417 L 601,416 L 604,420 L 603,421 L 604,422 L 605,421 L 608,424 L 607,426 L 609,428 L 610,427 L 613,431 L 612,432 L 613,433 L 614,432 L 617,436 L 616,437 L 617,438 L 618,437 L 621,441 L 620,442 L 626,446 L 624,447 L 626,449 L 627,447 L 628,448 L 628,452 L 629,453 L 630,452 L 627,446 L 624,443 L 624,442 L 620,439 L 621,438 L 620,437 L 619,438 L 618,437 L 618,436 L 615,433 L 616,432 L 615,432 L 611,428 L 612,427 L 607,423 L 608,422 L 607,421 L 606,422 L 602,417 L 603,416 L 602,415 L 601,416 L 598,412 L 599,411 L 598,410 L 597,411 L 594,407 L 595,406 L 594,405 L 593,406 L 589,401 L 590,400 L 589,401 L 588,400 L 587,401 Z" fill="#8d9daa" stroke="none"/>
 <path d="M 528,398 L 530,448 L 530,588 L 530,416 Z" fill="#8d9daa" stroke="none"/>
@@ -4564,33 +4564,12 @@ _LOGO_SVG = """
 <path d="M 736,286 L 736,288 L 742,294 L 742,295 L 743,296 L 744,296 L 745,297 L 745,300 L 745,297 L 744,296 L 744,295 L 745,294 L 747,294 L 748,295 L 749,295 L 751,293 L 752,293 L 753,292 L 753,290 L 752,289 L 751,290 L 750,289 L 749,290 L 748,290 L 745,293 L 744,292 L 743,293 L 740,290 L 740,287 L 739,286 L 740,285 L 739,285 L 738,286 Z" fill="#26445c" stroke="none"/>
 <path d="M 695,229 L 695,230 L 696,231 L 696,234 L 695,235 L 695,237 L 697,237 L 698,238 L 702,238 L 702,233 L 701,232 L 701,230 L 697,230 L 696,229 Z" fill="#26445c" stroke="none"/>
 <path d="M 578,214 L 580,216 L 579,217 L 578,217 L 576,215 L 578,217 L 575,219 L 574,218 L 572,219 L 571,221 L 570,220 L 566,223 L 552,230 L 560,226 L 562,228 L 561,229 L 562,230 L 561,231 L 558,230 L 559,230 L 560,232 L 561,232 L 562,234 L 563,234 L 566,237 L 564,238 L 567,238 L 569,240 L 571,240 L 572,241 L 568,243 L 566,245 L 563,246 L 582,237 L 584,235 L 585,235 L 586,233 L 587,234 L 586,233 L 587,232 L 589,233 L 588,232 L 591,230 L 592,231 L 591,230 L 592,229 L 594,230 L 593,228 L 591,229 L 590,228 L 591,227 L 590,228 L 589,227 L 587,227 L 586,225 L 582,222 L 583,220 L 581,216 L 580,216 Z" fill="#26445c" stroke="none"/>
-<path d="M 1075,966 L 1075,988 L 1091,988 L 1091,987 L 1078,987 L 1077,986 L 1077,984 L 1076,983 L 1076,979 L 1078,977 L 1089,977 L 1089,976 L 1077,976 L 1076,975 L 1076,968 L 1078,966 L 1089,966 L 1090,967 L 1091,966 Z" fill="#e5ecef" stroke="none"/>
-<path d="M 1036,966 L 1036,988 L 1037,988 L 1037,980 L 1038,979 L 1044,979 L 1046,981 L 1046,982 L 1048,984 L 1048,985 L 1051,988 L 1053,988 L 1051,986 L 1051,985 L 1049,983 L 1049,982 L 1047,980 L 1049,978 L 1050,978 L 1053,975 L 1053,969 L 1050,966 Z" fill="#e5ecef" stroke="none"/>
-<path d="M 995,966 L 995,984 L 996,985 L 996,986 L 999,988 L 1002,988 L 1003,989 L 1004,988 L 1005,989 L 1006,988 L 1009,988 L 1012,985 L 1012,984 L 1013,983 L 1013,966 L 1012,966 L 1012,981 L 1011,982 L 1010,985 L 1008,987 L 1006,987 L 1005,988 L 1002,988 L 1001,987 L 1000,987 L 997,984 L 997,983 L 996,982 L 996,966 Z" fill="#e5ecef" stroke="none"/>
-<path d="M 892,967 L 891,967 L 890,966 L 877,966 L 877,988 L 878,988 L 878,981 L 879,980 L 887,980 L 888,979 L 891,979 L 893,977 L 893,976 L 894,975 L 894,970 L 893,969 L 893,968 Z" fill="#e5ecef" stroke="none"/>
-<path d="M 837,966 L 838,967 L 838,968 L 841,971 L 841,972 L 843,974 L 843,975 L 845,977 L 841,981 L 841,982 L 839,984 L 839,985 L 836,988 L 837,988 L 838,989 L 839,988 L 839,987 L 841,985 L 841,984 L 843,982 L 843,981 L 845,979 L 846,979 L 849,982 L 849,983 L 853,988 L 855,988 L 853,986 L 853,985 L 851,983 L 851,982 L 847,977 L 848,976 L 848,975 L 850,973 L 850,972 L 852,970 L 852,969 L 855,966 L 852,966 L 852,967 L 850,969 L 850,970 L 846,975 L 843,972 L 843,971 L 841,969 L 841,968 L 839,966 Z" fill="#e5ecef" stroke="none"/>
-<path d="M 737,966 L 737,988 L 738,988 L 738,979 L 740,977 L 752,977 L 754,979 L 754,988 L 755,988 L 755,966 L 754,966 L 754,975 L 753,976 L 739,976 L 738,975 L 738,966 Z" fill="#e5ecef" stroke="none"/>
-<path d="M 655,966 L 655,983 L 656,984 L 656,985 L 659,988 L 661,988 L 662,989 L 665,989 L 666,988 L 669,988 L 670,987 L 671,987 L 673,984 L 673,966 L 672,966 L 672,982 L 671,983 L 671,984 L 668,987 L 666,987 L 665,988 L 663,988 L 662,987 L 660,987 L 657,984 L 657,983 L 656,982 L 656,966 Z" fill="#e5ecef" stroke="none"/>
-<path d="M 573,966 L 574,967 L 573,968 L 573,988 L 575,988 L 575,980 L 576,979 L 582,979 L 584,981 L 584,982 L 586,984 L 586,985 L 588,987 L 588,988 L 590,988 L 590,987 L 588,985 L 588,984 L 585,981 L 585,979 L 586,978 L 588,978 L 590,976 L 590,975 L 591,974 L 591,970 L 590,969 L 590,968 L 587,966 Z" fill="#e5ecef" stroke="none"/>
-<path d="M 532,966 L 532,988 L 533,988 L 533,979 L 535,977 L 548,977 L 549,978 L 549,988 L 550,989 L 551,988 L 551,966 L 549,966 L 549,975 L 548,976 L 535,976 L 534,975 L 534,972 L 533,971 L 533,967 L 534,966 Z" fill="#e5ecef" stroke="none"/>
-<path d="M 512,966 L 495,966 L 495,967 L 496,966 L 497,966 L 498,967 L 501,967 L 502,968 L 502,969 L 503,970 L 503,974 L 502,975 L 502,988 L 503,989 L 504,988 L 504,968 L 506,966 L 507,967 L 508,966 L 509,967 L 510,966 Z" fill="#e5ecef" stroke="none"/>
-<path d="M 339,966 L 339,988 L 341,988 L 341,980 L 342,979 L 348,979 L 350,981 L 350,982 L 352,984 L 352,985 L 354,987 L 354,988 L 356,988 L 355,987 L 355,986 L 353,984 L 353,983 L 351,981 L 351,980 L 353,978 L 354,978 L 356,976 L 356,974 L 357,973 L 357,971 L 356,970 L 356,968 L 353,966 Z" fill="#e5ecef" stroke="none"/>
-<path d="M 298,966 L 298,982 L 299,983 L 299,985 L 302,988 L 304,988 L 305,989 L 309,989 L 310,988 L 313,988 L 316,985 L 316,983 L 317,982 L 317,966 L 315,966 L 316,967 L 316,969 L 315,970 L 315,978 L 316,979 L 316,981 L 313,986 L 312,986 L 311,987 L 309,987 L 308,988 L 307,987 L 304,987 L 300,983 L 300,968 L 299,967 L 300,966 Z" fill="#e5ecef" stroke="none"/>
-<path d="M 223,966 L 223,988 L 239,988 L 239,987 L 226,987 L 225,986 L 225,978 L 226,977 L 237,977 L 237,976 L 226,976 L 225,975 L 225,967 L 226,966 L 239,966 Z" fill="#e5ecef" stroke="none"/>
-<path d="M 963,965 L 962,966 L 960,966 L 959,967 L 958,967 L 958,968 L 957,969 L 957,973 L 959,976 L 961,976 L 962,977 L 965,977 L 966,978 L 968,978 L 972,982 L 972,983 L 971,984 L 971,985 L 969,987 L 967,987 L 966,988 L 963,988 L 962,987 L 960,987 L 957,985 L 956,986 L 957,987 L 958,987 L 959,988 L 961,988 L 962,989 L 967,989 L 968,988 L 970,988 L 973,985 L 973,980 L 970,977 L 968,977 L 967,976 L 963,976 L 962,975 L 961,975 L 958,972 L 958,970 L 962,966 L 967,966 L 968,967 L 970,967 L 971,968 L 972,968 L 972,967 L 971,966 L 968,966 L 967,965 Z" fill="#e5ecef" stroke="none"/>
-<path d="M 922,965 L 921,966 L 920,966 L 919,967 L 918,967 L 915,970 L 915,971 L 914,972 L 914,975 L 913,976 L 913,977 L 914,978 L 914,982 L 915,983 L 915,984 L 918,987 L 919,987 L 920,988 L 922,988 L 923,989 L 926,989 L 927,988 L 930,988 L 931,987 L 932,987 L 934,985 L 934,984 L 935,983 L 935,982 L 936,981 L 936,973 L 935,972 L 935,971 L 934,970 L 934,969 L 932,967 L 931,967 L 930,966 L 929,966 L 928,965 Z" fill="#e5ecef" stroke="none"/>
-<path d="M 801,965 L 801,988 L 816,988 L 816,987 L 803,987 L 802,986 L 802,978 L 803,977 L 815,977 L 815,976 L 803,976 L 802,975 L 802,968 L 804,966 L 816,966 L 802,966 Z" fill="#e5ecef" stroke="none"/>
-<path d="M 699,967 L 696,970 L 696,971 L 695,972 L 695,982 L 696,983 L 696,984 L 699,987 L 700,987 L 701,988 L 703,988 L 704,989 L 708,989 L 709,988 L 712,988 L 714,986 L 715,986 L 715,977 L 707,977 L 707,978 L 708,978 L 709,977 L 712,977 L 714,979 L 714,984 L 711,987 L 709,987 L 708,988 L 705,988 L 704,987 L 702,987 L 697,982 L 697,980 L 696,979 L 696,974 L 697,973 L 698,970 L 700,968 L 701,968 L 704,966 L 708,966 L 709,967 L 711,967 L 713,969 L 714,968 L 714,967 L 713,967 L 712,966 L 710,966 L 709,965 L 704,965 L 703,966 L 701,966 L 700,967 Z" fill="#e5ecef" stroke="none"/>
-<path d="M 621,965 L 620,966 L 617,966 L 616,967 L 615,967 L 613,969 L 613,970 L 612,971 L 612,972 L 611,973 L 611,980 L 612,981 L 612,983 L 613,984 L 613,985 L 615,987 L 616,987 L 617,988 L 620,988 L 621,989 L 624,989 L 625,988 L 627,988 L 628,987 L 629,987 L 632,984 L 632,983 L 633,982 L 633,980 L 634,979 L 634,975 L 633,974 L 633,971 L 632,970 L 632,969 L 630,967 L 629,967 L 628,966 L 626,966 L 625,965 Z" fill="#e5ecef" stroke="none"/>
-<path d="M 436,965 L 436,966 L 438,968 L 438,969 L 440,971 L 440,972 L 442,974 L 442,975 L 443,976 L 443,977 L 445,979 L 445,988 L 447,988 L 447,979 L 448,978 L 448,977 L 449,976 L 449,975 L 451,973 L 451,972 L 453,970 L 453,969 L 454,968 L 454,967 L 455,966 L 453,966 L 453,967 L 451,969 L 451,970 L 449,972 L 449,973 L 448,974 L 448,975 L 446,977 L 444,975 L 444,974 L 442,972 L 442,971 L 441,970 L 441,969 L 439,967 L 439,966 L 438,965 L 437,966 Z" fill="#e5ecef" stroke="none"/>
-<path d="M 268,965 L 267,966 L 264,966 L 262,968 L 261,968 L 261,969 L 259,971 L 259,974 L 258,975 L 258,979 L 259,980 L 259,983 L 264,988 L 267,988 L 268,989 L 271,989 L 272,988 L 275,988 L 277,986 L 277,985 L 276,985 L 274,987 L 271,987 L 270,988 L 269,988 L 268,987 L 266,987 L 265,986 L 264,986 L 260,980 L 260,974 L 261,973 L 262,970 L 265,967 L 267,967 L 268,966 L 272,966 L 273,967 L 274,967 L 276,969 L 277,969 L 278,968 L 275,966 L 272,966 L 271,965 Z" fill="#e5ecef" stroke="none"/>
-<path d="M 191,965 L 190,966 L 188,966 L 185,969 L 185,972 L 186,973 L 186,974 L 188,976 L 189,976 L 190,977 L 194,977 L 195,978 L 198,979 L 200,981 L 200,984 L 197,987 L 196,987 L 195,988 L 192,988 L 191,987 L 189,987 L 186,985 L 185,986 L 185,987 L 186,987 L 187,988 L 190,988 L 191,989 L 196,989 L 197,988 L 199,988 L 201,986 L 201,985 L 202,984 L 202,980 L 200,978 L 199,978 L 198,977 L 196,977 L 195,976 L 192,976 L 191,975 L 190,975 L 187,972 L 187,970 L 188,969 L 188,968 L 191,966 L 196,966 L 199,968 L 200,968 L 201,967 L 200,967 L 199,966 L 197,966 L 196,965 Z" fill="#e5ecef" stroke="none"/>
 <path d="M 590,924 L 601,924 L 602,925 L 603,924 L 606,924 L 607,925 L 649,925 L 650,924 L 658,924 L 638,924 L 637,923 L 621,923 L 620,924 Z" fill="#e5ecef" stroke="none"/>
 <path d="M 619,811 L 614,819 L 613,830 L 616,839 L 622,845 L 632,848 L 670,848 L 677,854 L 678,861 L 676,866 L 669,871 L 617,871 L 614,880 L 671,880 L 679,877 L 685,870 L 687,863 L 686,851 L 679,842 L 672,839 L 630,838 L 623,831 L 623,823 L 629,816 L 682,815 L 685,806 L 631,806 Z" fill="#e5ecef" stroke="none"/>
 <path d="M 571,806 L 571,823 L 572,824 L 572,868 L 571,869 L 571,876 L 572,877 L 572,879 L 571,880 L 581,880 L 581,806 Z" fill="#e5ecef" stroke="none"/>
 <path d="M 461,806 L 461,815 L 493,815 L 495,817 L 495,878 L 496,879 L 495,880 L 505,880 L 505,817 L 507,815 L 508,816 L 539,815 L 539,806 Z" fill="#e5ecef" stroke="none"/>
 <path d="M 367,812 L 361,823 L 361,864 L 364,871 L 372,878 L 378,880 L 432,880 L 432,871 L 381,871 L 372,865 L 370,859 L 370,828 L 372,822 L 377,817 L 384,815 L 432,815 L 432,806 L 380,806 Z" fill="#e5ecef" stroke="none"/>
-<path d="M 249,815 L 245,825 L 245,862 L 249,872 L 253,876 L 262,880 L 312,880 L 319,877 L 324,873 L 327,868 L 329,859 L 329,828 L 327,819 L 321,811 L 314,807 L 309,806 L 265,806 L 254,810 Z" fill="#e5ecef" stroke="none"/>
+<path d="M 249,815 L 245,825 L 245,862 L 249,872 L 253,876 L 262,880 L 312,880 L 319,877 L 324,873 L 327,868 L 329,859 L 329,828 L 327,819 L 321,811 L 314,807 L 309,806 L 265,806 L 254,810 Z M 264,819 L 273,817 L 303,819 L 306,819 L 311,821 L 315,827 L 316,833 L 316,854 L 315,860 L 314,864 L 310,866 L 305,868 L 271,869 L 264,867 L 260,864 L 258,857 L 258,830 L 261,823 Z" fill="#e5ecef" fill-rule="evenodd" stroke="none"/>
 <path d="M 134,806 L 134,880 L 144,880 L 145,821 L 203,880 L 212,880 L 212,806 L 203,806 L 202,864 L 144,806 Z" fill="#e5ecef" stroke="none"/>
 <path d="M 471,325 L 527,326 L 613,432 L 610,429 L 611,427 L 615,431 L 607,425 L 608,423 L 610,425 L 529,325 Z" fill="#e5ecef" stroke="none"/>
 <path d="M 670,260 L 670,494 L 671,379 L 674,389 L 676,367 L 676,270 Z" fill="#e5ecef" stroke="none"/>
@@ -4871,7 +4850,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 </details>
 {% endif %}
 
-<h2>NMAP NSE Script Findings ({{ findings|length }} total)</h2>
+<h2>Security Findings ({{ findings|length }} total)</h2>
 <div style="margin:.5em 0 1.2em;padding:.8em 1.1em;background:#0d1b2a;border:1px solid #1e3a5f;border-radius:6px;font-size:.86em;color:#b0bec5;line-height:1.65">
   <div style="display:flex;flex-wrap:wrap;gap:1.4em">
     <div>
@@ -4892,21 +4871,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   </div>
 </div>
 {% if findings %}
-{%- set _confirmed_ids = confirmed_findings | map(attribute='finding_id') | list %}
-{%- set _probable_ids = probable_findings | map(attribute='finding_id') | list %}
-{%- set _review_ids = review_needed | map(attribute='finding_id') | list %}
-<details style="margin-bottom:1.2em;border:1px solid #1e4a6e;border-radius:6px;background:#0d1b2a">
-  <summary style="cursor:pointer;color:#29b6f6;font-size:.92em;font-weight:600;padding:.65em 1em;user-select:none;display:flex;align-items:center;gap:.6em">
-    <span>&#9654;</span>
-    <span>{{ findings|length }} finding(s) &mdash; click to expand
-      {% if confirmed_findings %}&nbsp;<span style="background:#c62828;color:#fff;padding:1px 7px;border-radius:10px;font-size:.82em">{{ confirmed_findings|length }} confirmed</span>{% endif %}
-      {% if probable_findings %}&nbsp;<span style="background:#bf360c;color:#fff;padding:1px 7px;border-radius:10px;font-size:.82em">{{ probable_findings|length }} probable</span>{% endif %}
-      {% if review_needed %}&nbsp;<span style="background:#37474f;color:#cfd8dc;padding:1px 7px;border-radius:10px;font-size:.82em">{{ review_needed|length }} review needed</span>{% endif %}
-    </span>
-  </summary>
-  <div style="padding:.5em">
-  {% for f in findings %}
-  {%- set _esev = _eff_sev.get(f.finding_id, f.severity) %}
+{% macro render_finding(f) %}
+{%- set _esev = _eff_sev.get(f.finding_id, f.severity) %}
   <details style="margin-bottom:.8em;border:1px solid {% if _esev == 'critical' %}#ff4757{% elif _esev == 'high' %}#ff6b35{% elif _esev == 'medium' %}#ffa502{% elif _esev == 'low' %}#2ed573{% else %}#70a1ff{% endif %};border-radius:6px;background:#16213e">
     <summary style="padding:10px 14px;cursor:pointer;display:flex;flex-wrap:wrap;align-items:center;gap:8px;list-style:none">
       <span class="badge badge-{{ _esev }}">{{ _esev|upper }}</span>
@@ -4917,7 +4883,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       {%- else %}<span style="background:#1a2a3a;color:#79b8d4;padding:1px 6px;border-radius:8px;font-size:.72em">INFO</span>
       {%- endif %}
       <span style="font-weight:600;flex:1;min-width:180px">{{ f.title }}</span>
-      <span style="color:#aaa;font-size:.82em">{{ f.tool }}</span>
+      <span style="color:#aaa;font-size:.82em" title="{{ f.tool }}">{{ _tool_labels.get(f.tool, f.tool) }}</span>
       <span style="color:#888;font-size:.82em">{{ f.service }}</span>
       <span style="color:#aaa;font-size:.82em">Risk:&nbsp;<strong>{{ "%.2f"|format(f.risk_score) }}</strong></span>
       <span class="{{ 'ok' if f.verified else ('probe-inc' if f.verification_status == 'probe_inconclusive' else 'pend') }}" style="font-size:.82em">{% if f.verification_status == 'probe_inconclusive' %}&#9888; probe inconclusive{% else %}{{ f.verification_status }}{% endif %}</span>
@@ -5010,12 +4976,65 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       {% endif %}
     </div>
   </details>
-  {% endfor %}
+{% endmacro %}
+{% if active_findings %}
+<details open style="margin-bottom:1.2em;border:2px solid #c62828;border-radius:6px;background:#0d1b2a">
+  <summary style="cursor:pointer;color:#ff5252;font-size:.92em;font-weight:600;padding:.65em 1em;user-select:none;display:flex;align-items:center;gap:.6em">
+    <span>&#9654;</span>
+    <span>&#128308; Active Vulnerabilities &mdash; {{ active_findings|length }} finding(s)
+      {% if confirmed_findings %}&nbsp;<span style="background:#c62828;color:#fff;padding:1px 7px;border-radius:10px;font-size:.82em">{{ confirmed_findings|length }} confirmed</span>{% endif %}
+      {% if probable_findings %}&nbsp;<span style="background:#bf360c;color:#fff;padding:1px 7px;border-radius:10px;font-size:.82em">{{ probable_findings|length }} probable</span>{% endif %}
+    </span>
+  </summary>
+  <div style="padding:.5em">
+  {% for f in active_findings %}{{ render_finding(f) }}{% endfor %}
   </div>
 </details>
+{% endif %}
+{% if hardening_findings %}
+<details style="margin-bottom:1.2em;border:1px solid #e65100;border-radius:6px;background:#0d1b2a">
+  <summary style="cursor:pointer;color:#ffa502;font-size:.92em;font-weight:600;padding:.65em 1em;user-select:none;display:flex;align-items:center;gap:.6em">
+    <span>&#9654;</span>
+    <span>&#9888; Hardening Issues &mdash; {{ hardening_findings|length }} finding(s)</span>
+  </summary>
+  <div style="padding:.5em">
+  {% for f in hardening_findings %}{{ render_finding(f) }}{% endfor %}
+  </div>
+</details>
+{% endif %}
+{% if info_sev_findings %}
+<details style="margin-bottom:1.2em;border:1px solid #37474f;border-radius:6px;background:#0d1b2a">
+  <summary style="cursor:pointer;color:#78909c;font-size:.92em;font-weight:600;padding:.65em 1em;user-select:none;display:flex;align-items:center;gap:.6em">
+    <span>&#9654;</span>
+    <span>&#8505; Informational &mdash; {{ info_sev_findings|length }} finding(s)</span>
+  </summary>
+  <div style="padding:.5em">
+  {% for f in info_sev_findings %}{{ render_finding(f) }}{% endfor %}
+  </div>
+</details>
+{% endif %}
 {% else %}<p>No findings detected.</p>{% endif %}
 
 <h2>CVE Matches ({{ cve_matches|length }})</h2>
+<div style="margin:.5em 0 1.2em;padding:.8em 1.1em;background:#0d1b2a;border:1px solid #1e3a5f;border-radius:6px;font-size:.86em;color:#b0bec5;line-height:1.65">
+  <div style="display:flex;flex-wrap:wrap;gap:1.4em">
+    <div>
+      <strong style="color:#e0e0e0;display:block;margin-bottom:.3em">Severity</strong>
+      <span style="color:#ff4757;font-weight:700">CRITICAL</span> &mdash; Immediate exploitation risk; direct path to RCE, full compromise, or data exfiltration.<br>
+      <span style="color:#ff6b35;font-weight:700">HIGH</span> &mdash; Significant exposure; likely exploitable with moderate effort or public tooling.<br>
+      <span style="color:#ffa502;font-weight:700">MEDIUM</span> &mdash; Exploitable under specific conditions; increases attacker foothold or information exposure.<br>
+      <span style="color:#2ed573;font-weight:700">LOW</span> &mdash; Limited direct impact; useful for reconnaissance or chaining with other findings.<br>
+      <span style="color:#70a1ff;font-weight:700">INFO</span> &mdash; No exploitable risk; recorded for compliance, hardening, or asset inventory purposes.
+    </div>
+    <div>
+      <strong style="color:#e0e0e0;display:block;margin-bottom:.3em">Verification Status</strong>
+      <span style="color:#ff5252;font-weight:700">&#128308; CONFIRMED EXPLOITABLE</span> &mdash; Active probing confirmed this CVE is exploitable on this host.<br>
+      <span style="color:#66bb6a;font-weight:700">&#9989; NOT VULNERABLE</span> &mdash; Tested; host was not found to be affected. Severity reflects the general CVE risk class.<br>
+      <span style="color:#ffca28;font-weight:700">&#9888; INCONCLUSIVE</span> &mdash; Probes ran but could not confirm or rule out exploitability; verify manually.<br>
+      <span style="color:#90a4ae;font-weight:700">&#9680; UNVERIFIED</span> &mdash; Matched by version fingerprint only; not actively probed. May be a false positive.
+    </div>
+  </div>
+</div>
 {% if cve_matches %}
 <details style="margin-bottom:1.2em;border:1px solid #1e4a6e;border-radius:6px;background:#0d1b2a">
   <summary style="cursor:pointer;color:#29b6f6;font-size:.92em;font-weight:600;padding:.65em 1em;user-select:none;display:flex;align-items:center;gap:.6em">
@@ -5377,6 +5396,19 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 </body>
 </html>"""
 
+_TOOL_LABELS = {
+    "nikto":     "Web Scanner",
+    "nikto_cgi": "CGI Scanner",
+    "nmap":      "Network Scanner",
+    "nuclei":    "Vulnerability Scanner",
+    "ffuf":      "Directory Fuzzer",
+    "curl":      "HTTP Probe",
+    "dns_enum":  "DNS Enumerator",
+    "hydra":     "Auth Tester",
+    "rdpscan":   "RDP Scanner",
+    "msf":       "Exploit Framework",
+}
+
 
 def generate_html_report(report_data):
     # Back-fill inconclusive_reason for reports generated before this field existed
@@ -5395,6 +5427,18 @@ def generate_html_report(report_data):
         elif "cve_test_result" not in match:
             match["cve_test_result"] = None
 
+    _eff_map = report_data.get("effective_severity_map", {})
+    _all_f   = report_data.get("findings", [])
+    _active_findings    = [f for f in _all_f
+                           if _eff_map.get(f["finding_id"], f.get("severity", "info")).lower()
+                           in ("critical", "high")]
+    _hardening_findings = [f for f in _all_f
+                           if _eff_map.get(f["finding_id"], f.get("severity", "info")).lower()
+                           in ("medium", "low")]
+    _info_sev_findings  = [f for f in _all_f
+                           if _eff_map.get(f["finding_id"], f.get("severity", "info")).lower()
+                           not in ("critical", "high", "medium", "low")]
+
     data = dict(
         report_data,
         rem_short_map=_REMEDIATION_SHORT_TERM,
@@ -5406,8 +5450,15 @@ def generate_html_report(report_data):
         cwe_db=_load_cwe_db(),
         # Calibrated severity map: finding_id â†’ effective severity string
         # Falls back to the raw Finding.severity when id not present (e.g. re-rendered old reports)
-        _eff_sev=report_data.get("effective_severity_map", {}),
+        _eff_sev=_eff_map,
         logo_svg=_LOGO_SVG,
+        _tool_labels=_TOOL_LABELS,
+        _confirmed_ids=[f["finding_id"] for f in report_data.get("confirmed_findings", [])],
+        _probable_ids=[f["finding_id"] for f in report_data.get("probable_findings", [])],
+        _review_ids=[f["finding_id"] for f in report_data.get("review_needed", [])],
+        active_findings=_active_findings,
+        hardening_findings=_hardening_findings,
+        info_sev_findings=_info_sev_findings,
     )
     _env = _JinjaEnv(autoescape=True)
     _env.filters['safe_url'] = lambda u: u if isinstance(u, str) and u.startswith(('https://', 'http://')) else '#'
