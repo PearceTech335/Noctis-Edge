@@ -58,12 +58,14 @@ preview_id = "004d5c1d72e44fe4ac3d0adbd5f630ce"
 
 # ── Secrets ──────────────────────────────────────────────────────────────────
 # Secrets are set via `wrangler secret put` and NEVER stored in this file.
-# Required secrets:
-#   GITHUB_TOKEN           — GitHub PAT, contents:write on Noctis-Edge-Submissions
-#   GITHUB_TOOL_TOKEN      — GitHub PAT, contents:write on Noctis-Edge-Tool-Submissions
-#   GITHUB_TOOL_KB_TOKEN   — GitHub PAT, contents:read  on Noctis-Edge-Tool-KB (private)
 # Note: Lemon Squeezy license validation uses a public endpoint — no LS API token needed.
 #
-#  Add each secret with:
-#    wrangler secret put GITHUB_TOOL_TOKEN
-#    wrangler secret put GITHUB_TOOL_KB_TOKEN
+# Required secrets (set with: wrangler secret put <NAME>):
+#
+#   GITHUB_TOKEN           — PAT, contents:write on Noctis-Edge-Submissions
+#   GITHUB_KB_TOKEN        — PAT, contents:read  on Noctis-Edge-KB (private)
+#   GITHUB_TOOL_TOKEN      — PAT, contents:write on Noctis-Edge-Tool-Submissions
+#   GITHUB_TOOL_KB_TOKEN   — PAT, contents:read  on Noctis-Edge-Tool-KB (private)
+#   GITHUB_NUCLEI_TOKEN    — PAT, contents:write on Noctis-Edge-Nuclei-Submissions
+#   GITHUB_NUCLEI_KB_TOKEN — PAT, contents:read  on Noctis-Edge-Nuclei-KB (private)
+#   GITHUB_MANIFEST_TOKEN  — PAT, contents:read  on Noctis-Edge-Tool-Manifest-KB (private)

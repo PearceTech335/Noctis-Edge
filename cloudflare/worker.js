@@ -10,17 +10,24 @@
  * Cloudflare Secrets — it never touches a user's machine.
  *
  * Environment bindings required (set before deploying):
- *   GITHUB_TOKEN           (Secret)  PAT with contents:write on Noctis-Edge-Submissions
- *   GITHUB_KB_TOKEN        (Secret)  PAT with contents:read on Noctis-Edge-KB (private)
+ *   GITHUB_TOKEN           (Secret)  PAT, contents:write on Noctis-Edge-Submissions
+ *   GITHUB_KB_TOKEN        (Secret)  PAT, contents:read  on Noctis-Edge-KB (private)
+ *   GITHUB_TOOL_TOKEN      (Secret)  PAT, contents:write on Noctis-Edge-Tool-Submissions
+ *   GITHUB_TOOL_KB_TOKEN   (Secret)  PAT, contents:read  on Noctis-Edge-Tool-KB (private)
+ *   GITHUB_NUCLEI_TOKEN    (Secret)  PAT, contents:write on Noctis-Edge-Nuclei-Submissions
+ *   GITHUB_NUCLEI_KB_TOKEN (Secret)  PAT, contents:read  on Noctis-Edge-Nuclei-KB (private)
+ *   GITHUB_MANIFEST_TOKEN  (Secret)  PAT, contents:read  on Noctis-Edge-Tool-Manifest-KB (private)
  *   RATE_LIMIT_KV          (KV)      Namespace for per-UUID rate-limit tracking
  *
  * Routes:
- *   POST /submit          Accept a CVE KB submission
- *   POST /submit-tool     Accept a tool performance KB submission
- *   POST /submit-nuclei   Accept a Nuclei template KB submission
- *   POST /community-kb       Validate Lemon Squeezy license key and serve community_kb.json
- *   POST /community-tool-kb  Validate Lemon Squeezy license key and serve community_tool_kb.json
- *   GET  /health        Liveness probe
+ *   POST /submit               Accept a CVE KB submission
+ *   POST /submit-tool          Accept a tool performance KB submission
+ *   POST /submit-nuclei        Accept a Nuclei template KB submission
+ *   POST /community-kb         Validate LS license key and serve community_kb.json
+ *   POST /community-tool-kb    Validate LS license key and serve community_tool_kb.json
+ *   POST /community-nuclei-kb  Validate LS license key and serve community_nuclei_kb.json
+ *   POST /tool-manifest        Validate LS license key and serve tool_manifest.json
+ *   GET  /health               Liveness probe
  */
 
 const GITHUB_OWNER    = "PearceTech335";
@@ -148,8 +155,10 @@ async function putToolFile(filename, contentB64, message, token, sha = null) {
   return resp.status;
 }
 
-// Nuclei KB submissions go into a nuclei/ subfolder of the CVE submissions repo
-const GITHUB_NUCLEI_API_BASE = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/nuclei`;
+// Nuclei KB submissions go into their own dedicated repo
+const GITHUB_NUCLEI_OWNER    = "PearceTech335";
+const GITHUB_NUCLEI_REPO     = "Noctis-Edge-Nuclei-Submissions";
+const GITHUB_NUCLEI_API_BASE = `https://api.github.com/repos/${GITHUB_NUCLEI_OWNER}/${GITHUB_NUCLEI_REPO}/contents`;
 
 async function getNucleiFileSha(filename, token) {
   const resp = await fetch(`${GITHUB_NUCLEI_API_BASE}/${filename}`, {
@@ -451,12 +460,12 @@ async function handleNucleiSubmit(request, env) {
   const ts          = new Date().toISOString();
   const message     = `nuclei-kb-submission: ${user_id} ${ts}`;
 
-  let status = await putNucleiFile(filename, contentB64, message, env.GITHUB_TOKEN);
+  let status = await putNucleiFile(filename, contentB64, message, env.GITHUB_NUCLEI_TOKEN);
 
   if (status === 422) {
-    const sha = await getNucleiFileSha(filename, env.GITHUB_TOKEN);
+    const sha = await getNucleiFileSha(filename, env.GITHUB_NUCLEI_TOKEN);
     if (sha) {
-      status = await putNucleiFile(filename, contentB64, message, env.GITHUB_TOKEN, sha);
+      status = await putNucleiFile(filename, contentB64, message, env.GITHUB_NUCLEI_TOKEN, sha);
     } else {
       return jsonResp({ error: "SHA conflict — please retry in a moment" }, 409);
     }
@@ -470,8 +479,134 @@ async function handleNucleiSubmit(request, env) {
     });
   }
 
-  console.error(`[nuclei-kb-relay] GitHub PUT failed HTTP ${status} for nuclei/${filename}`);
+  console.error(`[nuclei-kb-relay] GitHub PUT failed HTTP ${status} for ${filename}`);
   return jsonResp({ error: `Upstream write failed (HTTP ${status}) — try again later` }, 502);
+}
+
+// ---------------------------------------------------------------------------
+// Community Nuclei KB download handler (subscribers only)
+// ---------------------------------------------------------------------------
+
+async function handleCommunityNucleiKB(request, env) {
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return jsonResp({ error: "Request body must be valid JSON" }, 400);
+  }
+
+  const licenseKey = body?.license_key;
+  if (!licenseKey || typeof licenseKey !== "string" || licenseKey.trim() === "") {
+    return jsonResp({ error: "license_key is required" }, 400);
+  }
+
+  let lsResp;
+  try {
+    lsResp = await fetch("https://api.lemonsqueezy.com/v1/licenses/validate", {
+      method: "POST",
+      headers: {
+        "Accept":       "application/json",
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: `license_key=${encodeURIComponent(licenseKey.trim())}`,
+    });
+  } catch (err) {
+    console.error("[community-nuclei-kb] Lemon Squeezy validate network error:", err);
+    return jsonResp({ error: "License validation temporarily unavailable — try again later" }, 503);
+  }
+
+  const lsData = await lsResp.json();
+
+  if (!lsResp.ok || !lsData?.valid || lsData?.license_key?.status !== "active") {
+    return jsonResp({
+      error:   "invalid_key",
+      message: "License key not recognised or inactive. Subscribe at https://noctisedge.lemonsqueezy.com",
+    }, 403);
+  }
+
+  const kbResp = await fetch(
+    "https://api.github.com/repos/PearceTech335/Noctis-Edge-Nuclei-KB/contents/community_nuclei_kb.json",
+    {
+      headers: {
+        ...githubHeaders(env.GITHUB_NUCLEI_KB_TOKEN),
+        Accept: "application/vnd.github.v3.raw",
+      },
+    }
+  );
+
+  if (!kbResp.ok) {
+    console.error(`[community-nuclei-kb] GitHub fetch failed HTTP ${kbResp.status}`);
+    return jsonResp({ error: "Community Nuclei KB temporarily unavailable — try again later" }, 502);
+  }
+
+  const kbText = await kbResp.text();
+  return new Response(kbText, {
+    status:  200,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Tool Manifest download handler (subscribers only, read-only)
+// ---------------------------------------------------------------------------
+
+async function handleToolManifest(request, env) {
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return jsonResp({ error: "Request body must be valid JSON" }, 400);
+  }
+
+  const licenseKey = body?.license_key;
+  if (!licenseKey || typeof licenseKey !== "string" || licenseKey.trim() === "") {
+    return jsonResp({ error: "license_key is required" }, 400);
+  }
+
+  let lsResp;
+  try {
+    lsResp = await fetch("https://api.lemonsqueezy.com/v1/licenses/validate", {
+      method: "POST",
+      headers: {
+        "Accept":       "application/json",
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: `license_key=${encodeURIComponent(licenseKey.trim())}`,
+    });
+  } catch (err) {
+    console.error("[tool-manifest] Lemon Squeezy validate network error:", err);
+    return jsonResp({ error: "License validation temporarily unavailable — try again later" }, 503);
+  }
+
+  const lsData = await lsResp.json();
+
+  if (!lsResp.ok || !lsData?.valid || lsData?.license_key?.status !== "active") {
+    return jsonResp({
+      error:   "invalid_key",
+      message: "License key not recognised or inactive. Subscribe at https://noctisedge.lemonsqueezy.com",
+    }, 403);
+  }
+
+  const manifestResp = await fetch(
+    "https://api.github.com/repos/PearceTech335/Noctis-Edge-Tool-Manifest-KB/contents/tool_manifest.json",
+    {
+      headers: {
+        ...githubHeaders(env.GITHUB_MANIFEST_TOKEN),
+        Accept: "application/vnd.github.v3.raw",
+      },
+    }
+  );
+
+  if (!manifestResp.ok) {
+    console.error(`[tool-manifest] GitHub fetch failed HTTP ${manifestResp.status}`);
+    return jsonResp({ error: "Tool manifest temporarily unavailable — try again later" }, 502);
+  }
+
+  const manifestText = await manifestResp.text();
+  return new Response(manifestText, {
+    status:  200,
+    headers: { "Content-Type": "application/json" },
+  });
 }
 
 async function handleCommunityToolKB(request, env) {
@@ -567,6 +702,14 @@ export default {
 
     if (pathname === "/community-tool-kb" && request.method === "POST") {
       return handleCommunityToolKB(request, env);
+    }
+
+    if (pathname === "/community-nuclei-kb" && request.method === "POST") {
+      return handleCommunityNucleiKB(request, env);
+    }
+
+    if (pathname === "/tool-manifest" && request.method === "POST") {
+      return handleToolManifest(request, env);
     }
 
     return jsonResp({ error: "Not found" }, 404);
