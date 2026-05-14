@@ -4955,11 +4955,21 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:.8em;margin-top:.8em">
         <div style="background:#1a2a0a;border-left:3px solid #8bc34a;border-radius:0 4px 4px 0;padding:.8em">
           <strong style="color:#8bc34a;display:block;margin-bottom:.35em">&#x26A1; Short-term Workaround</strong>
-          <div style="font-size:.87em;color:#dcedc8;line-height:1.55">{{ f.get("llm_remediation_short") or rem_short_map.get(f.vuln_type, rem_short_map["Unknown"]) }}</div>
+          {% set _sw = f.llm_remediation_short | parse_json %}
+          {% if _sw %}
+          <ol style="margin:.25em 0 0 0;padding-left:1.25em;font-size:.87em;color:#dcedc8;line-height:1.65">{% for _s in _sw %}<li style="margin:.3em 0">{{ _s }}</li>{% endfor %}</ol>
+          {% else %}
+          <div style="font-size:.87em;color:#dcedc8;line-height:1.55">{{ rem_short_map.get(f.vuln_type, rem_short_map["Unknown"]) }}</div>
+          {% endif %}
         </div>
         <div style="background:#0d2137;border-left:3px solid #29b6f6;border-radius:0 4px 4px 0;padding:.8em">
           <strong style="color:#29b6f6;display:block;margin-bottom:.35em">&#x1F527; Long-term Fix</strong>
-          <div style="font-size:.87em;color:#b3e5fc;line-height:1.55">{{ f.get("llm_remediation_long") or rem_long_map.get(f.vuln_type, rem_long_map["Unknown"]) }}</div>
+          {% set _lf = f.llm_remediation_long | parse_json %}
+          {% if _lf %}
+          <ol style="margin:.25em 0 0 0;padding-left:1.25em;font-size:.87em;color:#b3e5fc;line-height:1.65">{% for _l in _lf %}<li style="margin:.3em 0">{{ _l }}</li>{% endfor %}</ol>
+          {% else %}
+          <div style="font-size:.87em;color:#b3e5fc;line-height:1.55">{{ rem_long_map.get(f.vuln_type, rem_long_map["Unknown"]) }}</div>
+          {% endif %}
         </div>
       </div>
       {% set _ttf = time_to_fix_map.get(f.vuln_type) %}
@@ -5461,7 +5471,8 @@ def generate_html_report(report_data):
         info_sev_findings=_info_sev_findings,
     )
     _env = _JinjaEnv(autoescape=True)
-    _env.filters['safe_url'] = lambda u: u if isinstance(u, str) and u.startswith(('https://', 'http://')) else '#'
+    _env.filters['safe_url']   = lambda u: u if isinstance(u, str) and u.startswith(('https://', 'http://')) else '#'
+    _env.filters['parse_json'] = lambda s: json.loads(s) if (s and s.strip().startswith('[')) else None
     return _env.from_string(HTML_TEMPLATE).render(**data)
 
 
@@ -5682,7 +5693,7 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
     finally:
         _sp.stop(f" done ({_fmt_dur(time.monotonic() - _t0)})")
 
-    # ── Per-finding LLM remediation for Unknown vuln_type ────────────────────
+    # ── Per-finding LLM remediation ─────────────────────────────────────────
     # Pre-enrichment inference pass: use the static keyword map to fill in vuln_type
     # for any finding that still has an empty or Unknown vuln_type (covers nuclei,
     # ffuf, ssh-audit, nmap-service parsers that don't set it at parse time).
@@ -5693,12 +5704,14 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
                 _f.vuln_type = _inferred
             elif not _f.vuln_type:
                 _f.vuln_type = "Misconfiguration"
-    _unknown_findings = [f for f in all_findings if not f.vuln_type or f.vuln_type == "Unknown"]
-    if _unknown_findings:
-        print(f"\n[+] Enriching {len(_unknown_findings)} finding(s) with specific LLM remediation ...")
+    # Generate rich LLM remediation for all active (critical/high) and hardening
+    # (medium/low) findings — informational findings use the static map only.
+    _rem_findings = [f for f in all_findings if f.severity in ("critical", "high", "medium", "low")]
+    if _rem_findings:
+        print(f"\n[+] Generating LLM remediation advice for {len(_rem_findings)} finding(s) (active + hardening) ...")
         import concurrent.futures
-        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as _pool:
-            list(_pool.map(_enrich_finding_remediation, _unknown_findings))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as _pool:
+            list(_pool.map(_enrich_finding_remediation, _rem_findings))
 
     generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")
 
@@ -8909,46 +8922,55 @@ def _enrich_hc_finding(f) -> None:
 
 def _enrich_finding_remediation(f) -> None:
     """
-    Ask the LLM for technology-specific short and long-term remediation for a
-    finding whose vuln_type is Unknown or unrecognised.  Populates
-    f.llm_remediation_short and f.llm_remediation_long in-place.
-    Non-fatal — silently leaves fields empty on any failure.
+    Ask the LLM (REPORT_MODEL) for 3 concrete, technology-specific steps for both
+    the immediate workaround and the permanent fix for a finding.  Populates
+    f.llm_remediation_short and f.llm_remediation_long as JSON-encoded lists in-place.
+    Applied to all active (critical/high) and hardening (medium/low) findings.
+    Non-fatal — silently leaves fields empty on any failure (template falls back to
+    the static _REMEDIATION_SHORT_TERM / _REMEDIATION_LONG_TERM maps).
     """
     prompt = (
-        f"You are a senior penetration tester writing remediation advice for a client report.\n\n"
-        f"Finding:   {f.title}  ({f.severity.upper()})\n"
-        f"Service:   {f.service}\n"
-        f"Detail:    {(f.description or f.evidence or '')[:300]}\n\n"
-        'Reply with JSON only, no prose outside the JSON:\n'
-        '{"short": "1-2 sentences: immediate workaround specific to this technology — '
-        'name the exact config file, command, or setting to change", '
-        '"long": "2-3 sentences: permanent architectural fix — reference the specific '
-        'service, protocol, or component by name. No generic patch language."}\n\n'
-        "Be concrete. Name the technology. Do not say 'apply vendor patch' or 'follow best practices'."
+        "/no_think\n"
+        "You are a senior penetration tester writing remediation guidance for a client security report.\n\n"
+        f"Finding:     {f.title}  ({f.severity.upper()})\n"
+        f"Vuln type:   {f.vuln_type or 'Unknown'}\n"
+        f"Service:     {f.service}\n"
+        f"Evidence:    {(f.description or f.evidence or '')[:250]}\n\n"
+        "Return JSON only — no markdown, no prose outside the object:\n"
+        '{"short_steps": ["step 1", "step 2", "step 3"], "long_steps": ["step 1", "step 2", "step 3"]}\n\n'
+        "short_steps = 3 immediate workaround actions an operator can complete TODAY without a full upgrade.\n"
+        "  Rules: name the exact service, port, config file, or CLI command; use imperative verbs\n"
+        "  (Disable, Block, Restrict, Set, Rotate); each step 1-2 sentences max.\n\n"
+        "long_steps = 3 permanent remediation actions for the development/infrastructure backlog.\n"
+        "  Rules: reference the specific component, version upgrade path, or architectural change;\n"
+        "  each step 1-2 sentences max.\n\n"
+        f"Technology context: {f.service}. Do NOT write 'apply vendor patch' or 'follow best practices'."
     )
-    _sp = _Spinner(f"[ LLM ]  Enriching finding remediation: {f.title[:50]} ...").start()
+    _sp = _Spinner(f"[ LLM ]  Generating remediation advice: {f.title[:55]} ...").start()
     _t0 = time.monotonic()
     try:
         resp = requests.post(
             OLLAMA_URL,
             json={
-                "model":      SCRIPT_MODEL,
+                "model":      REPORT_MODEL,
                 "prompt":     prompt,
                 "stream":     False,
                 "keep_alive": _OLLAMA_KEEP_ALIVE,
-                "options":    {"num_ctx": 768, "temperature": 0.2},
+                "options":    {"num_ctx": 1024, "temperature": 0.2},
             },
             timeout=OLLAMA_TIMEOUT,
         )
         raw = resp.json().get("response", "").strip()
-        # Strip optional <think>...</think> block (qwen3 reasoning models)
         raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
-        # Extract first JSON object
         m = re.search(r"\{.*\}", raw, re.DOTALL)
         if m:
             obj = json.loads(m.group(0))
-            f.llm_remediation_short = obj.get("short", "").strip()
-            f.llm_remediation_long  = obj.get("long",  "").strip()
+            short_steps = obj.get("short_steps", [])
+            long_steps  = obj.get("long_steps",  [])
+            if isinstance(short_steps, list) and short_steps:
+                f.llm_remediation_short = json.dumps(short_steps)
+            if isinstance(long_steps, list) and long_steps:
+                f.llm_remediation_long  = json.dumps(long_steps)
     except Exception:
         pass  # Leave fields empty — template falls back to static map
     finally:
