@@ -72,7 +72,7 @@ SESSION_FILE = os.path.join(BASE_DIR, "session.json")
 OLLAMA_URL     = os.getenv("NOCTIS_OLLAMA_URL", "http://localhost:11434/api/generate")
 # Three-role model split — tasks are always sequential, never concurrent, so RAM peaks at
 # one loaded model at a time (~2 GB).  Two models can coexist in Ollama's model cache on
-# systems with â‰¥6 GB free RAM without any swap pressure.
+# systems with ≥6 GB free RAM without any swap pressure.
 #
 #   Two-model architecture:
 #   qwen2.5-coder:3b-instruct (~2 GB)  — planning, structured JSON decisions, CVE probe scripts
@@ -138,7 +138,7 @@ _KEV_DB:  "dict | None" = None
 
 
 def _load_epss_db() -> dict:
-    """Lazy-load CVE/epss-scores.csv â†’ {cve_id: (epss_score, percentile)}."""
+    """Lazy-load CVE/epss-scores.csv → {cve_id: (epss_score, percentile)}."""
     global _EPSS_DB
     if _EPSS_DB is not None:
         return _EPSS_DB
@@ -161,7 +161,7 @@ def _load_epss_db() -> dict:
 
 
 def _load_cvss_db() -> dict:
-    """Lazy-load CVE/nvd-cvss.csv â†’ {cve_id: (v3_score, v3_vector, v3_severity, v4_score, v4_vector, cwe_id)}."""
+    """Lazy-load CVE/nvd-cvss.csv → {cve_id: (v3_score, v3_vector, v3_severity, v4_score, v4_vector, cwe_id)}."""
     global _CVSS_DB
     if _CVSS_DB is not None:
         return _CVSS_DB
@@ -188,7 +188,7 @@ def _load_cvss_db() -> dict:
 
 
 def _load_cwe_db() -> dict:
-    """Lazy-load CVE/cwe-data.csv â†’ {cwe_id: {name, abstraction, description, likelihood, consequences, mitigation}}."""
+    """Lazy-load CVE/cwe-data.csv → {cwe_id: {name, abstraction, description, likelihood, consequences, mitigation}}."""
     global _CWE_DB
     if _CWE_DB is not None:
         return _CWE_DB
@@ -213,7 +213,7 @@ def _load_cwe_db() -> dict:
         pass
     return _CWE_DB
 def _load_kev_db() -> dict:
-    """Lazy-load CVE/kev-catalog.csv â†’ {cve_id: {vendor, product, date_added, due_date, action}}.
+    """Lazy-load CVE/kev-catalog.csv → {cve_id: {vendor, product, date_added, due_date, action}}.
 
     Build with: python scripts/build_kev_db.py
     Refresh via update.sh.
@@ -642,7 +642,7 @@ def ensure_ollama_running() -> bool:
         print("      https://ollama.com/download")
         return False
 
-    print("[*] Ollama is not running — starting 'ollama serve' in the background â€¦")
+    print("[*] Ollama is not running — starting 'ollama serve' in the background …")
     try:
         # Pass OLLAMA_KEEP_ALIVE so the server-level default matches our per-request value.
         # Without this, models evict after 5 min regardless of per-request keep_alive.
@@ -699,7 +699,7 @@ def _warmup_models() -> None:
             for m in _local_models
         )
         if not _model_present:
-            print(f"[*] Model '{model}' not found locally — pulling from Ollama library â€¦")
+            print(f"[*] Model '{model}' not found locally — pulling from Ollama library …")
             ollama_bin = shutil.which("ollama")
             if ollama_bin:
                 pull_result = subprocess.run(
@@ -713,7 +713,7 @@ def _warmup_models() -> None:
             else:
                 print(f"[!] Cannot pull '{model}': ollama binary not found.")
         try:
-            print(f"[*] Pre-loading model '{model}' into memory â€¦")
+            print(f"[*] Pre-loading model '{model}' into memory …")
             resp = requests.post(
                 gen_url,
                 json={
@@ -805,11 +805,11 @@ def _effective_severity_rules(f) -> str | None:
     if f.tool == "nikto":
         return _cap_severity(sev, "medium")
 
-    # Nuclei unverified high/critical â†’ ambiguous, send to LLM
+    # Nuclei unverified high/critical → ambiguous, send to LLM
     if f.tool == "nuclei" and not f.verified and sev in ("high", "critical"):
         return None
 
-    # Low confidence high/critical â†’ ambiguous
+    # Low confidence high/critical → ambiguous
     if f.confidence < 0.50 and sev in ("high", "critical"):
         return None
 
@@ -846,7 +846,7 @@ def _llm_recalibrate_severities(findings: list) -> dict:
         "You are a security severity calibration assistant. "
         "Re-rate each finding's effective severity based on the quality of evidence. "
         "Rules: if evidence only proves version/banner detection with no exploit confirmed, "
-        "downgrade highâ†’medium and criticalâ†’high. "
+        "downgrade high→medium and critical→high. "
         "If the evidence shows an actual exploit payload succeeded or a dangerous "
         "misconfiguration is directly confirmed, keep the original severity. "
         "Reply with ONLY a JSON array, no prose, no markdown fences. "
@@ -1750,25 +1750,25 @@ _REMEDIATION_EFFORT = {
 # Estimated calendar time to fully remediate (patch + test + deploy).
 # Assumes a typical enterprise with a standard change-management cycle.
 _REMEDIATION_TIME_ESTIMATE = {
-    "Buffer Overflow":          "1â€“4 weeks (vendor patch + regression testing)",
-    "Path Traversal":           "1â€“3 days (config hardening or patch application)",
-    "SQL Injection":            "3â€“5 days (code changes + QA cycle)",
-    "XSS":                      "2â€“5 days (code changes + CSP deployment)",
-    "RCE":                      "2â€“4 weeks (vendor patch + full regression testing)",
-    "Command Injection":        "3â€“7 days (code changes + QA cycle)",
-    "DoS":                      "1â€“3 days (rate-limiting or patch application)",
-    "Privilege Escalation":     "3â€“7 days (config audit + policy update)",
+    "Buffer Overflow":          "1–4 weeks (vendor patch + regression testing)",
+    "Path Traversal":           "1–3 days (config hardening or patch application)",
+    "SQL Injection":            "3–5 days (code changes + QA cycle)",
+    "XSS":                      "2–5 days (code changes + CSP deployment)",
+    "RCE":                      "2–4 weeks (vendor patch + full regression testing)",
+    "Command Injection":        "3–7 days (code changes + QA cycle)",
+    "DoS":                      "1–3 days (rate-limiting or patch application)",
+    "Privilege Escalation":     "3–7 days (config audit + policy update)",
     "Authentication Bypass":    "< 1 day (config change or policy enforcement)",
     "Information Disclosure":   "< 1 day (config change or endpoint restriction)",
-    "XXE":                      "1â€“3 days (parser config change + testing)",
-    "Insecure Deserialization": "1â€“3 weeks (code refactor + safe serialisation migration)",
-    "Format String":            "1â€“2 weeks (code audit + patch)",
-    "Use-After-Free":           "1â€“4 weeks (vendor patch + regression testing)",
-    "Integer Overflow":         "1â€“2 weeks (code changes + vendor patch)",
+    "XXE":                      "1–3 days (parser config change + testing)",
+    "Insecure Deserialization": "1–3 weeks (code refactor + safe serialisation migration)",
+    "Format String":            "1–2 weeks (code audit + patch)",
+    "Use-After-Free":           "1–4 weeks (vendor patch + regression testing)",
+    "Integer Overflow":         "1–2 weeks (code changes + vendor patch)",
     "Open Redirect":            "< 1 day (allowlist config or code change)",
-    "SSRF":                     "2â€“5 days (egress firewall rules + code changes)",
+    "SSRF":                     "2–5 days (egress firewall rules + code changes)",
     "Weak SSL/TLS":             "< 1 day (server config change + service restart)",
-    "Weak Authentication":      "< 1 day (config change) to 2â€“3 days (MFA rollout)",
+    "Weak Authentication":      "< 1 day (config change) to 2–3 days (MFA rollout)",
     "Misconfiguration":         "< 1 day (config change or endpoint restriction)",
     "Unknown":                  "Varies — consult vendor advisory",
 }
@@ -2206,7 +2206,7 @@ def enrich_cve(cve: dict, service: dict) -> dict:
 # ---------------------------------------------------------------------------
 # METASPLOIT VALIDATION
 # ---------------------------------------------------------------------------
-# Module registry: CVE â†’ module metadata including safety profile and scoring.
+# Module registry: CVE → module metadata including safety profile and scoring.
 # Every entry is vetted. Only modules that pass _msf_decision() are ever run.
 # RHOSTS is always set from the target; RPORT is overridden by the actual
 # discovered service port at runtime.
@@ -2218,14 +2218,14 @@ def enrich_cve(cve: dict, service: dict) -> dict:
 #                     auxiliary modules: always False (use 'run' instead)
 #
 # Scoring fields (final_score = confidence_score - risk_score):
-#   >= 0.5  â†’ auto-run
-#   0.2â€“0.5 â†’ restricted run (tighter timeouts / thread limits)
-#   < 0.2   â†’ skip
+#   >= 0.5  → auto-run
+#   0.2–0.5 → restricted run (tighter timeouts / thread limits)
+#   < 0.2   → skip
 #
 # Hard overrides (enforced in _msf_decision — cannot be bypassed):
-#   dos_risk == "high"                             â†’ always block
-#   intrusive == True                              â†’ always block
-#   type == "exploit" and check_supported == False â†’ always block
+#   dos_risk == "high"                             → always block
+#   intrusive == True                              → always block
+#   type == "exploit" and check_supported == False → always block
 
 MSF_MODULE_REGISTRY: dict = {
     # Windows SMB
@@ -2403,15 +2403,15 @@ def _msf_decision(entry: dict) -> str:
     """Determine execution tier for a registry entry.
 
     Hard overrides (non-negotiable — enforced before scoring):
-    - dos_risk == "high"                              â†’ "block"
-    - intrusive == True                               â†’ "block"
-    - type == "exploit" and check_supported == False  â†’ "block"
+    - dos_risk == "high"                              → "block"
+    - intrusive == True                               → "block"
+    - type == "exploit" and check_supported == False  → "block"
 
     Scoring model:
     - final_score = confidence_score - risk_score
-    - >= 0.5  â†’ "auto"
-    - 0.2â€“0.5 â†’ "restricted"
-    - < 0.2   â†’ "block"
+    - >= 0.5  → "auto"
+    - 0.2–0.5 → "restricted"
+    - < 0.2   → "block"
     """
     if entry.get("dos_risk") == "high":
         return "block"
@@ -2451,8 +2451,8 @@ async def _msf_run_check(module: str, options: dict, target: str, msf_path: str,
                           use_run: bool = False) -> dict:
     """Run a single MSF module against the target.
 
-    - exploit modules  â†’ 'check' only (non-destructive, no payload)
-    - auxiliary modules â†’ 'run' (scanners are inherently non-destructive)
+    - exploit modules  → 'check' only (non-destructive, no payload)
+    - auxiliary modules → 'run' (scanners are inherently non-destructive)
 
     Never calls 'exploit' or 'run' on an exploit module.
     """
@@ -2571,10 +2571,10 @@ async def run_msf_validation(report: dict, target: str, session_dir: str,
             if tier == "restricted":
                 options = _msf_apply_restrictions(options)
                 print(f"  [MSF] {cve_id} — RESTRICTED run (score {final_score:.2f}) "
-                      f"â†’ {module}  (port {port}) ...", end=" ", flush=True)
+                      f"→ {module}  (port {port}) ...", end=" ", flush=True)
             else:
                 print(f"  [MSF] {cve_id} — AUTO run (score {final_score:.2f}) "
-                      f"â†’ {module}  (port {port}) ...", end=" ", flush=True)
+                      f"→ {module}  (port {port}) ...", end=" ", flush=True)
 
             use_run = (mod_type == "auxiliary")
         else:
@@ -2598,7 +2598,7 @@ async def run_msf_validation(report: dict, target: str, session_dir: str,
 
             # Apply restrictions for unvetted modules found by search
             options = _msf_apply_restrictions(options)
-            print(f"  [MSF] {cve_id} — RESTRICTED (unvetted) â†’ {module}  (port {port}) ...",
+            print(f"  [MSF] {cve_id} — RESTRICTED (unvetted) → {module}  (port {port}) ...",
                   end=" ", flush=True)
 
         result = await _msf_run_check(module, options, target, msf_path, use_run=use_run)
@@ -2877,7 +2877,7 @@ def _nmap_extract_script_output(xml_data: str, batch_ports: list | None = None) 
     return results
 
 
-# Map service name â†’ NSE scripts that give the most decision-making value.
+# Map service name → NSE scripts that give the most decision-making value.
 # These are used by Phase 3 to build targeted script batches per service.
 _NSE_SCRIPT_MAP = {
     "http":        "http-title,http-headers,http-methods,http-auth-finder,http-server-header,http-security-headers,http-robots.txt",
@@ -3235,7 +3235,7 @@ def _tools_for_service(service_name, port=None):
         )
         return ["curl"]
 
-    # â”€â”€ Manifest absent: built-in rules â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Manifest absent: built-in rules ──────────────────────────────────
     # ffuf is a directory fuzzer — only useful on real HTTP/HTTPS services.
     if "http" in name or "ssl" in name:
         return ["curl", "nikto", "nuclei", "ffuf"]
@@ -3514,7 +3514,7 @@ Or if exhausted:
 
 # ---------------------------------------------------------------------------
 # FAST-PATH TOOL SELECTOR
-# Pre-emptively maps well-known nmap service names â†’ the correct first tool.
+# Pre-emptively maps well-known nmap service names → the correct first tool.
 # This fires before the LLM is consulted, eliminating LLM latency for every
 # service the model would have reasoned to the same answer anyway.
 # Entries are ordered: first match wins.  Use the most specific key first.
@@ -3701,7 +3701,7 @@ def query_llm_parallel(context, broken_tools=None, available_tools=None, used_ac
 
     if fast_actions:
         covered = ", ".join(
-            f"{a['tool']}â†’{a['args'].get('host') or a['args'].get('url','')}" for a in fast_actions
+            f"{a['tool']}→{a['args'].get('host') or a['args'].get('url','')}" for a in fast_actions
         )
         print(f"[+] Fast-path assigned {len(fast_actions)} action(s): {covered}")
 
@@ -4138,7 +4138,7 @@ def query_llm_for_service(
         act    = h.get("action", {})
         result = h.get("result", "")[:150]
         nf     = h.get("findings", 0)
-        history_lines.append(f"  {act.get('tool','?')} â†’ {result} [{nf} finding(s)]")
+        history_lines.append(f"  {act.get('tool','?')} → {result} [{nf} finding(s)]")
     history_block = "\n".join(history_lines) if history_lines else "  (no history yet)"
 
     # Compact findings for this service
@@ -4330,7 +4330,7 @@ async def run_service_probe_batch(
             wave_actions.append(action)
             active_states.append(st)
             args_preview = str(action.get("args", ""))[:60]
-            print(f"  [{st.label:<18}]  {tool} â†’ {args_preview}")
+            print(f"  [{st.label:<18}]  {tool} → {args_preview}")
 
         # --- Execute all planned actions in a parallel wave ---------------------
         if wave_actions:
@@ -4426,7 +4426,7 @@ async def run_parallel_wave(actions, available_tools, session_dir):
         batch = actions[i : i + MAX_PARALLEL_ACTIONS]
         print(f"\n[+] Parallel wave: running {len(batch)} tool(s) concurrently ...")
         for a in batch:
-            print(f"    {a['tool']:12} â†’ {str(a.get('args', ''))[:70]}")
+            print(f"    {a['tool']:12} → {str(a.get('args', ''))[:70]}")
 
         t0          = time.time()
         raw_results = await asyncio.gather(
@@ -4478,7 +4478,7 @@ async def run_parallel_wave(actions, available_tools, session_dir):
 def save_session(state):
     with open(SESSION_FILE, "w") as fh:
         json.dump(state, fh, indent=2, default=str)
-    print(f"[+] Session saved â†’ {SESSION_FILE}")
+    print(f"[+] Session saved → {SESSION_FILE}")
 
 
 def load_session():
@@ -4864,7 +4864,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <div>
       <strong style="color:#e0e0e0;display:block;margin-bottom:.3em">Confidence</strong>
       <span style="color:#c62828;font-weight:700">CONFIRMED</span> — Active curl/probe re-verified the finding against the live service; high-fidelity result.<br>
-      <span style="color:#bf360c;font-weight:700">PROBABLE</span> — Discovered by a reliable tool (confidence â‰¥ 60 %) but not independently re-verified; treat as likely real.<br>
+      <span style="color:#bf360c;font-weight:700">PROBABLE</span> — Discovered by a reliable tool (confidence ≥ 60 %) but not independently re-verified; treat as likely real.<br>
       <span style="color:#37474f;font-weight:700;color:#cfd8dc">REVIEW</span> — Probe returned inconclusive results or the reporting tool has low confidence; manual inspection recommended before actioning.<br>
       <span style="color:#546e7a;font-weight:700">INFO</span> — Informational finding; no active verification attempted.
     </div>
@@ -5063,7 +5063,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     
     <div style="margin-top:1em;padding-top:1em;border-top:1px solid #333">
 
-      {# â”€â”€ Verification Status Banner â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ #}
+      {# ── Verification Status Banner ────────────────────────────────────── #}
       {% set _tv = c.cve_test_result.overall_verdict if c.cve_test_result else None %}
       {% if _tv == 'CONFIRMED_VULNERABLE' %}
       <div style="background:#3d0000;border-left:4px solid #ff1744;border-radius:0 6px 6px 0;padding:.7em 1em;margin-bottom:1em;display:flex;align-items:center;gap:.7em">
@@ -5087,7 +5087,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       </div>
       {% endif %}
 
-      {# â”€â”€ KEV Alert Banner â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ #}
+      {# ── KEV Alert Banner ───────────────────────────────────────────────── #}
       {% if c.kev_listed %}
       <div style="background:#3d0000;border-left:4px solid #d32f2f;border-radius:0 6px 6px 0;padding:.7em 1em;margin-bottom:1em;display:flex;align-items:center;gap:.7em">
         <span style="color:#ef5350;font-size:1.2em">&#9888;</span>
@@ -5255,7 +5255,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       </div>
       {% endif %}
 
-      {# â”€â”€ Testing Evidence (MSF + active probe results) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ #}
+      {# ── Testing Evidence (MSF + active probe results) ─────────────────── #}
       {% set _tr = c.cve_test_result %}
       {% set _msf = c.msf_validation if c.get('msf_validation') and c.msf_validation.get('module') else None %}
       {% if _tr or _msf %}
@@ -5448,7 +5448,7 @@ def generate_html_report(report_data):
         remediation_effort=_REMEDIATION_EFFORT,
         time_to_fix_map=_REMEDIATION_TIME_ESTIMATE,
         cwe_db=_load_cwe_db(),
-        # Calibrated severity map: finding_id â†’ effective severity string
+        # Calibrated severity map: finding_id → effective severity string
         # Falls back to the raw Finding.severity when id not present (e.g. re-rendered old reports)
         _eff_sev=_eff_map,
         logo_svg=_LOGO_SVG,
@@ -5493,7 +5493,7 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
     for f in all_findings:
         f.risk_score = calculate_risk_score(f)
 
-    # â”€â”€ Calibrated severity (report-layer only — Finding.severity unchanged) â”€
+    # ── Calibrated severity (report-layer only — Finding.severity unchanged) ─
     # Step 1: deterministic rules — clear-cut cases resolved immediately
     _rules_map: dict = {}
     _ambiguous: list = []
@@ -5584,7 +5584,7 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
         "cves":           [f"{c['cve_id']} ({c['severity']}) on {c['service']}" for c in cve_matches[:5]],
     }
 
-    # â”€â”€ Deterministic anchor sentence â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Deterministic anchor sentence ────────────────────────────────────────
     # Build a factually accurate first sentence from the real counts so the
     # LLM cannot hallucinate a risk level that contradicts the data.
     _c, _h, _m, _l = (counts.get(k, 0) for k in ("critical", "high", "medium", "low"))
@@ -5682,7 +5682,7 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
     finally:
         _sp.stop(f" done ({_fmt_dur(time.monotonic() - _t0)})")
 
-    # â”€â”€ Per-finding LLM remediation for Unknown vuln_type â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Per-finding LLM remediation for Unknown vuln_type ────────────────────
     # Pre-enrichment inference pass: use the static keyword map to fill in vuln_type
     # for any finding that still has an empty or Unknown vuln_type (covers nuclei,
     # ffuf, ssh-audit, nmap-service parsers that don't set it at parse time).
@@ -5869,7 +5869,7 @@ def _upsert_nuclei_template(nkb: dict, template_id: str, cve_id: str, template: 
 # TOOL KNOWLEDGE BASE — persistent performance tracking per tool per service
 # ---------------------------------------------------------------------------
 
-# Canonical service key map — nmap service names â†’ normalised protocol labels used in KB
+# Canonical service key map — nmap service names → normalised protocol labels used in KB
 _SVC_KEY_MAP: dict = {
     "http":          "http",
     "ssl/http":      "https",
@@ -5893,7 +5893,7 @@ _SVC_KEY_MAP: dict = {
     "netbios-ssn":   "smb",
 }
 
-# Hard-coded toolâ†’service for tools that are always tied to one service type
+# Hard-coded tool→service for tools that are always tied to one service type
 _TOOL_SVC_DIRECT: dict = {
     "ssh_enum":   "ssh",
     "rdp_enum":   "rdp",
@@ -5913,7 +5913,7 @@ _TOOL_SVC_FALLBACK: dict = {
     "nxc":       "smb",
 }
 
-# nmap product string â†’ short canonical product label.
+# nmap product string → short canonical product label.
 # Longest matching prefix wins (sort by length descending at build time).
 _PRODUCT_LABEL_MAP: dict = {
     # HTTP servers
@@ -6025,7 +6025,7 @@ def _normalize_product(product: str) -> str:
     for prefix, label in _PRODUCT_LABEL_MAP.items():
         if p.startswith(prefix):
             return label
-    # Generic normalisation: lower, collapse whitespace â†’ hyphens, cap length
+    # Generic normalisation: lower, collapse whitespace → hyphens, cap length
     p = re.sub(r'\s+', '-', p)
     return p[:24] if p else ""
 
@@ -6168,7 +6168,7 @@ def _load_tool_kb() -> dict:
     except Exception as e:
         print(f"[!] Tool KB load error ({e}) — starting with empty KB.")
         return {"_meta": {"version": 2}}
-    # Migrate v1 â†’ v2 if needed
+    # Migrate v1 → v2 if needed
     if kb.get("_meta", {}).get("version", 1) < 2:
         kb = _migrate_tool_kb_v1(kb)
         _save_tool_kb(kb)
@@ -6232,7 +6232,7 @@ def _tool_kb_summary(tool_kb: dict) -> str:
       1. Per-tool breakdown (success rate per port/service it has been run against)
       2. Best-tool-per-service ranking (what to use when a given port is seen open)
     """
-    # Build: { svc_key â†’ [(tool, stats), ...] } for the per-service ranking
+    # Build: { svc_key → [(tool, stats), ...] } for the per-service ranking
     svc_tools: dict = {}
     tool_lines: list = []
 
@@ -6255,7 +6255,7 @@ def _tool_kb_summary(tool_kb: dict) -> str:
             # Accumulate for per-service rankings
             svc_tools.setdefault(svc, []).append((tool, rate, avg, runs))
         if parts:
-            tool_lines.append(f"  {tool:14} â†’ {', '.join(parts)}")
+            tool_lines.append(f"  {tool:14} → {', '.join(parts)}")
 
     if not tool_lines:
         return ""
@@ -6267,7 +6267,7 @@ def _tool_kb_summary(tool_kb: dict) -> str:
         entries = ", ".join(
             f"{t}:{r:.0%}({n}r)" for t, r, _, n in ranked
         )
-        svc_lines.append(f"  {svc:16} â†’ {entries}")
+        svc_lines.append(f"  {svc:16} → {entries}")
 
     blocks = ["TOOL KB — per-tool success rates (product/service, prior scans):"]
     blocks += tool_lines
@@ -7004,7 +7004,7 @@ def _hc_email_plaintext(target: str, port: str, svc: dict) -> list:
     return findings
 
 
-# Service name fragment â†’ check function (first match wins per service)
+# Service name fragment → check function (first match wins per service)
 _HC_DISPATCH: list[tuple[str, object]] = [
     ("ssh",          _hc_ssh),
     ("ssl/http",     _hc_http),
@@ -7261,7 +7261,7 @@ def _parse_llm_script_response(raw: str) -> dict | None:
 
 
 # ---------------------------------------------------------------------------
-# NUCLEI TEMPLATE GENERATION — LLM â†’ YAML â†’ nuclei execution engine
+# NUCLEI TEMPLATE GENERATION — LLM → YAML → nuclei execution engine
 # ---------------------------------------------------------------------------
 
 # Services that are suitable for Nuclei HTTP template generation
@@ -7318,7 +7318,7 @@ def _is_nuclei_eligible(cve: dict) -> bool:
 def _valid_nuclei(obj: dict) -> bool:
     """Validate a parsed Nuclei template generation response.
 
-    Required fields: template_id (str), protocol (str), yaml_content (str â‰¥ 50 chars).
+    Required fields: template_id (str), protocol (str), yaml_content (str ≥ 50 chars).
     The yaml_content must parse as YAML and contain an id, info.name, and at least
     one http/tcp/network block with a matchers section.
     """
@@ -7731,7 +7731,7 @@ def _generate_cve_test_script(cve: dict, target: str, previous_attempts: list,
     for i, a in enumerate(previous_attempts[-5:], 1):  # last 5 only to keep prompt short
         strategy = a['strategy']
         banned_strategies.append(strategy)
-        line = f"  [{i}] {strategy} â†’ {a['verdict']}"
+        line = f"  [{i}] {strategy} → {a['verdict']}"
         # Include a short output snippet so the LLM sees *why* it failed
         snippet = (a.get("output") or "").strip()
         if snippet:
@@ -8084,8 +8084,8 @@ def _print_scan_eta(label: str, scan_start: datetime, frac_done: float) -> None:
         eta = scan_start + timedelta(seconds=elapsed / frac_done)
         eta_str = eta.strftime("%H:%M:%S")
     else:
-        eta_str = "calculatingâ€¦"
-    print(f"[*] â”€â”€ {label} | Time: {now.strftime('%H:%M:%S')} | Elapsed: {_fmt_dur(elapsed)} | Est. completion: {eta_str}")
+        eta_str = "calculating…"
+    print(f"[*] ── {label} | Time: {now.strftime('%H:%M:%S')} | Elapsed: {_fmt_dur(elapsed)} | Est. completion: {eta_str}")
 
 
 def _script_score(s: dict) -> float:
@@ -8232,8 +8232,8 @@ def _derive_inconclusive_reason(cve: dict, attempts: list) -> str:
 def _scrub_for_kb(text: str, target_host: str) -> str:
     """
     Remove user-specific data before persisting to the CVE knowledge base:
-      - session temp-file paths from Python/shell tracebacks â†’ bare filename
-      - the actual target host/IP â†’ 'TARGET_HOST' placeholder
+      - session temp-file paths from Python/shell tracebacks → bare filename
+      - the actual target host/IP → 'TARGET_HOST' placeholder
     """
     if not text:
         return text
@@ -8252,7 +8252,7 @@ async def run_cve_tests(cve_matches: list, target: str,
                         available_tools: dict | None = None,
                         nuclei_kb: dict | None = None) -> tuple[list, dict]:
     """
-    For each CVE (sorted Critical â†’ High â†’ Medium â†’ Low):
+    For each CVE (sorted Critical → High → Medium → Low):
       0. Targeted attempt: implement the known safe_validation_method/proof_of_impact (if present).
       1a. Replay any Nuclei templates already in the nuclei KB (HTTP CVEs only).
       1b. Replay any scripts already in the knowledge base (proven techniques from prior runs).
@@ -8307,7 +8307,7 @@ async def run_cve_tests(cve_matches: list, target: str,
         verdict_counts       = {"VULNERABLE": 0, "NOT_VULNERABLE": 0, "INCONCLUSIVE": 0}
         vulnerable_found     = False
         verification_results: list = []
-        verified             = False  # True if â‰¥1 verifier independently confirms VULNERABLE
+        verified             = False  # True if ≥1 verifier independently confirms VULNERABLE
         kb_pending_vulnerable: list = []  # VULNERABLE scripts deferred until Phase 3 confirms
 
         # ------------------------------------------------------------------
@@ -8620,7 +8620,7 @@ async def run_cve_tests(cve_matches: list, target: str,
             if verdict == "VULNERABLE":
                 vulnerable_found = True
 
-            print(f"  [{attempt_num:02d}] {strategy[:80]} â†’ {verdict}")
+            print(f"  [{attempt_num:02d}] {strategy[:80]} → {verdict}")
             rec = {
                 "attempt_num": attempt_num, "source": "llm_generated",
                 "strategy": strategy, "language": language, "script": script,
@@ -9132,10 +9132,10 @@ def generate_cve_remediations(cve_test_results: list, cve_matches: list) -> None
     that were not covered by active testing (e.g. because requires_auth=True caused them
     to be skipped).  These perspectives are written directly into the cve_match record.
     """
-    # Build a quick lookup from cve_id â†’ original cve_match record
+    # Build a quick lookup from cve_id → original cve_match record
     cve_meta = {c["cve_id"]: c for c in cve_matches}
 
-    # â”€â”€ Phase 1: full remediation set for actively-tested vulnerable CVEs â”€â”€â”€â”€
+    # ── Phase 1: full remediation set for actively-tested vulnerable CVEs ────
     vulnerable_verdicts = {"CONFIRMED_VULNERABLE", "VULNERABLE"}
     targets = [r for r in cve_test_results if r.get("overall_verdict") in vulnerable_verdicts]
     if targets:
@@ -9154,7 +9154,7 @@ def generate_cve_remediations(cve_test_results: list, cve_matches: list) -> None
                 cve_meta[cve_id]["attacker_perspective"]  = result["attacker_perspective"]
             print(f"  [+] Immediate remediation + attacker perspective + remediation written for {cve_id}")
 
-    # â”€â”€ Phase 2: attacker perspective for untested CRITICAL/HIGH/MEDIUM CVEs â”€
+    # ── Phase 2: attacker perspective for untested CRITICAL/HIGH/MEDIUM CVEs ─
     # CVEs skipped during active testing (e.g. requires_auth=True) still need
     # the attacker narrative so it appears in the CVE Matches section of the report.
     tested_ids = {r["cve_id"] for r in cve_test_results}
@@ -9360,12 +9360,12 @@ async def _run_cve_test_phase(report: dict, target: str, session_dir: str,
         # Ensure KBs are persisted even if the scan is interrupted mid-loop.
         _save_cve_kb(kb)
         _save_nuclei_kb(nuclei_kb)
-    print(f"[+] CVE knowledge base updated â†’ {CVE_KB_PATH}")
+    print(f"[+] CVE knowledge base updated → {CVE_KB_PATH}")
     _nuclei_added = len(nuclei_kb) - _nuclei_kb_before
     if _nuclei_added > 0:
-        print(f"[+] Nuclei template KB updated ({_nuclei_added} new template(s)) â†’ {NUCLEI_KB_PATH}")
+        print(f"[+] Nuclei template KB updated ({_nuclei_added} new template(s)) → {NUCLEI_KB_PATH}")
     else:
-        print(f"[i] Nuclei template KB unchanged (no HTTP/web CVEs tested this run) â†’ {NUCLEI_KB_PATH}")
+        print(f"[i] Nuclei template KB unchanged (no HTTP/web CVEs tested this run) → {NUCLEI_KB_PATH}")
 
     # Generate LLM remediation suggestions for each confirmed/vulnerable CVE
     generate_cve_remediations(cve_test_results, cve_matches)
@@ -9777,7 +9777,7 @@ async def main_async():
     ])
 
     broken_tools: set = set()               # tools structurally broken (binary missing / permission denied)
-    timed_out_tools: dict[str, set] = {}    # tool â†’ set of svc_keys where it timed out with no findings
+    timed_out_tools: dict[str, set] = {}    # tool → set of svc_keys where it timed out with no findings
     nmap_phase_cmd = (
         f"nmap -Pn -T4 --open -p- --min-rate 2000 {target} | "
         f"-sV -sC -p <ports> | --script <nse> | -O"
@@ -9817,7 +9817,7 @@ async def main_async():
         if initial_actions:
             print(f"[+] LLM planned {len(initial_actions)} parallel action(s):")
             for a in initial_actions:
-                print(f"    {a['tool']:12} â†’ {str(a.get('args', ''))[:70]}")
+                print(f"    {a['tool']:12} → {str(a.get('args', ''))[:70]}")
             wave_results, wave_records = await run_parallel_wave(
                 initial_actions, available_tools, session_dir
             )
@@ -9955,12 +9955,12 @@ async def main_async():
     # Save base report immediately so it survives an interrupted CVE test phase
     with open(json_path, "w") as fh:
         json.dump(report, fh, indent=2, default=str)
-    print(f"[+] JSON report â†’ {json_path}")
+    print(f"[+] JSON report → {json_path}")
 
     html_content = generate_html_report(report)
     with open(html_path, "w") as fh:
         fh.write(html_content)
-    print(f"[+] HTML report â†’ {html_path}")
+    print(f"[+] HTML report → {html_path}")
     _print_scan_eta("Base reports saved", scan_start, 0.88 if CVE_TEST else (0.94 if MSF_VALIDATE else 0.97))
 
     if CVE_TEST:
@@ -10075,7 +10075,7 @@ def _report_from_json(json_path: str):
     html_content = generate_html_report(report)
     with open(html_path, "w", encoding="utf-8") as fh:
         fh.write(html_content)
-    print(f"[+] HTML report â†’ {html_path}")
+    print(f"[+] HTML report → {html_path}")
 
     target = report.get("target", "unknown")
     counts = report.get("counts", {})
