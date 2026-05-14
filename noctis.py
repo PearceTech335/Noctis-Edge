@@ -4520,6 +4520,76 @@ def find_latest_session_dir(target):
 # HTML / PDF REPORTING
 # ---------------------------------------------------------------------------
 
+# Inline SVG logo — replicates the Noctis Edge brand mark (shield + N + circuit dots).
+# Pure XML text: no binary, no external references, no scripts.  Safe for DLP/air-gap.
+_LOGO_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 162"
+     role="img" aria-label="Noctis Edge — Security Through Exposure"
+     style="width:180px;height:auto;display:block">
+  <title>Noctis Edge</title>
+  <defs>
+    <linearGradient id="ne-sg" x1="25%" y1="0%" x2="75%" y2="100%">
+      <stop offset="0%"   stop-color="#2c3e50"/>
+      <stop offset="100%" stop-color="#0d1b2a"/>
+    </linearGradient>
+    <linearGradient id="ne-lf" x1="100%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%"   stop-color="#3a5a7a" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="#0a1520" stop-opacity="0.05"/>
+    </linearGradient>
+    <linearGradient id="ne-ng" x1="5%" y1="5%" x2="95%" y2="95%">
+      <stop offset="0%"   stop-color="#d0dce8"/>
+      <stop offset="50%"  stop-color="#8a9aaa"/>
+      <stop offset="100%" stop-color="#4a5a6a"/>
+    </linearGradient>
+    <linearGradient id="ne-nh" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%"   stop-color="#e8f0f8" stop-opacity="0.55"/>
+      <stop offset="100%" stop-color="#e8f0f8" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <!-- Shield body -->
+  <path d="M110 10 L163 31 L163 78 Q161 115 110 135 Q59 115 57 78 L57 31 Z"
+        fill="url(#ne-sg)" stroke="#3d5a78" stroke-width="1.5"/>
+  <!-- Left-face glancing light — gives 3-D facet feel -->
+  <path d="M110 10 L57 31 L57 78 Q59 102 80 118 L110 135 Z"
+        fill="url(#ne-lf)"/>
+  <!-- Inner rim -->
+  <path d="M110 17 L157 35 L157 78 Q155 110 110 128 Q65 110 63 78 L63 35 Z"
+        fill="none" stroke="#4a6a8a" stroke-width="0.8" opacity="0.65"/>
+  <!-- N — left vertical bar -->
+  <rect x="76" y="38" width="14" height="66" rx="1.5" fill="url(#ne-ng)"/>
+  <!-- N — right vertical bar -->
+  <rect x="130" y="38" width="14" height="66" rx="1.5" fill="url(#ne-ng)"/>
+  <!-- N — diagonal stroke (parallelogram: top-right of left bar → bottom-left of right bar) -->
+  <polygon points="90,38 108,38 130,104 112,104" fill="url(#ne-ng)"/>
+  <!-- Highlight on top of each bar -->
+  <rect x="76"  y="38" width="14" height="20" rx="1.5" fill="url(#ne-nh)"/>
+  <rect x="130" y="38" width="14" height="20" rx="1.5" fill="url(#ne-nh)"/>
+  <!-- Circuit dot cluster — upper right -->
+  <circle cx="152" cy="29" r="2.4" fill="#00d4ff" opacity="0.9"/>
+  <circle cx="161" cy="38" r="1.7" fill="#00d4ff" opacity="0.8"/>
+  <circle cx="155" cy="48" r="2.0" fill="#29b6f6" opacity="0.75"/>
+  <circle cx="163" cy="56" r="1.5" fill="#00d4ff" opacity="0.65"/>
+  <circle cx="148" cy="44" r="1.5" fill="#29b6f6" opacity="0.70"/>
+  <circle cx="157" cy="60" r="1.8" fill="#00d4ff" opacity="0.65"/>
+  <circle cx="164" cy="46" r="1.2" fill="#29b6f6" opacity="0.50"/>
+  <!-- Circuit trace lines -->
+  <polyline points="152,29 161,38 155,48 163,56 157,60"
+            fill="none" stroke="#00d4ff" stroke-width="0.8" opacity="0.50"/>
+  <line x1="155" y1="48" x2="148" y2="44" stroke="#29b6f6" stroke-width="0.7" opacity="0.45"/>
+  <line x1="161" y1="38" x2="164" y2="46" stroke="#29b6f6" stroke-width="0.6" opacity="0.40"/>
+  <!-- Bright dot centres -->
+  <circle cx="152" cy="29" r="1.1" fill="#a0f0ff" opacity="0.65"/>
+  <circle cx="161" cy="38" r="0.9" fill="#a0f0ff" opacity="0.50"/>
+  <circle cx="155" cy="48" r="0.9" fill="#a0f0ff" opacity="0.50"/>
+  <!-- Wordmark -->
+  <text x="110" y="150"
+        font-family="Arial,Helvetica,sans-serif" font-size="13" font-weight="700"
+        text-anchor="middle" fill="#c8d4e0" letter-spacing="4.5">NOCTIS EDGE</text>
+  <!-- Tagline -->
+  <text x="110" y="161"
+        font-family="Arial,Helvetica,sans-serif" font-size="7.5" font-weight="400"
+        text-anchor="middle" fill="#6a7a8a" letter-spacing="2.5">SECURITY THROUGH EXPOSURE</text>
+</svg>"""
+
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -4576,6 +4646,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     details{display:block}
     .report-hero-logo div{border-color:#000!important;color:#000!important}
     .report-hero-logo span{color:#555!important}
+    .report-hero-logo svg text{fill:#000!important}
+    .report-hero-logo svg path,.report-hero-logo svg rect,.report-hero-logo svg polygon{fill:#ddd!important}
+    .report-hero-logo svg circle{fill:#555!important}
     .handling-notice{background:#fffde7!important;border-color:#f9a825!important}
   }
 </style>
@@ -4593,7 +4666,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     </div>
   </div>
   <div class="report-hero-logo" style="align-self:center">
-    <div style="font-family:monospace;font-size:1.3em;font-weight:700;color:#00d4ff;letter-spacing:.15em;padding:10px 20px;border:2px solid #00d4ff;border-radius:6px;text-align:center;line-height:1.5">NOCTIS<br><span style="font-size:.55em;color:#aaa;letter-spacing:.25em">EDGE</span></div>
+    {{ logo_svg | safe }}
   </div>
 </div>
 
@@ -5236,6 +5309,7 @@ def generate_html_report(report_data):
         # Calibrated severity map: finding_id → effective severity string
         # Falls back to the raw Finding.severity when id not present (e.g. re-rendered old reports)
         _eff_sev=report_data.get("effective_severity_map", {}),
+        logo_svg=_LOGO_SVG,
     )
     _env = _JinjaEnv(autoescape=True)
     _env.filters['safe_url'] = lambda u: u if isinstance(u, str) and u.startswith(('https://', 'http://')) else '#'
