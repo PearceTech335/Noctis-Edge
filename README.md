@@ -233,7 +233,7 @@ Pass one or more profile names after the target. Tools from all selected profile
 | **4 — OS Detection** | `-O --osscan-guess` | OS fingerprint with confidence % |
 | **5 — Normalise** | (in-process) | All phases merged into unified service list; NSE output and OS context attached per port |
 
-Phase 3 uses a service-to-NSE-script map to select the most relevant scripts per service type — for example HTTP gets `http-title,http-headers,http-methods,http-auth-finder,http-robots.txt`; SSH gets `ssh-auth-methods,ssh2-enum-algos,ssh-hostkey`. The full NSE output is injected into every subsequent LLM planning prompt.
+Phase 3 uses a service-to-NSE-script map to select the most relevant scripts per service type. As of v0.9.1 the map covers 36 service entries — for example HTTP/alt-HTTP/proxy gets `http-title,http-headers,http-methods,http-auth-finder,http-robots.txt,http-cookie-flags,http-cors,http-git,http-waf-detect,http-php-version`; HTTPS additionally runs `ssl-heartbleed,ssl-dh-params,ssl-poodle,tls-ticketbleed`; SSH gets `ssh-auth-methods,ssh2-enum-algos,ssh-hostkey,sshv1`; SMB gets `smb-enum-shares,smb-security-mode,smb-vuln-ms17-010,smb-double-pulsar-backdoor`; specialised entries also cover Redis, MongoDB, CouchDB, NFS, IPMI, Docker API, X11, and more. The full NSE output is injected into every subsequent LLM planning prompt.
 
 CVE lookups run against the normalised service list after Phase 5 completes.
 
@@ -506,6 +506,16 @@ The worker is already deployed at `https://noctis-kb-relay.pearcetechnologies1.w
 ---
 
 ## Version History
+
+## What's New in v0.9.1
+
+- **Expanded NSE script coverage (23 → 36 service entries):** `_NSE_SCRIPT_MAP` now covers a wider range of services and provides richer script selection for each.
+  - **HTTP/alt-HTTP/http-proxy enriched:** `http-cookie-flags`, `http-cors`, `http-git`, `http-config-backup`, `http-server-header`, `http-php-version`, `http-generator`, `http-favicon`, `http-waf-detect`, `http-apache-server-status`, `http-devframework` added across all HTTP service entries. SSL/HTTPS entries additionally gain `ssl-heartbleed`, `ssl-dh-params`, `ssl-poodle`, `sslv2-drown`, `ssl-ccs-injection`, `tls-ticketbleed`.
+  - **Other enriched entries:** SSH adds `sshv1` (obsolete protocol detection); FTP adds `ftp-vsftpd-backdoor`, `ftp-proftpd-backdoor`, `ftp-vuln-cve2010-4221`; SMTP adds `smtp-ntlm-info` and three vuln scripts; SMB/NetBIOS adds `smb-protocols`, `smb2-capabilities`, `smb-enum-users`, `smb-vuln-ms17-010` (EternalBlue), `smb-vuln-cve-2017-7494` (SambaCry), `smb-double-pulsar-backdoor`; DNS adds five additional query-behaviour scripts; RDP adds `rdp-ntlm-info`, `rdp-vuln-ms12-020`; SNMP adds `snmp-interfaces`, `snmp-processes`, `snmp-netstat`, `snmp-win32-services`, `snmp-win32-users`; VNC adds `realvnc-auth-bypass`; LDAP adds `ldap-search` (anonymous enumeration).
+  - **13 new service entries:** Redis, MongoDB, CouchDB, Oracle, NFS, rpcbind, rsync, Memcached, AJP (Tomcat), JDWP (Java debugger), IPMI, Docker API (port 2375/2376), X11, IRC. All scripts are safe/discovery category — no DoS, active exploitation, brute-force, or external API key requirements.
+- **Bug fix — CVE detection on non-standard HTTP ports:** Services labelled by nmap as `http-proxy` (e.g. port 8080) now receive NSE script execution and a post-Phase-3 product/version backfill that parses `http-server-header` output, enabling CVE matching on alt-HTTP ports. Previously these ports completed Phase 3 with an empty `product` field, causing the CVE search to return zero results.
+- **Bug fix — LLM executive summary timeout on short scans:** `_preload_report_model()` now launches as a daemon thread at the start of `generate_report()` and warms `qwen3:4b` during the report-preparation phase, eliminating cold-load timeouts when the main scan completes before the model is resident.
+- **Executive summary `num_ctx` reduced 4096 → 2048:** Reduces inference latency on CPU-only hardware with no quality loss on typical report sizes.
 
 ## What's New in v0.9.0
 
