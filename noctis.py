@@ -5007,10 +5007,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           {% endif %}
         </div>
       </div>
-      {% set _ttf = time_to_fix_map.get(f.vuln_type) %}
-      {% if _ttf %}
-      <div style="margin-top:.5em;font-size:.84em;color:#9e9e9e">&#x23F1; <strong style="color:#b0bec5">Estimated Time to Fix:</strong> {{ _ttf }}</div>
-      {% endif %}
       {% endif %}
       {% if f.cmd %}
       <div style="margin-top:.8em">
@@ -5063,7 +5059,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 {% endif %}
 {% else %}<p>No findings detected.</p>{% endif %}
 
-<h2>CVE Matches ({{ cve_matches|length }})</h2>
+<h2>CVE Matches ({{ cve_matches|length }} total)</h2>
 <div style="margin:.5em 0 1.2em;padding:.8em 1.1em;background:#0d1b2a;border:1px solid #1e3a5f;border-radius:6px;font-size:.86em;color:#b0bec5;line-height:1.65">
   <div style="display:flex;flex-wrap:wrap;gap:1.4em">
     <div>
@@ -5083,14 +5079,26 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     </div>
   </div>
 </div>
-{% if cve_matches %}
-<details style="margin-bottom:1.2em;border:1px solid #1e4a6e;border-radius:6px;background:#0d1b2a">
+{# Split cve_matches into active (not confirmed not-vulnerable) vs cleared #}
+{% set _cve_active = [] %}
+{% set _cve_cleared = [] %}
+{% for c in cve_matches %}
+  {% if c.cve_test_result and c.cve_test_result.overall_verdict == 'NOT_VULNERABLE' %}
+    {% if _cve_cleared.append(c) %}{% endif %}
+  {% else %}
+    {% if _cve_active.append(c) %}{% endif %}
+  {% endif %}
+{% endfor %}
+
+{# ── Section 1: Active CVE Matches ─────────────────────────────────────── #}
+{% if _cve_active %}
+<details open style="margin-bottom:1.2em;border:1px solid #1e4a6e;border-radius:6px;background:#0d1b2a">
   <summary style="cursor:pointer;color:#29b6f6;font-size:.92em;font-weight:600;padding:.65em 1em;user-select:none;display:flex;align-items:center;gap:.6em">
     <span>&#9654;</span>
-    <span>{{ cve_matches|length }} CVE match(es) ranked by exploit probability &mdash; click to expand</span>
+    <span>&#128313; {{ _cve_active|length }} CVE match(es) &mdash; ranked by exploit probability</span>
   </summary>
   <div style="padding:.5em;margin-bottom:2em">
-  {% for c in cve_matches | sort(attribute='epss_score', reverse=True) %}
+  {% for c in _cve_active | sort(attribute='epss_score', reverse=True) %}
   <details style="margin-bottom:1.5em;border:1px solid #333;border-radius:6px;padding:1em;background:#16213e">
     <summary style="cursor:pointer;font-weight:600;color:#00d4ff;font-size:1.05em;display:flex;align-items:center;flex-wrap:wrap;gap:.5em">
       <span style="flex:1;min-width:180px"><a href="https://nvd.nist.gov/vuln/detail/{{ c.cve_id }}" target="_blank" rel="noopener noreferrer" style="color:#00d4ff;text-decoration:none" title="View on NVD">{{ c.cve_id }}</a> — {{ c.vulnerability_type }} on {{ c.service }}{% if c.product and c.product != 'unknown' %} <span style="color:#78909c;font-size:.85em;font-weight:400">({{ c.product }}{% if c.version_affected and c.version_affected != 'unknown' %} {{ c.version_affected }}{% endif %})</span>{% endif %}</span>
@@ -5251,10 +5259,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         {% else %}
         <span style="background:#2a0d0d;color:#ef9a9a;padding:.25em .9em;border-radius:12px;border:1px solid #c62828;font-weight:600">&#x1F534; High &mdash; Upgrade / Redesign</span>
         {% endif %}
-        {% if c.time_to_fix %}
-        <span style="color:#9e9e9e;margin-left:.5em">&#x23F1; Estimated Time to Fix:</span>
-        <span style="color:#b0bec5;font-style:italic">{{ c.time_to_fix }}</span>
-        {% endif %}
       </div>
       {% endif %}
 
@@ -5396,14 +5400,64 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   {% endfor %}
   </div>
 </details>
-{% else %}<p>No CVE matches found.</p>{% endif %}
+{% else %}<p>No active CVE matches.</p>{% endif %}
+
+{# ── Section 2: Tested — NOT VULNERABLE ────────────────────────────────── #}
+{% if _cve_cleared %}
+<details style="margin-bottom:1.2em;border:1px solid #2e7d32;border-radius:6px;background:#0d1b2a">
+  <summary style="cursor:pointer;color:#66bb6a;font-size:.92em;font-weight:600;padding:.65em 1em;user-select:none;display:flex;align-items:center;gap:.6em">
+    <span>&#9654;</span>
+    <span>&#9989; {{ _cve_cleared|length }} CVE(s) tested &mdash; NOT VULNERABLE on this host</span>
+  </summary>
+  <div style="padding:.5em;margin-bottom:.5em">
+    <p style="margin:.5em 1em .8em;color:#607d8b;font-size:.86em">These CVEs matched the detected service version but active probing confirmed this host is <strong style="color:#66bb6a">not affected</strong>. Shown for audit completeness. The CVSS/EPSS scores reflect the general danger class of the CVE, not the risk to this host.</p>
+    {% for c in _cve_cleared | sort(attribute='epss_score', reverse=True) %}
+    <details style="margin-bottom:.7em;border:1px solid #2e7d32;border-radius:5px;padding:.8em 1em;background:#0a1f0a">
+      <summary style="cursor:pointer;font-weight:600;color:#66bb6a;font-size:.97em;display:flex;align-items:center;flex-wrap:wrap;gap:.5em">
+        <span style="font-size:1.1em">&#9989;</span>
+        <span style="flex:1;min-width:160px"><a href="https://nvd.nist.gov/vuln/detail/{{ c.cve_id }}" target="_blank" rel="noopener noreferrer" style="color:#66bb6a;text-decoration:none">{{ c.cve_id }}</a> &mdash; {{ c.vulnerability_type }} on {{ c.service }}</span>
+        <span class="badge badge-{{ c.severity|lower }}" style="opacity:.4;text-decoration:line-through">{{ c.severity|upper }}</span>
+        {% if c.nvd_cvss_v3_score %}<span style="background:#0f3460;color:#90a4ae;padding:2px 8px;border-radius:4px;font-size:.82em;border:1px solid #37474f">v3.1&nbsp;{{ c.nvd_cvss_v3_score }}</span>{% endif %}
+        {% if c.epss_score %}<span style="background:#1a1a1a;color:#78909c;padding:2px 8px;border-radius:4px;font-size:.8em;border:1px solid #37474f">EPSS {{ "%.1f%%"|format(c.epss_score * 100) }}</span>{% endif %}
+        {% if c.kev_listed %}<span class="badge badge-kev" style="opacity:.5">&#9888; KEV</span>{% endif %}
+      </summary>
+      <div style="margin-top:.8em;padding-top:.8em;border-top:1px solid #2e7d32;font-size:.9em">
+        <div style="background:#0a2a12;border-left:4px solid #43a047;border-radius:0 6px 6px 0;padding:.7em 1em;margin-bottom:.8em;display:flex;align-items:center;gap:.7em">
+          <span style="font-size:1.1em">&#9989;</span>
+          <div><strong style="color:#66bb6a;font-size:.9em">TESTED: NOT VULNERABLE ON THIS HOST</strong>
+          <div style="color:#a5d6a7;font-size:.83em;margin-top:.2em">Active probing found no exploitability. The CVSS score and EPSS probability above reflect the general danger of this CVE class &mdash; this host was not confirmed affected.</div></div>
+        </div>
+        {% if c.product and c.product != 'unknown' %}
+        <div style="color:#78909c;font-size:.88em;margin-bottom:.5em">Detected: <strong style="color:#90a4ae">{{ c.product }}{% if c.version_affected and c.version_affected != 'unknown' %} {{ c.version_affected }}{% endif %}</strong></div>
+        {% endif %}
+        {# Show testing evidence accordion #}
+        {% set _tr = c.cve_test_result %}
+        {% if _tr and _tr.attempts %}
+        <details style="margin-top:.4em">
+          <summary style="cursor:pointer;color:#546e7a;font-size:.87em">&#x1F9EA; Testing Evidence &mdash; {{ _tr.attempts_run }} attempt(s)</summary>
+          <div style="margin-top:.5em">
+          {% for a in _tr.attempts %}
+          <details style="margin:.3em 0;font-size:.84em">
+            <summary style="cursor:pointer;color:#90caf9">[{{ "%02d"|format(a.attempt_num) }}] <span style="color:#a5d6a7">&#9679;</span> {{ a.verdict }} &mdash; {{ a.strategy[:80] }}</summary>
+            <pre style="background:#1a1a1a;color:#ccc;padding:.6em;border-radius:4px;overflow-x:auto;white-space:pre-wrap;font-size:.8em">{{ a.output }}</pre>
+          </details>
+          {% endfor %}
+          </div>
+        </details>
+        {% endif %}
+      </div>
+    </details>
+    {% endfor %}
+  </div>
+</details>
+{% endif %}
 
 {% if suppressed_cve_matches %}
-<h2>Suppressed CVE Matches ({{ suppressed_cve_matches|length }})</h2>
+{# ── Section 3: Suppressed CVEs ─────────────────────────────────────────── #}
 <details style="margin-bottom:1.2em;border:1px solid #37474f;border-radius:6px;background:#0d1b2a">
   <summary style="cursor:pointer;color:#78909c;font-size:.92em;font-weight:600;padding:.65em 1em;user-select:none;display:flex;align-items:center;gap:.6em">
     <span>&#9654;</span>
-    <span>{{ suppressed_cve_matches|length }} CVE(s) suppressed &mdash; detected version &ge; fixed version (false positive reduction)</span>
+    <span>&#x2716; {{ suppressed_cve_matches|length }} CVE(s) suppressed &mdash; detected version &ge; fixed version (false positive reduction)</span>
   </summary>
   <div style="padding:.5em;color:#90a4ae;font-size:.88em">
     <p style="margin:.5em 1em;color:#607d8b">These CVEs were matched by service/version correlation but the detected version appears to be patched based on the CVE summary. They are shown here for audit completeness.</p>
