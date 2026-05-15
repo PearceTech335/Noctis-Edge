@@ -749,8 +749,15 @@ def normalize_severity(sev):
     return mapping.get(sev.lower().strip(), "info")
 
 
-def calculate_risk_score(finding, internet_exposed=True):
-    """severity_weight Ã— confidence Ã— exposure Ã— tool_confidence"""
+def calculate_risk_score(finding, internet_exposed=True, epss_score: float = 0.0):
+    """Composite risk score: CVSS-derived (70%) + EPSS exploit-probability (30%).
+
+    Also applies a detection-method confidence modifier so that banner-only
+    findings score lower than actively probed or exploit-confirmed findings.
+    Formula (values 0-1.0 scale):
+        base = sev_weight * finding.confidence * exposure * tool_conf * det_mod
+        score = (base * 0.70) + (epss_score * 0.30)
+    """
     severity_weights = {
         "critical": 1.0,
         "high":     0.8,
@@ -758,10 +765,21 @@ def calculate_risk_score(finding, internet_exposed=True):
         "low":      0.2,
         "info":     0.05,
     }
-    sev_w     = severity_weights.get(finding.severity.lower(), 0.1)
-    exposure  = 1.2 if internet_exposed else 1.0
+    # Detection method modifies trust in the base score
+    _det_modifiers = {
+        "exploit_confirmed": 1.00,
+        "service_probe":     0.85,
+        "template_match":    0.80,
+        "banner_analysis":   0.65,
+    }
+    sev_w    = severity_weights.get(finding.severity.lower(), 0.1)
+    exposure = 1.2 if internet_exposed else 1.0
     tool_conf = TOOL_CONFIDENCE.get(finding.tool, 0.5)
-    return round(sev_w * finding.confidence * exposure * tool_conf, 3)
+    det_mod   = _det_modifiers.get(getattr(finding, "detection_method", ""), 0.70)
+    base  = sev_w * finding.confidence * exposure * tool_conf * det_mod
+    # EPSS component: probability of exploitation in the wild (0-1) weighted at 30%
+    score = (base * 0.70) + (epss_score * 0.30)
+    return round(score, 3)
 
 
 # ---------------------------------------------------------------------------
@@ -4892,7 +4910,24 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <div style="padding:12px 16px;border-top:1px solid #0f3460">
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:.8em;margin-bottom:1em;font-size:.88em">
         <div><strong style="color:#00d4ff">Confidence</strong><br>{{ "%.0f%%"|format(f.confidence * 100) }} &mdash; {% if f.confidence >= 0.95 %}<span style="color:#2ed573">Validated</span>{% elif f.confidence >= 0.75 %}<span style="color:#69f0ae">Strong Fingerprint</span>{% elif f.confidence >= 0.40 %}<span style="color:#ffa502">Banner / Heuristic</span>{% else %}<span style="color:#90a4ae">Weak Inference</span>{% endif %}</div>
-        {% if f.detection_method %}<div><strong style="color:#00d4ff">Detection Method</strong><br><span style="color:#b0bec5;font-size:.9em">{{ f.detection_method }}</span></div>{% endif %}
+        {%- if f.detection_method %}
+      {%- if f.detection_method == 'exploit_confirmed' %}
+        {%- set _dm_label = '&#10003; Exploit Confirmed' %}{%- set _dm_tier = 'HIGH' %}{%- set _dm_col = '#2ed573' %}
+      {%- elif f.detection_method == 'service_probe' %}
+        {%- set _dm_label = '&#x26A1; Active Probe' %}{%- set _dm_tier = 'MEDIUM' %}{%- set _dm_col = '#ffb300' %}
+      {%- elif f.detection_method == 'template_match' %}
+        {%- set _dm_label = '&#x1F4CB; Template Match' %}{%- set _dm_tier = 'MEDIUM' %}{%- set _dm_col = '#ffa502' %}
+      {%- elif f.detection_method == 'banner_analysis' %}
+        {%- set _dm_label = '&#x1F50E; Banner Match' %}{%- set _dm_tier = 'LOW' %}{%- set _dm_col = '#78909c' %}
+      {%- else %}
+        {%- set _dm_label = '&#x1F50D; Heuristic' %}{%- set _dm_tier = 'LOW' %}{%- set _dm_col = '#546e7a' %}
+      {%- endif %}
+      <div>
+        <strong style="color:#00d4ff">Detection Source</strong><br>
+        <span style="color:{{ _dm_col }};font-weight:600">{{ _dm_label }}</span>
+        <span style="background:#0d1b2a;border:1px solid {{ _dm_col }};color:{{ _dm_col }};padding:1px 6px;border-radius:8px;font-size:.78em;margin-left:.4em">{{ _dm_tier }}</span>
+      </div>
+      {%- endif %}
         {% if f.vuln_type %}<div><strong style="color:#00d4ff">Vuln Type</strong><br>{{ f.vuln_type }}</div>{% endif %}
         {% if f.cwe_id %}
         {%- set _cwe_info = cwe_db.get(f.cwe_id, {}) %}
@@ -4994,6 +5029,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <span>&#128308; Active Vulnerabilities &mdash; {{ active_findings|length }} finding(s)
       {% if confirmed_findings %}&nbsp;<span style="background:#c62828;color:#fff;padding:1px 7px;border-radius:10px;font-size:.82em">{{ confirmed_findings|length }} confirmed</span>{% endif %}
       {% if probable_findings %}&nbsp;<span style="background:#bf360c;color:#fff;padding:1px 7px;border-radius:10px;font-size:.82em">{{ probable_findings|length }} probable</span>{% endif %}
+      &nbsp;<span style="color:#78909c;font-size:.78em;font-weight:400">calibrated critical &amp; high severity</span>
     </span>
   </summary>
   <div style="padding:.5em">
@@ -5005,7 +5041,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <details style="margin-bottom:1.2em;border:1px solid #e65100;border-radius:6px;background:#0d1b2a">
   <summary style="cursor:pointer;color:#ffa502;font-size:.92em;font-weight:600;padding:.65em 1em;user-select:none;display:flex;align-items:center;gap:.6em">
     <span>&#9654;</span>
-    <span>&#9888; Hardening Issues &mdash; {{ hardening_findings|length }} finding(s)</span>
+    <span>&#9888; Hardening Issues &mdash; {{ hardening_findings|length }} finding(s)
+      &nbsp;<span style="color:#78909c;font-size:.78em;font-weight:400">medium &amp; low severity &mdash; configuration &amp; hardening items</span>
+    </span>
   </summary>
   <div style="padding:.5em">
   {% for f in hardening_findings %}{{ render_finding(f) }}{% endfor %}
@@ -5501,8 +5539,20 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
     print("\n[+] Generating report ...")
 
     all_findings = deduplicate_findings(all_findings)
+    # Build per-finding EPSS lookup: match CVE IDs from template_id or title
+    # against the offline EPSS database so the composite risk score can incorporate
+    # real exploit-probability data rather than relying on severity alone.
+    _epss_db = _load_epss_db()
+    _cve_re  = re.compile(r'CVE-\d{4}-\d{4,7}', re.IGNORECASE)
     for f in all_findings:
-        f.risk_score = calculate_risk_score(f)
+        _cve_hits = _cve_re.findall((f.template_id or "") + " " + (f.title or ""))
+        _epss_val = 0.0
+        for _cid in _cve_hits:
+            _entry = _epss_db.get(_cid.upper())
+            if _entry:
+                _epss_val = max(_epss_val, _entry[0])
+                break
+        f.risk_score = calculate_risk_score(f, epss_score=_epss_val)
 
     # ── Calibrated severity (report-layer only — Finding.severity unchanged) ─
     # Step 1: deterministic rules — clear-cut cases resolved immediately
