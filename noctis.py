@@ -12,7 +12,7 @@ EPSS exploit-probability scoring, NVD CVSS offline database,
 NIST CSF 2.0 compliance mapping, and OT/ICS asset classification.
 """
 
-VERSION = "v0.8.5"
+VERSION = "v0.9.0"
 
 import asyncio
 import dataclasses
