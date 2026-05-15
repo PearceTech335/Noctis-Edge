@@ -4807,7 +4807,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   </div>
 </div>
 {% endif %}
-<div class="conclusion">{% for para in conclusion.split('\n\n') %}{% if para.strip() %}<p style="margin:0 0 .75em 0">{{ para.strip() }}</p>{% endif %}{% endfor %}</div>
+{% if not conclusion_llm_ok %}<div style="background:#1a1000;border:1px solid #ff6d00;border-radius:6px;padding:8px 14px;margin:0 0 10px 0;font-size:.85em"><strong style="color:#ff9800">&#9888; Executive Summary Incomplete</strong><span style="color:#ffe0b2;margin-left:.5em">The LLM timed out &mdash; the summary below is auto-generated from scan data and may be missing context.</span></div>{% endif %}<div class="conclusion">{% for para in conclusion.split('\n\n') %}{% if para.strip() %}<p style="margin:0 0 .75em 0">{{ para.strip() }}</p>{% endif %}{% endfor %}</div>
+{% if audit_notes %}<details style="margin:.5em 0 1em 0;border:1px solid #263238;border-radius:5px;background:#0a1520"><summary style="cursor:pointer;color:#546e7a;font-size:.8em;padding:.45em .9em;user-select:none;list-style:none">{% if conclusion_revised %}<span style="color:#ffb74d">&#x270F; Report Audit &mdash; conclusion revised</span>{% else %}<span style="color:#4caf50">&#x2713; Report Audit &mdash; no changes required</span>{% endif %}</summary><div style="padding:.6em 1em .7em;font-size:.83em;color:#78909c;line-height:1.65;border-top:1px solid #263238">{{ audit_notes }}</div></details>{% endif %}
 
 {% if compliance_summary %}
 <h2>Compliance Impact</h2>
@@ -4868,6 +4869,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 </details>
 {% endif %}
 
+{% if remediation_llm_failed %}<div style="background:#1a1000;border:1px solid #ff6d00;border-radius:6px;padding:8px 14px;margin:0 0 10px 0;font-size:.85em"><strong style="color:#ff9800">&#9888; Remediation Advice Incomplete</strong><span style="color:#ffe0b2;margin-left:.5em">LLM timed out for {{ remediation_llm_failed }} finding(s) &mdash; static fallback advice is shown for those items.</span></div>{% endif %}
 <h2>Security Findings ({{ findings|length }} total)</h2>
 <div style="margin:.5em 0 1.2em;padding:.8em 1.1em;background:#0d1b2a;border:1px solid #1e3a5f;border-radius:6px;font-size:.86em;color:#b0bec5;line-height:1.65">
   <div style="display:flex;flex-wrap:wrap;gap:1.4em">
@@ -5059,6 +5061,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 {% endif %}
 {% else %}<p>No findings detected.</p>{% endif %}
 
+{% if cve_llm_failed %}<div style="background:#1a1000;border:1px solid #ff6d00;border-radius:6px;padding:8px 14px;margin:0 0 10px 0;font-size:.85em"><strong style="color:#ff9800">&#9888; CVE Analysis Incomplete</strong><span style="color:#ffe0b2;margin-left:.5em">LLM timed out for {{ cve_llm_failed }} CVE section(s) &mdash; attacker perspective and/or remediation may be missing from affected cards.</span></div>{% endif %}
 <h2>CVE Matches ({{ cve_matches|length }} total)</h2>
 <div style="margin:.5em 0 1.2em;padding:.8em 1.1em;background:#0d1b2a;border:1px solid #1e3a5f;border-radius:6px;font-size:.86em;color:#b0bec5;line-height:1.65">
   <div style="display:flex;flex-wrap:wrap;gap:1.4em">
@@ -5730,6 +5733,7 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
     )
 
     conclusion = _anchor
+    conclusion_llm_ok = False
     _t0 = time.monotonic()
     _sp = _Spinner("[ LLM ]  Writing executive summary ...").start()
     try:
@@ -5790,6 +5794,7 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
                     continuation = "\n".join(clean_lines).strip() if clean_lines else ""
                     if continuation:
                         conclusion = f"{_anchor}\n\n{continuation}"
+                        conclusion_llm_ok = True
                     break
             except Exception as e:
                 print(f"[!] Conclusion LLM error: {e}")
@@ -5816,6 +5821,7 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
         import concurrent.futures
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as _pool:
             list(_pool.map(_enrich_finding_remediation, _rem_findings))
+    _rem_failed = sum(1 for f in _rem_findings if not f.llm_remediation_short)
 
     generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")
 
@@ -5868,7 +5874,13 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
         "suppressed_cve_matches": suppressed_cve_matches,
         "tools_run":     tools_run,
         "execution_log": execution_log,
-        "conclusion":    conclusion,
+        "conclusion":           conclusion,
+        "conclusion_llm_ok":    conclusion_llm_ok,
+        "conclusion_audited":   False,
+        "conclusion_revised":   False,
+        "audit_notes":          "",
+        "remediation_llm_failed": _rem_failed,
+        "cve_llm_failed":       0,
         "cve_test_results": [],
         "msf_validation": [],
         "target_info":   target_info.to_dict() if target_info else {},
@@ -9124,9 +9136,9 @@ def _generate_attacker_perspective(cve: dict) -> str:
         )
         payload = resp.json()
         text = payload.get("response", "").strip()
-        return text if text else "Attacker perspective unavailable."
-    except Exception as e:
-        return f"Attacker perspective unavailable ({e})."
+        return text if text else ""
+    except Exception:
+        return ""
     finally:
         _sp.stop(f" done ({_fmt_dur(time.monotonic() - _t0)})")
 
@@ -9168,9 +9180,9 @@ def _generate_immediate_remediation(cve: dict) -> str:
         )
         payload = resp.json()
         text = payload.get("response", "").strip()
-        return text if text else "Immediate remediation guidance unavailable."
-    except Exception as e:
-        return f"Immediate remediation guidance unavailable ({e})."
+        return text if text else ""
+    except Exception:
+        return ""
     finally:
         _sp.stop(f" done ({_fmt_dur(time.monotonic() - _t0)})")
 
@@ -9209,9 +9221,9 @@ def _generate_remediation(cve: dict) -> str:
         )
         payload = resp.json()
         text = payload.get("response", "").strip()
-        return text if text else "Remediation guidance unavailable."
-    except Exception as e:
-        return f"Remediation guidance unavailable ({e})."
+        return text if text else ""
+    except Exception:
+        return ""
     finally:
         _sp.stop(f" done ({_fmt_dur(time.monotonic() - _t0)})")
 
@@ -9248,7 +9260,7 @@ def _derive_evidence_type(result: dict) -> str:
     return "Banner Analysis"
 
 
-def generate_cve_remediations(cve_test_results: list, cve_matches: list) -> None:
+def generate_cve_remediations(cve_test_results: list, cve_matches: list) -> int:
     """
     For each CVE test result that is VULNERABLE or CONFIRMED_VULNERABLE, look up the
     original CVE match record (for full metadata) and call _generate_remediation().
@@ -9257,7 +9269,10 @@ def generate_cve_remediations(cve_test_results: list, cve_matches: list) -> None
     Additionally, generates attacker_perspective for all CRITICAL/HIGH/MEDIUM cve_matches
     that were not covered by active testing (e.g. because requires_auth=True caused them
     to be skipped).  These perspectives are written directly into the cve_match record.
+
+    Returns the total number of LLM failures across all CVE LLM calls.
     """
+    _cve_llm_failed = 0
     # Build a quick lookup from cve_id → original cve_match record
     cve_meta = {c["cve_id"]: c for c in cve_matches}
 
@@ -9274,6 +9289,9 @@ def generate_cve_remediations(cve_test_results: list, cve_matches: list) -> None
             result["attacker_perspective"]  = _generate_attacker_perspective(cve_rec)
             result["remediation"]           = _generate_remediation(cve_rec)
             result["evidence_type"]         = _derive_evidence_type(result)
+            if not result["immediate_remediation"]: _cve_llm_failed += 1
+            if not result["attacker_perspective"]:  _cve_llm_failed += 1
+            if not result["remediation"]:           _cve_llm_failed += 1
             # Write-back to the cve_match record so the CVE Matches card can also render them
             if cve_id in cve_meta:
                 cve_meta[cve_id]["immediate_remediation"] = result["immediate_remediation"]
@@ -9295,10 +9313,132 @@ def generate_cve_remediations(cve_test_results: list, cve_matches: list) -> None
         print(f"\n[REMEDIATION] Generating attacker perspective for {len(untested)} untested CVE(s) ...")
         for cve_rec in untested:
             cve_rec["attacker_perspective"] = _generate_attacker_perspective(cve_rec)
+            if not cve_rec["attacker_perspective"]: _cve_llm_failed += 1
             print(f"  [+] Attacker perspective written for {cve_rec['cve_id']}")
 
+    return _cve_llm_failed
 
-def _build_conclusion_with_cve(report: dict, target: str) -> str:
+
+def _audit_report(report: dict, _pass: int = 1) -> dict:
+    """
+    Proof-read the completed report by feeding a compact text digest back to
+    REPORT_MODEL.  The model checks factual accuracy (counts, CVE verdicts),
+    internal consistency, and professional tone.  If corrections are needed it
+    rewrites the executive summary; either way it returns brief audit notes.
+
+    If pass 1 made a revision, a second pass is run automatically to verify the
+    rewrite is itself consistent — ensuring corrections didn't introduce new issues.
+    At most 2 passes total; the second pass is skipped entirely when pass 1 finds
+    nothing to fix.  Non-fatal — returns report unchanged on any failure.
+    """
+    conclusion = report.get("conclusion", "")
+    if not conclusion:
+        return report
+
+    counts      = report.get("counts", {})
+    findings    = report.get("findings", [])
+    cve_results = report.get("cve_test_results", [])
+    cve_matches = report.get("cve_matches", [])
+
+    # Compact finding digest — top 8 by risk_score
+    top_findings = sorted(findings, key=lambda x: x.get("risk_score", 0), reverse=True)[:8]
+    finding_lines = []
+    for _f in top_findings:
+        _short = ""
+        try:
+            _steps = json.loads(_f.get("llm_remediation_short", "") or "[]")
+            if _steps:
+                _short = _steps[0][:80]
+        except Exception:
+            pass
+        finding_lines.append(
+            f"  - [{_f.get('severity','?').upper()}] {_f.get('title','')}"
+            + (f" | Fix: {_short}" if _short else "")
+        )
+
+    # Compact CVE digest
+    _result_lookup = {r["cve_id"]: r for r in cve_results}
+    cve_lines = []
+    for _cm in (cve_matches or [])[:10]:
+        _cid     = _cm.get("cve_id", "")
+        _verdict = _result_lookup.get(_cid, {}).get("overall_verdict", "UNVERIFIED")
+        _persp   = _cm.get("attacker_perspective", "") or ""
+        _sent    = (_persp.split(".")[0] + ".") if "." in _persp else _persp[:100]
+        cve_lines.append(
+            f"  - {_cid} ({_cm.get('severity','?').upper()}) verdict={_verdict}"
+            + (f" | {_sent}" if _sent else "")
+        )
+
+    digest = (
+        f"EXECUTIVE SUMMARY:\n{conclusion}\n\n"
+        f"FINDING COUNTS: critical={counts.get('critical',0)} high={counts.get('high',0)} "
+        f"medium={counts.get('medium',0)} low={counts.get('low',0)}\n\n"
+        "TOP FINDINGS:\n" + "\n".join(finding_lines or ["  (none)"]) + "\n\n"
+        + ("CVE RESULTS:\n" + "\n".join(cve_lines) + "\n\n" if cve_lines else "")
+    )
+
+    prompt = (
+        "/no_think\n"
+        "You are a senior technical editor auditing a completed penetration test report "
+        "before delivery to a client.\n\n"
+        "Review the executive summary against the data digest below. Check for:\n"
+        "1. Factual accuracy — do the finding counts mentioned match the actual counts?\n"
+        "2. CVE accuracy — are CVE verdicts (CONFIRMED_VULNERABLE, NOT_VULNERABLE, UNVERIFIED) "
+        "correctly reflected?\n"
+        "3. Internal consistency — does the summary contradict itself or omit a critical issue?\n"
+        "4. Professional tone — is the language appropriate for a client-facing report?\n\n"
+        "If corrections are needed, rewrite the full executive summary (all 4 paragraphs, "
+        "plain text only, no markdown, no bullet points, no headings). "
+        "If no corrections are needed set revised_conclusion to an empty string.\n\n"
+        'Return ONLY valid JSON — no text outside the object:\n'
+        '{"revised_conclusion": "<rewritten text or empty string>", '
+        '"audit_notes": "<1-3 sentences: what was checked and any corrections made>"}\n\n'
+        f"DATA DIGEST:\n{digest}"
+    )
+
+    _pass_label = f"pass {_pass}/2" if _pass > 1 else "pass 1"
+    _t0 = time.monotonic()
+    _sp = _Spinner(f"[ LLM ]  Auditing report for coherence ({_pass_label}) ...").start()
+    try:
+        resp = requests.post(
+            OLLAMA_URL,
+            json={
+                "model":      REPORT_MODEL,
+                "prompt":     prompt,
+                "stream":     False,
+                "keep_alive": _OLLAMA_KEEP_ALIVE,
+                "options":    {"num_ctx": 4096, "temperature": 0.2},
+            },
+            timeout=OLLAMA_TIMEOUT,
+        )
+        raw = resp.json().get("response", "").strip()
+        raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+        _m = re.search(r"\{.*\}", raw, re.DOTALL)
+        if _m:
+            obj     = json.loads(_m.group(0))
+            revised = obj.get("revised_conclusion", "").strip()
+            notes   = obj.get("audit_notes", "").strip()
+            report["conclusion_audited"] = True
+            if notes:
+                # Append pass-2 notes after pass-1 notes with a separator
+                prior = report.get("audit_notes", "")
+                report["audit_notes"] = (f"{prior}  Pass 2: {notes}" if prior and _pass > 1 else notes)
+            if revised:
+                report["conclusion"]         = revised
+                report["conclusion_revised"] = True
+    except Exception as e:
+        print(f"[!] Report audit error (pass {_pass}): {e}")
+    finally:
+        _sp.stop(f" done ({_fmt_dur(time.monotonic() - _t0)})")
+
+    # If pass 1 made a revision, run one verification pass on the rewrite
+    if _pass == 1 and report.get("conclusion_revised"):
+        report = _audit_report(report, _pass=2)
+
+    return report
+
+
+def _build_conclusion_with_cve(report: dict, target: str) -> tuple:
     """Rebuild the conclusion anchor after CVE test results are available.
 
     If confirmed/vulnerable CVEs exist the conclusion must reflect that —
@@ -9433,8 +9573,8 @@ def _build_conclusion_with_cve(report: dict, target: str) -> str:
         pass  # fall back to anchor-only
 
     if _llm_prose:
-        return f"{anchor}\n\n{_llm_prose}"
-    return anchor
+        return f"{anchor}\n\n{_llm_prose}", True
+    return anchor, False
 
 
 def _posture_from_cve(confirmed: list, vulnerable: list) -> str:
@@ -9494,7 +9634,7 @@ async def _run_cve_test_phase(report: dict, target: str, session_dir: str,
         print(f"[i] Nuclei template KB unchanged (no HTTP/web CVEs tested this run) → {NUCLEI_KB_PATH}")
 
     # Generate LLM remediation suggestions for each confirmed/vulnerable CVE
-    generate_cve_remediations(cve_test_results, cve_matches)
+    report["cve_llm_failed"] = generate_cve_remediations(cve_test_results, cve_matches)
 
     report["cve_test_results"] = cve_test_results
     return report
@@ -10078,6 +10218,10 @@ async def main_async():
     json_path = os.path.join(session_dir, f"report_{safe_tgt}.json")
     html_path = os.path.join(session_dir, f"report_{safe_tgt}.html")
 
+    if not CVE_TEST:
+        # No CVE phase follows — audit now so the final files include any corrections
+        report = _audit_report(report)
+
     # Save base report immediately so it survives an interrupted CVE test phase
     with open(json_path, "w") as fh:
         json.dump(report, fh, indent=2, default=str)
@@ -10094,7 +10238,9 @@ async def main_async():
         report = await _run_cve_test_phase(report, target, session_dir,
                                             available_tools=available_tools)
         # Regenerate conclusion now that CVE verdicts are known
-        report["conclusion"] = _build_conclusion_with_cve(report, target)
+        report["conclusion"], report["conclusion_llm_ok"] = _build_conclusion_with_cve(report, target)
+        # Proof-read the completed report for coherence and accuracy before final save
+        report = _audit_report(report)
         # Overwrite with updated report containing CVE test results
         with open(json_path, "w") as fh:
             json.dump(report, fh, indent=2, default=str)
@@ -10193,7 +10339,7 @@ def _report_from_json(json_path: str):
     # Always rebuild the conclusion from live data so it reflects the fixed logic
     # (handles the case where scanner found 0 findings but CVEs are confirmed).
     _regen_target = report.get("target", "unknown")
-    report["conclusion"] = _build_conclusion_with_cve(report, _regen_target)
+    report["conclusion"], report["conclusion_llm_ok"] = _build_conclusion_with_cve(report, _regen_target)
 
     base      = os.path.splitext(os.path.abspath(json_path))[0]
     html_path = base + ".html"
