@@ -2919,29 +2919,96 @@ def _nmap_extract_script_output(xml_data: str, batch_ports: list | None = None) 
 
 # Map service name → NSE scripts that give the most decision-making value.
 # These are used by Phase 3 to build targeted script batches per service.
+# Safe/discovery scripts only — no DoS, no active exploitation, no brute-force,
+# no scripts requiring external API keys.
 _NSE_SCRIPT_MAP = {
-    "http":        "http-title,http-headers,http-methods,http-auth-finder,http-server-header,http-security-headers,http-robots.txt",
-    "ssl/http":    "http-title,http-headers,http-methods,http-auth-finder,ssl-cert,ssl-enum-ciphers,http-security-headers",
-    "https":       "http-title,http-headers,http-methods,http-auth-finder,ssl-cert,ssl-enum-ciphers,http-security-headers",
-    "http-alt":    "http-title,http-headers,http-methods,http-auth-finder,http-server-header",
-    "http-proxy":  "http-title,http-headers,http-methods,http-auth-finder,http-server-header",
-    "ssh":         "ssh-auth-methods,ssh2-enum-algos,ssh-hostkey",
-    "ftp":         "ftp-anon,ftp-bounce,ftp-syst",
-    "smtp":        "smtp-open-relay,smtp-commands,smtp-enum-users",
-    "smb":         "smb-security-mode,smb2-security-mode,smb-enum-shares,smb-os-discovery",
-    "microsoft-ds":"smb-security-mode,smb2-security-mode,smb-enum-shares,smb-os-discovery",
+    # ── HTTP (plain) ─────────────────────────────────────────────────
+    "http": (
+        "http-title,http-headers,http-methods,http-auth-finder,http-server-header,"
+        "http-security-headers,http-robots.txt,http-cookie-flags,http-cors,http-git,"
+        "http-config-backup,http-internal-ip-disclosure,http-php-version,"
+        "http-generator,http-favicon,http-waf-detect,http-apache-server-status,"
+        "http-devframework"
+    ),
+    # ── HTTPS / SSL ─────────────────────────────────────────────────
+    "ssl/http": (
+        "http-title,http-headers,http-methods,http-auth-finder,http-server-header,"
+        "http-security-headers,http-robots.txt,ssl-cert,ssl-enum-ciphers,"
+        "http-cookie-flags,http-cors,http-git,http-config-backup,"
+        "http-internal-ip-disclosure,http-php-version,http-generator,http-favicon,"
+        "http-waf-detect,http-apache-server-status,http-devframework,"
+        "ssl-heartbleed,ssl-dh-params,ssl-poodle,sslv2-drown,ssl-ccs-injection,"
+        "tls-ticketbleed"
+    ),
+    "https": (
+        "http-title,http-headers,http-methods,http-auth-finder,http-server-header,"
+        "http-security-headers,http-robots.txt,ssl-cert,ssl-enum-ciphers,"
+        "http-cookie-flags,http-cors,http-git,http-config-backup,"
+        "http-internal-ip-disclosure,http-php-version,http-generator,http-favicon,"
+        "http-waf-detect,http-apache-server-status,http-devframework,"
+        "ssl-heartbleed,ssl-dh-params,ssl-poodle,sslv2-drown,ssl-ccs-injection,"
+        "tls-ticketbleed"
+    ),
+    # ── Alternate / proxy HTTP ────────────────────────────────────────────
+    "http-alt": (
+        "http-title,http-headers,http-methods,http-auth-finder,http-server-header,"
+        "http-security-headers,http-robots.txt,http-cookie-flags,http-cors,http-git,"
+        "http-config-backup,http-internal-ip-disclosure,http-php-version,"
+        "http-generator,http-favicon,http-waf-detect,http-apache-server-status,"
+        "http-devframework"
+    ),
+    "http-proxy": (
+        "http-title,http-headers,http-methods,http-auth-finder,http-server-header,"
+        "http-security-headers,http-robots.txt,http-cookie-flags,http-cors,http-git,"
+        "http-config-backup,http-internal-ip-disclosure,http-php-version,"
+        "http-generator,http-favicon,http-waf-detect,http-apache-server-status,"
+        "http-devframework"
+    ),
+    # ── SSH ───────────────────────────────────────────────────────────────────
+    "ssh":         "ssh-auth-methods,ssh2-enum-algos,ssh-hostkey,sshv1",
+    # ── FTP ───────────────────────────────────────────────────────────────────
+    "ftp":         "ftp-anon,ftp-bounce,ftp-syst,ftp-vsftpd-backdoor,ftp-proftpd-backdoor,ftp-vuln-cve2010-4221",
+    # ── SMTP ──────────────────────────────────────────────────────────────────
+    "smtp":        "smtp-open-relay,smtp-commands,smtp-enum-users,smtp-ntlm-info,smtp-vuln-cve2010-4344,smtp-vuln-cve2011-1720,smtp-vuln-cve2011-1764",
+    # ── SMB ───────────────────────────────────────────────────────────────────
+    "smb":         "smb-security-mode,smb2-security-mode,smb-enum-shares,smb-os-discovery,smb-protocols,smb2-capabilities,smb-enum-users,smb-vuln-ms17-010,smb-vuln-cve-2017-7494,smb-double-pulsar-backdoor",
+    "microsoft-ds":"smb-security-mode,smb2-security-mode,smb-enum-shares,smb-os-discovery,smb-protocols,smb2-capabilities,smb-enum-users,smb-vuln-ms17-010,smb-vuln-cve-2017-7494,smb-double-pulsar-backdoor",
+    # ── Databases ─────────────────────────────────────────────────────────────
     "mysql":       "mysql-info,mysql-empty-password,mysql-enum",
     "mssql":       "ms-sql-info,ms-sql-config,ms-sql-empty-password",
     "ms-sql":      "ms-sql-info,ms-sql-config,ms-sql-empty-password",
-    "rdp":         "rdp-enum-encryption",
-    "vnc":         "vnc-info,vnc-brute",
-    "dns":         "dns-zone-transfer,dns-service-discovery",
-    "ipp":         "http-title,http-headers,http-methods,http-server-header",
+    "redis":       "redis-info",
+    "mongodb":     "mongodb-info,mongodb-databases",
+    "couchdb":     "couchdb-databases,couchdb-stats",
+    "oracle":      "oracle-tns-version",
+    # ── Remote access ─────────────────────────────────────────────────────────
+    "rdp":         "rdp-enum-encryption,rdp-ntlm-info,rdp-vuln-ms12-020",
+    "vnc":         "vnc-info,vnc-brute,realvnc-auth-bypass",
     "telnet":      "telnet-encryption,telnet-ntlm-info",
-    "ldap":        "ldap-rootdse,ldap-novell-getpass",
+    # ── DNS ───────────────────────────────────────────────────────────────────
+    "dns":         "dns-zone-transfer,dns-service-discovery,dns-recursion,dns-random-srcport,dns-random-txid,dns-nsid,dns-update",
+    # ── Directory / LDAP ──────────────────────────────────────────────────────
+    "ldap":        "ldap-rootdse,ldap-novell-getpass,ldap-search",
+    # ── Mail protocols ─────────────────────────────────────────────────────────
     "pop3":        "pop3-capabilities",
     "imap":        "imap-capabilities",
-    "snmp":        "snmp-info,snmp-sysdescr,snmp-brute",
+    # ── SNMP ──────────────────────────────────────────────────────────────────
+    "snmp":        "snmp-info,snmp-sysdescr,snmp-brute,snmp-interfaces,snmp-processes,snmp-netstat,snmp-win32-services,snmp-win32-users",
+    # ── Printing / IPP ─────────────────────────────────────────────────────────
+    "ipp":         "http-title,http-headers,http-methods,http-server-header",
+    # ── File / storage services ─────────────────────────────────────────────────
+    "nfs":         "nfs-showmount,nfs-ls,nfs-statfs",
+    "rpcbind":     "rpcinfo",
+    "rsync":       "rsync-list-modules",
+    "memcached":   "memcached-info",
+    # ── Java / application servers ──────────────────────────────────────────────
+    "ajp":         "ajp-headers,ajp-methods",
+    "jdwp":        "jdwp-version,jdwp-info",
+    # ── Infrastructure ───────────────────────────────────────────────────────────
+    "ipmi":        "ipmi-version,ipmi-cipher-zero",
+    "docker":      "docker-version",
+    "x11":         "x11-access",
+    "irc":         "irc-info,irc-unrealircd-backdoor",
 }
 
 
