@@ -834,6 +834,28 @@ def _effective_severity_rules(f) -> str | None:
     return sev
 
 
+def _preload_report_model() -> None:
+    """Fire a minimal one-token request to REPORT_MODEL so Ollama loads it into
+    RAM before the first real prose call (executive summary).  On short scans the
+    planning model (MODEL) is the only model that was ever used; without this
+    warm-up the cold-load of qwen3:4b alone can exceed the 360 s OLLAMA_TIMEOUT.
+    Non-fatal — any error is silently ignored."""
+    try:
+        requests.post(
+            OLLAMA_URL,
+            json={
+                "model":      REPORT_MODEL,
+                "prompt":     "/no_think\n.",
+                "stream":     False,
+                "keep_alive": _OLLAMA_KEEP_ALIVE,
+                "options":    {"num_predict": 1, "num_ctx": 512},
+            },
+            timeout=OLLAMA_TIMEOUT,
+        )
+    except Exception:
+        pass
+
+
 def _llm_recalibrate_severities(findings: list) -> dict:
     """Batch LLM re-rating for ambiguous findings (temperature=0, structured JSON).
 
@@ -2902,6 +2924,7 @@ _NSE_SCRIPT_MAP = {
     "ssl/http":    "http-title,http-headers,http-methods,http-auth-finder,ssl-cert,ssl-enum-ciphers,http-security-headers",
     "https":       "http-title,http-headers,http-methods,http-auth-finder,ssl-cert,ssl-enum-ciphers,http-security-headers",
     "http-alt":    "http-title,http-headers,http-methods,http-auth-finder,http-server-header",
+    "http-proxy":  "http-title,http-headers,http-methods,http-auth-finder,http-server-header",
     "ssh":         "ssh-auth-methods,ssh2-enum-algos,ssh-hostkey",
     "ftp":         "ftp-anon,ftp-bounce,ftp-syst",
     "smtp":        "smtp-open-relay,smtp-commands,smtp-enum-users",
@@ -3114,6 +3137,35 @@ def run_nmap_discovery(target: str, pinned_ports: str | None = None) -> tuple:
 
     nse_port_count = sum(1 for p in nse_results if nse_results[p])
     print(f"[+] Phase 3 complete — NSE data on {nse_port_count} port(s)")
+
+    # Backfill product/version from http-server-header NSE output when nmap's
+    # -sV fingerprint left them blank (common for non-standard ports like 8080
+    # that nmap labels "http-proxy" or "http-alt" without banner parsing).
+    _SVC_HEADER_PATTERNS = [
+        (re.compile(r'Apache/(\S+)',        re.IGNORECASE), "Apache httpd"),
+        (re.compile(r'nginx/(\S+)',         re.IGNORECASE), "nginx"),
+        (re.compile(r'Microsoft-IIS/(\S+)', re.IGNORECASE), "Microsoft IIS"),
+        (re.compile(r'lighttpd/(\S+)',      re.IGNORECASE), "lighttpd"),
+        (re.compile(r'LiteSpeed/(\S+)',     re.IGNORECASE), "LiteSpeed"),
+        (re.compile(r'Werkzeug/(\S+)',      re.IGNORECASE), "Werkzeug"),
+        (re.compile(r'Jetty/(\S+)',         re.IGNORECASE), "Jetty"),
+        (re.compile(r'Tomcat/(\S+)',        re.IGNORECASE), "Apache Tomcat"),
+        (re.compile(r'openresty/(\S+)',     re.IGNORECASE), "OpenResty"),
+        (re.compile(r'Caddy/(\S+)',         re.IGNORECASE), "Caddy"),
+    ]
+    for svc in p1_services:
+        if svc.get("product"):
+            continue  # already detected by -sV, trust nmap
+        header_val = svc.get("nse_output", {}).get("http-server-header", "")
+        if not header_val:
+            continue
+        for _pat, _prod in _SVC_HEADER_PATTERNS:
+            _m = _pat.search(header_val)
+            if _m:
+                svc["product"] = _prod
+                # Strip trailing OS/extra info like "(Unix)" "(Ubuntu)"
+                svc["version"] = _m.group(1).split()[0].rstrip("(),;")
+                break
 
     # ------------------------------------------------------------------ #
     # Phase 4 — OS detection                                              #
@@ -5595,6 +5647,17 @@ def generate_pdf_report(html_content, pdf_path):
 def generate_report(target, services, all_findings, scan_records, profile="web", target_info=None):
     print("\n[+] Generating report ...")
 
+    # Start REPORT_MODEL warm-up in background so the cold model load overlaps
+    # with the CPU-only setup work that follows.  On short scans (<60 s) the
+    # planning model may be the only model ever loaded; without pre-warming,
+    # qwen3:4b cold-load alone can consume the full OLLAMA_TIMEOUT budget.
+    _warmup_thread = threading.Thread(
+        target=_preload_report_model,
+        daemon=True,
+        name="report-model-warmup",
+    )
+    _warmup_thread.start()
+
     all_findings = deduplicate_findings(all_findings)
     # Build per-finding EPSS lookup: match CVE IDs from template_id or title
     # against the offline EPSS database so the composite risk score can incorporate
@@ -5732,6 +5795,12 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
         f"The assessment of {target} identified no exploitable findings, indicating a low-risk security posture."
     )
 
+    # Ensure REPORT_MODEL is loaded before making the executive summary call.
+    # The warmup thread was started at the top of generate_report() so it
+    # overlapped with severity calibration + setup work above.
+    if _warmup_thread.is_alive():
+        _warmup_thread.join(timeout=OLLAMA_TIMEOUT)
+
     conclusion = _anchor
     conclusion_llm_ok = False
     _t0 = time.monotonic()
@@ -5743,7 +5812,7 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
                     OLLAMA_URL,
                     json={"model": REPORT_MODEL, "stream": False,
                           "keep_alive": _OLLAMA_KEEP_ALIVE,
-                          "options":    {"num_ctx": 4096, "temperature": 0.3},
+                          "options":    {"num_ctx": 2048, "temperature": 0.3},
                           "prompt": (
                               "/no_think\n"
                               "You are a professional penetration tester writing an executive summary "
