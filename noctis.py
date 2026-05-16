@@ -5878,7 +5878,11 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
     if _rem_findings:
         print(f"\n[+] Generating LLM remediation advice for {len(_rem_findings)} finding(s) (active + hardening) ...")
         import concurrent.futures
-        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as _pool:
+        # max_workers=1 — Ollama on CPU serialises requests internally, so concurrent
+        # callers don't run in parallel: they queue up and each burns through its
+        # OLLAMA_TIMEOUT budget *while waiting*, causing nearly all to time out.
+        # Sequential execution gives every call its full 360 s of actual inference time.
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _pool:
             list(_pool.map(_enrich_finding_remediation, _rem_findings))
     _rem_failed = sum(1 for f in _rem_findings if not f.llm_remediation_short)
 
