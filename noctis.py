@@ -5714,17 +5714,10 @@ def generate_pdf_report(html_content, pdf_path):
 def generate_report(target, services, all_findings, scan_records, profile="web", target_info=None):
     print("\n[+] Generating report ...")
 
-    # Start REPORT_MODEL warm-up in background so the cold model load overlaps
-    # with the CPU-only setup work that follows.  On short scans (<60 s) the
-    # planning model may be the only model ever loaded; without pre-warming,
-    # qwen3:4b cold-load alone can consume the full OLLAMA_TIMEOUT budget.
-    _warmup_thread = threading.Thread(
-        target=_preload_report_model,
-        daemon=True,
-        name="report-model-warmup",
-    )
-    _warmup_thread.start()
-
+    # REPORT_MODEL (qwen3:4b) is not called until _enrich_finding_remediation,
+    # which runs after severity calibration.  By the time the executive summary
+    # is generated (deferred to after remediations below), the model is already
+    # warm — no explicit pre-load thread is needed.
     all_findings = deduplicate_findings(all_findings)
     # Build per-finding EPSS lookup: match CVE IDs from template_id or title
     # against the offline EPSS database so the composite risk score can incorporate
@@ -5862,81 +5855,11 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
         f"The assessment of {target} identified no exploitable findings, indicating a low-risk security posture."
     )
 
-    # Ensure REPORT_MODEL is loaded before making the executive summary call.
-    # The warmup thread was started at the top of generate_report() so it
-    # overlapped with severity calibration + setup work above.
-    if _warmup_thread.is_alive():
-        _warmup_thread.join(timeout=OLLAMA_TIMEOUT)
-
-    conclusion = _anchor
-    conclusion_llm_ok = False
-    _t0 = time.monotonic()
-    _sp = _Spinner("[ LLM ]  Writing executive summary ...").start()
-    try:
-        for attempt in range(MAX_LLM_RETRIES):
-            try:
-                resp    = requests.post(
-                    OLLAMA_URL,
-                    json={"model": REPORT_MODEL, "stream": False,
-                          "keep_alive": _OLLAMA_KEEP_ALIVE,
-                          "options":    {"num_ctx": 2048, "temperature": 0.3},
-                          "prompt": (
-                              "/no_think\n"
-                              "You are a professional penetration tester writing an executive summary "
-                              "for a client-facing security assessment report. "
-                              "Write exactly 4 paragraphs of professional prose in plain text. "
-                              "No bullet points, no headings, no markdown, no numbered lists. "
-                              "Each paragraph must be 3-5 sentences. Use plain business language — "
-                              "avoid marketing terms, acronym soup, and vendor jargon. "
-                              "Paragraph 1: Describe the scope of the assessment — what was tested, "
-                              "what services were discovered, and how many issues were identified overall. "
-                              "Give the reader a clear sense of how exposed this system is without "
-                              "overstating or understating the risk. "
-                              "Paragraph 2: Walk through the finding categories — what types of weaknesses "
-                              "were found (unpatched software, configuration problems, exposed services, "
-                              "weak authentication), which services carry the most risk, and what the "
-                              "spread of severity levels tells us about the overall security posture. "
-                              "Paragraph 3: Identify the 2-3 most serious issues by name and explain in "
-                              "plain terms what an attacker could realistically do if they exploited them "
-                              "and what the business consequence would be. Focus on impact, not technique. "
-                              "Paragraph 4: Summarise the remediation urgency — what needs to be addressed "
-                              "within days versus weeks, and whether any findings represent systemic "
-                              "weaknesses that point to a broader process or policy gap. "
-                              "Do NOT repeat the opening sentence verbatim. "
-                              "Do not add disclaimers, questions, or sign-offs. "
-                              f"Opening sentence (incorporate naturally, do not repeat verbatim): {_anchor} "
-                              f"Assessment data: {json.dumps(mini_summary, separators=(',', ':'))}"
-                          )},
-                    timeout=OLLAMA_TIMEOUT,
-                )
-                payload = resp.json()
-                if "response" in payload:
-                    raw = payload["response"].strip()
-                    # Strip markdown artefacts, headings, and prompt leakage
-                    clean_lines = []
-                    for line in raw.splitlines():
-                        stripped = line.strip()
-                        if not stripped:
-                            if clean_lines:          # preserve paragraph break
-                                clean_lines.append("")
-                            continue
-                        lower = stripped.lower()
-                        if lower.startswith(("**", "##", "# ", "note:", "follow", "question")):
-                            break
-                        # Drop lines that merely echo the anchor
-                        if lower.startswith("the assessment of") and not clean_lines:
-                            continue
-                        clean_lines.append(stripped)
-                    continuation = "\n".join(clean_lines).strip() if clean_lines else ""
-                    if continuation:
-                        conclusion = f"{_anchor}\n\n{continuation}"
-                        conclusion_llm_ok = True
-                    break
-            except Exception as e:
-                print(f"[!] Conclusion LLM error: {e}")
-                break
-    finally:
-        _sp.stop(f" done ({_fmt_dur(time.monotonic() - _t0)})")
+    # Executive summary is generated AFTER _enrich_finding_remediation so that
+    # REPORT_MODEL (qwen3:4b) is already warm — the remediation pass loads the
+    # model first, eliminating the cold-load timeout that plagued this call.
+    conclusion = _anchor          # deterministic fallback; overwritten below
+    conclusion_llm_ok = False     # updated after model is warm
 
     # ── Per-finding LLM remediation ─────────────────────────────────────────
     # Pre-enrichment inference pass: use the static keyword map to fill in vuln_type
@@ -5958,6 +5881,76 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as _pool:
             list(_pool.map(_enrich_finding_remediation, _rem_findings))
     _rem_failed = sum(1 for f in _rem_findings if not f.llm_remediation_short)
+
+    # ── Executive summary (REPORT_MODEL now warm after remediation pass) ────
+    # qwen3:4b is already loaded in Ollama's model cache after the remediation
+    # ThreadPoolExecutor above — this call will not incur a cold-load delay.
+    _t0 = time.monotonic()
+    _sp = _Spinner("[ LLM ]  Writing executive summary ...").start()
+    try:
+        for attempt in range(MAX_LLM_RETRIES):
+            try:
+                resp = requests.post(
+                    OLLAMA_URL,
+                    json={"model": REPORT_MODEL, "stream": False,
+                          "keep_alive": _OLLAMA_KEEP_ALIVE,
+                          "options":    {"num_ctx": 2048, "temperature": 0.3},
+                          "prompt": (
+                              "/no_think\n"
+                              "You are a professional penetration tester writing an executive summary "
+                              "for a client-facing security assessment report. "
+                              "Write exactly 4 paragraphs of professional prose in plain text. "
+                              "No bullet points, no headings, no markdown, no numbered lists. "
+                              "Each paragraph must be 3-5 sentences. Use plain business language \u2014 "
+                              "avoid marketing terms, acronym soup, and vendor jargon. "
+                              "Paragraph 1: Describe the scope of the assessment \u2014 what was tested, "
+                              "what services were discovered, and how many issues were identified overall. "
+                              "Give the reader a clear sense of how exposed this system is without "
+                              "overstating or understating the risk. "
+                              "Paragraph 2: Walk through the finding categories \u2014 what types of weaknesses "
+                              "were found (unpatched software, configuration problems, exposed services, "
+                              "weak authentication), which services carry the most risk, and what the "
+                              "spread of severity levels tells us about the overall security posture. "
+                              "Paragraph 3: Identify the 2-3 most serious issues by name and explain in "
+                              "plain terms what an attacker could realistically do if they exploited them "
+                              "and what the business consequence would be. Focus on impact, not technique. "
+                              "Paragraph 4: Summarise the remediation urgency \u2014 what needs to be addressed "
+                              "within days versus weeks, and whether any findings represent systemic "
+                              "weaknesses that point to a broader process or policy gap. "
+                              "Do NOT repeat the opening sentence verbatim. "
+                              "Do not add disclaimers, questions, or sign-offs. "
+                              f"Opening sentence (incorporate naturally, do not repeat verbatim): {_anchor} "
+                              f"Assessment data: {json.dumps(mini_summary, separators=(',', ':'))}"
+                          )},
+                    timeout=OLLAMA_TIMEOUT,
+                )
+                payload = resp.json()
+                if "response" in payload:
+                    raw = payload["response"].strip()
+                    clean_lines = []
+                    for line in raw.splitlines():
+                        stripped = line.strip()
+                        if not stripped:
+                            if clean_lines:
+                                clean_lines.append("")
+                            continue
+                        lower = stripped.lower()
+                        if lower.startswith(("**", "##", "# ", "note:", "follow", "question")):
+                            break
+                        if lower.startswith("the assessment of") and not clean_lines:
+                            continue
+                        clean_lines.append(stripped)
+                    continuation = "\n".join(clean_lines).strip() if clean_lines else ""
+                    if continuation:
+                        conclusion = f"{_anchor}\n\n{continuation}"
+                        conclusion_llm_ok = True
+                    break
+            except Exception as e:
+                print(f"[!] Conclusion LLM error (attempt {attempt + 1}/{MAX_LLM_RETRIES}): {e}")
+                if attempt < MAX_LLM_RETRIES - 1:
+                    time.sleep(2)
+    finally:
+        _sp.stop(f" done ({_fmt_dur(time.monotonic() - _t0)})")
 
     generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")
 
