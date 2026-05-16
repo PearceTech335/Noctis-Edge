@@ -8159,16 +8159,28 @@ def _generate_verification_script(cve: dict, target: str, triggering_attempt: di
     to confirm or deny a VULNERABLE result and reduce false positives.
     Returns {language, strategy, script} or None on failure.
     """
+    _trig_strategy = triggering_attempt.get('strategy', '')
+    _trig_script   = triggering_attempt.get('script', '')[:800]
+    _trig_output   = triggering_attempt.get('output', '')[:400]
+
     prompt = f"""/no_think
 Write a SECOND, INDEPENDENT Python 3 verification script to confirm or deny a prior VULNERABLE result. Reply with JSON only.
 
 CVE: {cve.get('cve_id', '')} on {target}:{cve.get('service', '')}
 Product: {cve.get('product', '')} — {cve.get('summary', '')[:150]}
 
+### TRIGGERING RESULT — what you are verifying:
+Strategy:  {_trig_strategy}
+Evidence (script output that returned VULNERABLE):
+{_trig_output}
+
+### REFERENCE SCRIPT (the probe that found VULNERABLE):
+{_trig_script}
+
 ### CONTRAST RULE — MANDATORY:
-Previous strategy: {triggering_attempt.get('strategy', '')}
-DO NOT REUSE: same endpoint, same response field, or same protocol primitive.
-Validate a DIFFERENT observable indicator of the same vulnerability.
+DO NOT REUSE: same endpoint, same URL path, same response field, same protocol primitive, or same code logic as the reference script above.
+Study the reference script and evidence to understand WHAT was found, then validate the same vulnerability via a DIFFERENT observable indicator.
+Examples of contrast: if the reference used HTTP GET → use a raw socket; if it matched a header → match a response body; if it read a version banner → confirm a behavioural symptom.
 
 ### LANGUAGE
 Python 3 only. Use subprocess for system tools where needed.
