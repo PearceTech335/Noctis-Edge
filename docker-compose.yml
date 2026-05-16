@@ -78,7 +78,9 @@ services:
       - NOCTIS_OLLAMA_MODEL=qwen2.5-coder:3b-instruct
       - NOCTIS_OLLAMA_SCRIPT_MODEL=qwen2.5-coder:3b-instruct
       # Narrative prose model (report writing, attacker perspectives)
-      - NOCTIS_OLLAMA_REPORT_MODEL=qwen3:4b
+      # qwen3:1.7b — same family as qwen3:4b, /no_think supported, ~2x faster on CPU
+      - NOCTIS_OLLAMA_REPORT_MODEL=qwen3:1.7b
+      - NOCTIS_OLLAMA_TIMEOUT=600
       # Bind to all interfaces so the host browser can reach port 8888
       - NOCTIS_BIND_HOST=0.0.0.0
       # Inherit host timezone so timestamps match the host clock

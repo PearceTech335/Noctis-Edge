@@ -12,7 +12,7 @@ EPSS exploit-probability scoring, NVD CVSS offline database,
 NIST CSF 2.0 compliance mapping, and OT/ICS asset classification.
 """
 
-VERSION = "v0.9.2"
+VERSION = "v0.9.3"
 
 import asyncio
 import dataclasses
@@ -5898,7 +5898,7 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
                     OLLAMA_URL,
                     json={"model": REPORT_MODEL, "stream": False,
                           "keep_alive": _OLLAMA_KEEP_ALIVE,
-                          "options":    {"num_ctx": 2048, "temperature": 0.3},
+                          "options":    {"num_ctx": 2048, "temperature": 0.3, "num_predict": 600},
                           "prompt": (
                               "/no_think\n"
                               "You are a professional penetration tester writing an executive summary "
@@ -9210,30 +9210,38 @@ def _enrich_finding_remediation(f) -> None:
     _sp = _Spinner(f"[ LLM ]  Generating remediation advice: {f.title[:55]} ...").start()
     _t0 = time.monotonic()
     try:
-        resp = requests.post(
-            OLLAMA_URL,
-            json={
-                "model":      REPORT_MODEL,
-                "prompt":     prompt,
-                "stream":     False,
-                "keep_alive": _OLLAMA_KEEP_ALIVE,
-                "options":    {"num_ctx": 1024, "temperature": 0.2},
-            },
-            timeout=OLLAMA_TIMEOUT,
-        )
-        raw = resp.json().get("response", "").strip()
-        raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
-        m = re.search(r"\{.*\}", raw, re.DOTALL)
-        if m:
-            obj = json.loads(m.group(0))
-            short_steps = obj.get("short_steps", [])
-            long_steps  = obj.get("long_steps",  [])
-            if isinstance(short_steps, list) and short_steps:
-                f.llm_remediation_short = json.dumps(short_steps)
-            if isinstance(long_steps, list) and long_steps:
-                f.llm_remediation_long  = json.dumps(long_steps)
-    except Exception:
-        pass  # Leave fields empty — template falls back to static map
+        for attempt in range(MAX_LLM_RETRIES):
+            try:
+                resp = requests.post(
+                    OLLAMA_URL,
+                    json={
+                        "model":      REPORT_MODEL,
+                        "prompt":     prompt,
+                        "stream":     False,
+                        "keep_alive": _OLLAMA_KEEP_ALIVE,
+                        "options":    {"num_ctx": 2048, "temperature": 0.2, "num_predict": 800},
+                    },
+                    timeout=OLLAMA_TIMEOUT,
+                )
+                raw = resp.json().get("response", "").strip()
+                raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+                raw = re.sub(r"<think>.*", "", raw, flags=re.DOTALL).strip()  # strip unclosed think blocks
+                m = re.search(r"\{.*\}", raw, re.DOTALL)
+                if m:
+                    obj = json.loads(m.group(0))
+                    short_steps = obj.get("short_steps", [])
+                    long_steps  = obj.get("long_steps",  [])
+                    if isinstance(short_steps, list) and short_steps:
+                        f.llm_remediation_short = json.dumps(short_steps)
+                    if isinstance(long_steps, list) and long_steps:
+                        f.llm_remediation_long  = json.dumps(long_steps)
+                if f.llm_remediation_short:
+                    break  # populated — no need to retry
+            except requests.exceptions.Timeout:
+                if attempt < MAX_LLM_RETRIES - 1:
+                    time.sleep(2)
+            except Exception:
+                break  # non-retriable error
     finally:
         _sp.stop(f" done ({_fmt_dur(time.monotonic() - _t0)})")
 
@@ -9275,7 +9283,7 @@ def _generate_attacker_perspective(cve: dict) -> str:
                 "prompt":     prompt,
                 "stream":     False,
                 "keep_alive": _OLLAMA_KEEP_ALIVE,
-                "options":    {"num_ctx": 2048, "temperature": 0.2},
+                "options":    {"num_ctx": 2048, "temperature": 0.2, "num_predict": 300},
             },
             timeout=OLLAMA_TIMEOUT,
         )
@@ -9552,7 +9560,7 @@ def _audit_report(report: dict, _pass: int = 1) -> dict:
                 "prompt":     prompt,
                 "stream":     False,
                 "keep_alive": _OLLAMA_KEEP_ALIVE,
-                "options":    {"num_ctx": 4096, "temperature": 0.2},
+                "options":    {"num_ctx": 4096, "temperature": 0.2, "num_predict": 500},
             },
             timeout=OLLAMA_TIMEOUT,
         )
@@ -9668,7 +9676,7 @@ def _build_conclusion_with_cve(report: dict, target: str) -> tuple:
                 "model":      REPORT_MODEL,
                 "stream":     False,
                 "keep_alive": _OLLAMA_KEEP_ALIVE,
-                "options":    {"num_ctx": 4096, "temperature": 0.3},
+                "options":    {"num_ctx": 4096, "temperature": 0.3, "num_predict": 600},
                 "prompt": (
                     "/no_think\n"
                     "You are a professional penetration tester writing an executive summary "
