@@ -507,6 +507,12 @@ The worker is already deployed at `https://noctis-kb-relay.pearcetechnologies1.w
 
 ## Version History
 
+## What's New in v0.9.2
+
+- **Bug fix — executive summary cold-load timeout eliminated:** The executive summary LLM call (`qwen3:4b`) is now deferred to run *after* `_enrich_finding_remediation()` rather than before it. By the time the summary is generated, `qwen3:4b` has already been actively used for per-finding remediation and is resident in Ollama's model cache — the cold-load penalty no longer applies. The background warmup thread (`_preload_report_model`) has been removed entirely as it is no longer needed. Previously, on short scans where `qwen3:4b` was never previously loaded, the combined cold-load + inference time routinely exceeded the 360 s `OLLAMA_TIMEOUT`, producing the error `Conclusion LLM error: Read timed out` and falling back to the deterministic anchor sentence only.
+- **Bug fix — executive summary retry loop silently gave up after 1 attempt:** The `except` block in the executive summary retry loop contained an unconditional `break`, meaning transient errors were never retried despite `MAX_LLM_RETRIES = 3`. The break is removed; each attempt now logs `Conclusion LLM error (attempt N/3)` and sleeps 2 s before the next retry.
+- **Bug fix — CVE verifier scripts blind to winning probe:** `_generate_verification_script()` previously received only a one-sentence strategy string from the triggering attempt. The verifier prompt now includes the full source code of the winning probe (up to 800 chars) and its terminal output (up to 400 chars). The LLM can now read exactly what request was made and what evidence was observed, enabling a genuinely orthogonal verification approach rather than defaulting to the generic TCP banner template. The CONTRAST RULE in the prompt has been updated with concrete examples (e.g. if reference used HTTP GET → use raw socket; if it matched a header → match a response body).
+
 ## What's New in v0.9.1
 
 - **Expanded NSE script coverage (23 → 36 service entries):** `_NSE_SCRIPT_MAP` now covers a wider range of services and provides richer script selection for each.
