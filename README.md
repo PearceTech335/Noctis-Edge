@@ -507,6 +507,16 @@ The worker is already deployed at `https://noctis-kb-relay.pearcetechnologies1.w
 
 ## Version History
 
+## What's New in v0.9.4
+
+- **Bug fix — empty `attacker_perspective` on all CVE matches:** Two root causes were eliminated. (1) `_generate_attacker_perspective()` (qwen3:1.7b) had no `<think>` stripping, so when the model ignored `/no_think` and emitted internal reasoning the entire response was discarded as the raw output. The function now strips both closed and unclosed `<think>` blocks, retries up to `MAX_LLM_RETRIES`, applies a stronger directive (`"Output the answer directly. Do not include any reasoning or <think> tags."`), and `num_predict` was raised from 300 to 900. (2) The Phase 2 perspective loop lived inside `_run_cve_test_phase()`, which is gated on `if CVE_TEST:` (off unless `--cve-test` is set), so on every normal scan the loop never ran. Phase 2 has been extracted into a standalone `generate_cve_attacker_perspectives()` function that is now invoked unconditionally in the main scan flow before report audit. Test scans now produce 800-950 char perspectives for every CRITICAL/HIGH/MEDIUM CVE.
+- **Bug fix — report audit returning empty `audit_notes` (`conclusion_audited: False`):** `_audit_report()` (qwen3:1.7b) was emitting `<think>` content that consumed its entire `num_predict: 350` budget, leaving an empty response after stripping. The audit prompt has been simplified to a notes-only contract (dropped full-rewrite path), the data digest trimmed to top-5 findings + top-5 CVEs (was 8 + 10), `num_predict` raised to 800, both closed and unclosed `<think>` blocks stripped, the same `"Output the answer directly..."` directive added, and a plain-text regex fallback added so a non-JSON response still produces usable notes.
+- **Bug fix — executive summary truncated mid-sentence:** Reduced the prose target from 4 paragraphs × 3-5 sentences to 3 paragraphs × 2-4 sentences, raised `num_predict` from 600 to 1000, and added `<think>` stripping. Previously qwen3:1.7b would consistently cut off mid-clause (e.g. `"...missing headers like"`) when its budget was exhausted by reasoning tokens.
+
+## What's New in v0.9.3
+
+- Internal release used during v0.9.4 LLM-quality investigation. Tag retained on `master` at commit `c5c9614`.
+
 ## What's New in v0.9.2
 
 - **Bug fix — executive summary cold-load timeout eliminated:** The executive summary LLM call (`qwen3:4b`) is now deferred to run *after* `_enrich_finding_remediation()` rather than before it. By the time the summary is generated, `qwen3:4b` has already been actively used for per-finding remediation and is resident in Ollama's model cache — the cold-load penalty no longer applies. The background warmup thread (`_preload_report_model`) has been removed entirely as it is no longer needed. Previously, on short scans where `qwen3:4b` was never previously loaded, the combined cold-load + inference time routinely exceeded the 360 s `OLLAMA_TIMEOUT`, producing the error `Conclusion LLM error: Read timed out` and falling back to the deterministic anchor sentence only.

@@ -12,7 +12,7 @@ EPSS exploit-probability scoring, NVD CVSS offline database,
 NIST CSF 2.0 compliance mapping, and OT/ICS asset classification.
 """
 
-VERSION = "v0.9.3"
+VERSION = "v0.9.4"
 
 import asyncio
 import dataclasses
@@ -5898,29 +5898,27 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
                     OLLAMA_URL,
                     json={"model": REPORT_MODEL, "stream": False,
                           "keep_alive": _OLLAMA_KEEP_ALIVE,
-                          "options":    {"num_ctx": 2048, "temperature": 0.3, "num_predict": 600},
+                          "options":    {"num_ctx": 2048, "temperature": 0.3, "num_predict": 1000},
                           "prompt": (
                               "/no_think\n"
                               "You are a professional penetration tester writing an executive summary "
                               "for a client-facing security assessment report. "
-                              "Write exactly 4 paragraphs of professional prose in plain text. "
+                              "Write exactly 3 paragraphs of professional prose in plain text. "
                               "No bullet points, no headings, no markdown, no numbered lists. "
-                              "Each paragraph must be 3-5 sentences. Use plain business language \u2014 "
+                              "Each paragraph must be 2-4 sentences. Use plain business language \u2014 "
                               "avoid marketing terms, acronym soup, and vendor jargon. "
-                              "Paragraph 1: Describe the scope of the assessment \u2014 what was tested, "
-                              "what services were discovered, and how many issues were identified overall. "
-                              "Give the reader a clear sense of how exposed this system is without "
-                              "overstating or understating the risk. "
-                              "Paragraph 2: Walk through the finding categories \u2014 what types of weaknesses "
-                              "were found (unpatched software, configuration problems, exposed services, "
-                              "weak authentication), which services carry the most risk, and what the "
-                              "spread of severity levels tells us about the overall security posture. "
-                              "Paragraph 3: Identify the 2-3 most serious issues by name and explain in "
-                              "plain terms what an attacker could realistically do if they exploited them "
-                              "and what the business consequence would be. Focus on impact, not technique. "
-                              "Paragraph 4: Summarise the remediation urgency \u2014 what needs to be addressed "
-                              "within days versus weeks, and whether any findings represent systemic "
-                              "weaknesses that point to a broader process or policy gap. "
+                              "Paragraph 1: Describe the scope of the assessment and the finding "
+                              "categories \u2014 what was tested, what services were discovered, the "
+                              "main types of weakness identified (unpatched software, configuration "
+                              "problems, exposed services, weak authentication), and what the "
+                              "spread of severities says about the overall posture. "
+                              "Paragraph 2: Identify the 2-3 most serious issues by name and explain "
+                              "in plain terms what an attacker could realistically do if they "
+                              "exploited them and what the business consequence would be. Focus on "
+                              "impact, not technique. "
+                              "Paragraph 3: Summarise remediation urgency \u2014 what needs to be "
+                              "addressed within days versus weeks, and whether any findings represent "
+                              "systemic weaknesses that point to a broader process or policy gap. "
                               "Do NOT repeat the opening sentence verbatim. "
                               "Do not add disclaimers, questions, or sign-offs. "
                               f"Opening sentence (incorporate naturally, do not repeat verbatim): {_anchor} "
@@ -5931,6 +5929,10 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
                 payload = resp.json()
                 if "response" in payload:
                     raw = payload["response"].strip()
+                    # Strip closed and unclosed <think> blocks — qwen3 can leak reasoning
+                    # even with /no_think; unclosed = output truncated mid-think.
+                    raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+                    raw = re.sub(r"<think>.*", "", raw, flags=re.DOTALL).strip()
                     clean_lines = []
                     for line in raw.splitlines():
                         stripped = line.strip()
@@ -9253,10 +9255,11 @@ def _enrich_finding_remediation(f) -> None:
 def _generate_attacker_perspective(cve: dict) -> str:
     """
     Ask the LLM for a brief threat-actor narrative: how would an attacker exploit
-    this CVE and what could they gain?  Returns plain text or a short fallback.
+    this CVE and what could they gain?  Returns plain text or empty on failure.
     """
     prompt = (
         "/no_think\n"
+        "Output the answer directly. Do not include any reasoning or <think> tags.\n\n"
         f"You are a senior penetration tester writing the threat narrative section of a "
         f"client report.\n\n"
         f"CVE ID:        {cve.get('cve_id', 'Unknown')}\n"
@@ -9265,33 +9268,47 @@ def _generate_attacker_perspective(cve: dict) -> str:
         f"Service:       {cve.get('service', '')}\n"
         f"Vuln type:     {cve.get('vulnerability_type', '')}\n\n"
         "In plain text (no markdown, no bullet symbols), write two short paragraphs:\n"
-        "1. How a real attacker would discover and exploit this vulnerability — initial "
+        "1. How a real attacker would discover and exploit this vulnerability \u2014 initial "
         "access method, tools or techniques likely used, and what level of skill is required.\n"
-        "2. What an attacker could gain once exploitation succeeds — data exposed, "
+        "2. What an attacker could gain once exploitation succeeds \u2014 data exposed, "
         "credentials or tokens at risk, potential for lateral movement or privilege "
         "escalation, and the realistic business impact if this is left unpatched.\n\n"
         "Be specific to the vulnerability type. Keep each paragraph to 2-4 sentences. "
-        "Plain text only."
+        "Plain text only. Begin your answer immediately."
     )
     _t0 = time.monotonic()
     _sp = _Spinner(f"[ LLM ]  Generating attacker perspective for {cve.get('cve_id', 'CVE')} ...").start()
+    text = ""
     try:
-        resp = requests.post(
-            OLLAMA_URL,
-            json={
-                "model":      REPORT_MODEL,
-                "prompt":     prompt,
-                "stream":     False,
-                "keep_alive": _OLLAMA_KEEP_ALIVE,
-                "options":    {"num_ctx": 2048, "temperature": 0.2, "num_predict": 300},
-            },
-            timeout=OLLAMA_TIMEOUT,
-        )
-        payload = resp.json()
-        text = payload.get("response", "").strip()
-        return text if text else ""
-    except Exception:
-        return ""
+        for attempt in range(MAX_LLM_RETRIES):
+            try:
+                resp = requests.post(
+                    OLLAMA_URL,
+                    json={
+                        "model":      REPORT_MODEL,
+                        "prompt":     prompt,
+                        "stream":     False,
+                        "keep_alive": _OLLAMA_KEEP_ALIVE,
+                        # num_predict 900 — large enough that even if /no_think
+                        # is ignored and the model emits a <think> block, there is
+                        # still budget left for the actual answer after the strip.
+                        "options":    {"num_ctx": 2048, "temperature": 0.2, "num_predict": 900},
+                    },
+                    timeout=OLLAMA_TIMEOUT,
+                )
+                raw = resp.json().get("response", "").strip()
+                # Strip closed and unclosed <think> blocks
+                raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+                raw = re.sub(r"<think>.*", "", raw, flags=re.DOTALL).strip()
+                if raw:
+                    text = raw
+                    break
+            except requests.exceptions.Timeout:
+                if attempt < MAX_LLM_RETRIES - 1:
+                    time.sleep(2)
+            except Exception:
+                break
+        return text
     finally:
         _sp.stop(f" done ({_fmt_dur(time.monotonic() - _t0)})")
 
@@ -9413,6 +9430,32 @@ def _derive_evidence_type(result: dict) -> str:
     return "Banner Analysis"
 
 
+def generate_cve_attacker_perspectives(cve_matches: list) -> int:
+    """
+    Generate attacker_perspective narrative for all CRITICAL/HIGH/MEDIUM cve_matches
+    that don't already have one.  Runs unconditionally (no --cve-test required) so
+    the CVE Matches section of the report always has narrative context.
+
+    Mutates each cve_match dict in place.  Returns the number of LLM failures.
+    """
+    _failed = 0
+    perspective_severities = {"CRITICAL", "HIGH", "MEDIUM"}
+    targets = [
+        c for c in cve_matches
+        if c.get("severity", "").upper() in perspective_severities
+        and not c.get("attacker_perspective")
+    ]
+    if not targets:
+        return 0
+    print(f"\n[REMEDIATION] Generating attacker perspective for {len(targets)} CVE match(es) ...")
+    for cve_rec in targets:
+        cve_rec["attacker_perspective"] = _generate_attacker_perspective(cve_rec)
+        if not cve_rec["attacker_perspective"]:
+            _failed += 1
+        print(f"  [+] Attacker perspective written for {cve_rec['cve_id']}")
+    return _failed
+
+
 def generate_cve_remediations(cve_test_results: list, cve_matches: list) -> int:
     """
     For each CVE test result that is VULNERABLE or CONFIRMED_VULNERABLE, look up the
@@ -9451,23 +9494,10 @@ def generate_cve_remediations(cve_test_results: list, cve_matches: list) -> int:
                 cve_meta[cve_id]["attacker_perspective"]  = result["attacker_perspective"]
             print(f"  [+] Immediate remediation + attacker perspective + remediation written for {cve_id}")
 
-    # ── Phase 2: attacker perspective for untested CRITICAL/HIGH/MEDIUM CVEs ─
-    # CVEs skipped during active testing (e.g. requires_auth=True) still need
-    # the attacker narrative so it appears in the CVE Matches section of the report.
-    tested_ids = {r["cve_id"] for r in cve_test_results}
-    perspective_severities = {"CRITICAL", "HIGH", "MEDIUM"}
-    untested = [
-        c for c in cve_matches
-        if c["cve_id"] not in tested_ids
-        and c.get("severity", "").upper() in perspective_severities
-        and not c.get("attacker_perspective")
-    ]
-    if untested:
-        print(f"\n[REMEDIATION] Generating attacker perspective for {len(untested)} untested CVE(s) ...")
-        for cve_rec in untested:
-            cve_rec["attacker_perspective"] = _generate_attacker_perspective(cve_rec)
-            if not cve_rec["attacker_perspective"]: _cve_llm_failed += 1
-            print(f"  [+] Attacker perspective written for {cve_rec['cve_id']}")
+    # ── Phase 2: attacker perspective for any remaining untested CVEs ───────
+    # Delegates to generate_cve_attacker_perspectives which is also called
+    # outside this function when --cve-test is not enabled.
+    _cve_llm_failed += generate_cve_attacker_perspectives(cve_matches)
 
     return _cve_llm_failed
 
@@ -9476,13 +9506,13 @@ def _audit_report(report: dict, _pass: int = 1) -> dict:
     """
     Proof-read the completed report by feeding a compact text digest back to
     REPORT_MODEL.  The model checks factual accuracy (counts, CVE verdicts),
-    internal consistency, and professional tone.  If corrections are needed it
-    rewrites the executive summary; either way it returns brief audit notes.
+    internal consistency, and professional tone, then returns brief audit notes.
 
-    If pass 1 made a revision, a second pass is run automatically to verify the
-    rewrite is itself consistent — ensuring corrections didn't introduce new issues.
-    At most 2 passes total; the second pass is skipped entirely when pass 1 finds
-    nothing to fix.  Non-fatal — returns report unchanged on any failure.
+    Notes-only contract: the audit produces a short assessment string for the
+    report (visible in the HTML "Report Audit" collapsible).  It does NOT
+    rewrite the conclusion — small report models (qwen3:1.7b) cannot reliably
+    embed multi-paragraph prose inside a JSON string without breaking escapes.
+    Non-fatal — returns report unchanged on any failure.
     """
     conclusion = report.get("conclusion", "")
     if not conclusion:
@@ -9493,65 +9523,49 @@ def _audit_report(report: dict, _pass: int = 1) -> dict:
     cve_results = report.get("cve_test_results", [])
     cve_matches = report.get("cve_matches", [])
 
-    # Compact finding digest — top 8 by risk_score
-    top_findings = sorted(findings, key=lambda x: x.get("risk_score", 0), reverse=True)[:8]
-    finding_lines = []
-    for _f in top_findings:
-        _short = ""
-        try:
-            _steps = json.loads(_f.get("llm_remediation_short", "") or "[]")
-            if _steps:
-                _short = _steps[0][:80]
-        except Exception:
-            pass
-        finding_lines.append(
-            f"  - [{_f.get('severity','?').upper()}] {_f.get('title','')}"
-            + (f" | Fix: {_short}" if _short else "")
-        )
+    # Compact finding digest — top 5 by risk_score
+    top_findings = sorted(findings, key=lambda x: x.get("risk_score", 0), reverse=True)[:5]
+    finding_lines = [
+        f"  - [{_f.get('severity','?').upper()}] {_f.get('title','')[:80]}"
+        for _f in top_findings
+    ]
 
-    # Compact CVE digest
+    # Compact CVE digest — top 5
     _result_lookup = {r["cve_id"]: r for r in cve_results}
     cve_lines = []
-    for _cm in (cve_matches or [])[:10]:
+    for _cm in (cve_matches or [])[:5]:
         _cid     = _cm.get("cve_id", "")
         _verdict = _result_lookup.get(_cid, {}).get("overall_verdict", "UNVERIFIED")
-        _persp   = _cm.get("attacker_perspective", "") or ""
-        _sent    = (_persp.split(".")[0] + ".") if "." in _persp else _persp[:100]
-        cve_lines.append(
-            f"  - {_cid} ({_cm.get('severity','?').upper()}) verdict={_verdict}"
-            + (f" | {_sent}" if _sent else "")
-        )
+        cve_lines.append(f"  - {_cid} ({_cm.get('severity','?').upper()}) verdict={_verdict}")
 
     digest = (
         f"EXECUTIVE SUMMARY:\n{conclusion}\n\n"
         f"FINDING COUNTS: critical={counts.get('critical',0)} high={counts.get('high',0)} "
         f"medium={counts.get('medium',0)} low={counts.get('low',0)}\n\n"
         "TOP FINDINGS:\n" + "\n".join(finding_lines or ["  (none)"]) + "\n\n"
-        + ("CVE RESULTS:\n" + "\n".join(cve_lines) + "\n\n" if cve_lines else "")
+        + ("CVE MATCHES:\n" + "\n".join(cve_lines) + "\n\n" if cve_lines else "")
     )
 
     prompt = (
         "/no_think\n"
-        "You are a senior technical editor auditing a completed penetration test report "
-        "before delivery to a client.\n\n"
-        "Review the executive summary against the data digest below. Check for:\n"
-        "1. Factual accuracy — do the finding counts mentioned match the actual counts?\n"
-        "2. CVE accuracy — are CVE verdicts (CONFIRMED_VULNERABLE, NOT_VULNERABLE, UNVERIFIED) "
-        "correctly reflected?\n"
-        "3. Internal consistency — does the summary contradict itself or omit a critical issue?\n"
-        "4. Professional tone — is the language appropriate for a client-facing report?\n\n"
-        "If corrections are needed, rewrite the full executive summary (all 4 paragraphs, "
-        "plain text only, no markdown, no bullet points, no headings). "
-        "If no corrections are needed set revised_conclusion to an empty string.\n\n"
-        'Return ONLY valid JSON — no text outside the object:\n'
-        '{"revised_conclusion": "<rewritten text or empty string>", '
-        '"audit_notes": "<1-3 sentences: what was checked and any corrections made>"}\n\n'
+        "Output the answer directly. Do not include any reasoning or <think> tags.\n\n"
+        "You are a senior technical editor auditing the executive summary of a "
+        "completed penetration test report before delivery.\n\n"
+        "Check the executive summary against the data digest. Specifically verify:\n"
+        "1. Do the finding counts mentioned in the summary match the actual counts?\n"
+        "2. Are the most serious findings (top of digest) reflected appropriately?\n"
+        "3. Are any CVE matches mentioned with accurate verdicts?\n"
+        "4. Is the prose professional, complete (not truncated), and free of contradictions?\n\n"
+        'Return ONLY a JSON object — no prose outside it, no markdown fences:\n'
+        '{"needs_revision": true|false, "audit_notes": "<2-3 sentence assessment>"}\n\n'
+        "audit_notes should briefly state what you checked and either confirm the summary "
+        "is accurate or describe the specific issue found. Keep it concise and on a single line. "
+        "Begin your answer immediately.\n\n"
         f"DATA DIGEST:\n{digest}"
     )
 
-    _pass_label = f"pass {_pass}/2" if _pass > 1 else "pass 1"
     _t0 = time.monotonic()
-    _sp = _Spinner(f"[ LLM ]  Auditing report for coherence ({_pass_label}) ...").start()
+    _sp = _Spinner("[ LLM ]  Auditing report for coherence ...").start()
     try:
         resp = requests.post(
             OLLAMA_URL,
@@ -9560,33 +9574,38 @@ def _audit_report(report: dict, _pass: int = 1) -> dict:
                 "prompt":     prompt,
                 "stream":     False,
                 "keep_alive": _OLLAMA_KEEP_ALIVE,
-                "options":    {"num_ctx": 4096, "temperature": 0.2, "num_predict": 500},
+                "options":    {"num_ctx": 3072, "temperature": 0.2, "num_predict": 800},
             },
             timeout=OLLAMA_TIMEOUT,
         )
         raw = resp.json().get("response", "").strip()
+        # Strip closed and unclosed <think> blocks
         raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
-        _m = re.search(r"\{.*\}", raw, re.DOTALL)
+        raw = re.sub(r"<think>.*", "", raw, flags=re.DOTALL).strip()
+        _m = re.search(r"\{.*?\}", raw, re.DOTALL)
         if _m:
-            obj     = json.loads(_m.group(0))
-            revised = obj.get("revised_conclusion", "").strip()
-            notes   = obj.get("audit_notes", "").strip()
-            report["conclusion_audited"] = True
-            if notes:
-                # Append pass-2 notes after pass-1 notes with a separator
-                prior = report.get("audit_notes", "")
-                report["audit_notes"] = (f"{prior}  Pass 2: {notes}" if prior and _pass > 1 else notes)
-            if revised:
-                report["conclusion"]         = revised
-                report["conclusion_revised"] = True
+            try:
+                obj   = json.loads(_m.group(0))
+                notes = (obj.get("audit_notes", "") or "").strip()
+                needs = bool(obj.get("needs_revision", False))
+                report["conclusion_audited"] = True
+                if notes:
+                    report["audit_notes"]        = notes
+                    report["conclusion_revised"] = needs  # flag only; no rewrite
+            except json.JSONDecodeError:
+                _m = None  # fall through to plain-text path
+        if not _m and raw:
+            # Plain-text fallback — qwen3:1.7b often returns notes without JSON braces.
+            # Strip any leading "audit_notes:" / "Notes:" labels and keep first ~400 chars.
+            txt = re.sub(r"^\s*(audit[_\s]?notes|notes)\s*[:\-]\s*", "", raw, flags=re.IGNORECASE).strip()
+            txt = txt.strip('"\' \t\n')
+            if txt:
+                report["conclusion_audited"] = True
+                report["audit_notes"]        = txt[:400]
     except Exception as e:
-        print(f"[!] Report audit error (pass {_pass}): {e}")
+        print(f"[!] Report audit error: {e}")
     finally:
         _sp.stop(f" done ({_fmt_dur(time.monotonic() - _t0)})")
-
-    # If pass 1 made a revision, run one verification pass on the rewrite
-    if _pass == 1 and report.get("conclusion_revised"):
-        report = _audit_report(report, _pass=2)
 
     return report
 
@@ -10370,6 +10389,12 @@ async def main_async():
 
     json_path = os.path.join(session_dir, f"report_{safe_tgt}.json")
     html_path = os.path.join(session_dir, f"report_{safe_tgt}.html")
+
+    # Generate attacker_perspective for matched CVEs regardless of --cve-test —
+    # the CVE Matches narrative is informational and should always populate when
+    # CRITICAL/HIGH/MEDIUM CVEs are present.  Phase 1 (immediate remediation +
+    # remediation steps) is still gated on --cve-test inside _run_cve_test_phase.
+    report["cve_llm_failed"] = generate_cve_attacker_perspectives(report.get("cve_matches", []))
 
     if not CVE_TEST:
         # No CVE phase follows — audit now so the final files include any corrections
