@@ -9221,7 +9221,7 @@ def _enrich_finding_remediation(f) -> None:
                         "prompt":     prompt,
                         "stream":     False,
                         "keep_alive": _OLLAMA_KEEP_ALIVE,
-                        "options":    {"num_ctx": 2048, "temperature": 0.2, "num_predict": 800},
+                        "options":    {"num_ctx": 2048, "temperature": 0.2, "num_predict": 350},
                     },
                     timeout=OLLAMA_TIMEOUT,
                 )
@@ -9289,10 +9289,9 @@ def _generate_attacker_perspective(cve: dict) -> str:
                         "prompt":     prompt,
                         "stream":     False,
                         "keep_alive": _OLLAMA_KEEP_ALIVE,
-                        # num_predict 900 — large enough that even if /no_think
-                        # is ignored and the model emits a <think> block, there is
-                        # still budget left for the actual answer after the strip.
-                        "options":    {"num_ctx": 2048, "temperature": 0.2, "num_predict": 900},
+                        # num_predict 500 — enough for 2×4-sentence paragraphs plus
+                        # a small buffer for any stray <think> tokens before the strip.
+                        "options":    {"num_ctx": 2048, "temperature": 0.2, "num_predict": 500},
                     },
                     timeout=OLLAMA_TIMEOUT,
                 )

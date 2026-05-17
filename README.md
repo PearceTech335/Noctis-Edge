@@ -511,9 +511,10 @@ The worker is already deployed at `https://noctis-kb-relay.pearcetechnologies1.w
 
 ### What's New in v0.9.4
 
-- **Fix — empty CVE attacker perspectives:** `_generate_attacker_perspective()` now strips `<think>` blocks, retries up to `MAX_LLM_RETRIES`, and applies a stronger no-reasoning directive. The perspective generation loop has been extracted from `_run_cve_test_phase()` (which only ran with `--cve-test`) into a standalone `generate_cve_attacker_perspectives()` function called unconditionally on every scan.
+- **Fix — empty CVE attacker perspectives:** `_generate_attacker_perspective()` now strips `<think>` blocks, retries up to `MAX_LLM_RETRIES`, and applies a stronger no-reasoning directive. The perspective generation loop has been extracted from `_run_cve_test_phase()` (which only ran with `--cve-test`) into a standalone `generate_cve_attacker_perspectives()` function called unconditionally on every scan. `num_predict` set to 500 (sufficient for 2 × 4-sentence paragraphs on qwen3:1.7b without exceeding the 600s timeout).
 - **Fix — report audit returning empty notes:** `_audit_report()` prompt simplified to notes-only, digest trimmed to top-5 findings + top-5 CVEs, `num_predict` raised to 800, `<think>` stripping added, plain-text fallback for non-JSON responses.
 - **Fix — executive summary truncated mid-sentence:** Prose target reduced from 4 × 3-5 sentences to 3 × 2-4 sentences, `num_predict` raised from 600 to 1000, `<think>` stripping added.
+- **Fix — per-finding remediation exceeding 600s timeout:** `_enrich_finding_remediation()` `num_predict` reduced from 800 to 350. At qwen3:1.7b's ~1 t/s CPU speed, 800 tokens ≈ 13 minutes per finding (18 findings ≈ 3.9 hours). 350 tokens is sufficient for 6 concise bullet steps in JSON and reduces per-finding time to ~6 minutes, keeping all calls within the `OLLAMA_TIMEOUT` budget.
 
 For the full history of all releases see [version_history.md](version_history.md).
 - **`update.sh` step 11 — tool manifest pull:** New update step downloads `tool_manifest.json` from the relay endpoint (`/tool-manifest`) for subscribers. Validates JSON before overwriting the local copy. Existing step count updated to 11/11.
