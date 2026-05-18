@@ -13,8 +13,12 @@ venv/
 # Large wordlists (not needed — program uses system SecLists)
 WordLists/rockyou.txt
 
-# CVE Knowledge Base (JSON file - machine specific accumulated data)
+# CVE Knowledge Base — machine-specific accumulated data (single-file legacy format)
 cve_knowledge_base.json
+
+# CVE KB shards — paid-subscriber community knowledge base, local resource only
+# Populated by update.sh when KB_LICENSE_KEY is set; never committed to the public repo
+CVE_KB/
 
 # Nuclei KB (same pattern — runtime accumulated data, not source)
 nuclei_kb.json
