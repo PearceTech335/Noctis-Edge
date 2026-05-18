@@ -466,6 +466,14 @@ if [[ -d "$SCRIPT_DIR/.git" ]]; then
         $_DC up -d --no-deps noctis \
             && ok "noctis container restarted with new image" \
             || err "Container restart failed — run '$_DC up -d noctis' manually"
+    elif [[ -f "$SCRIPT_DIR/docker-compose.yml" ]]; then
+        # Running inside a Docker container — Docker CLI is not available from here.
+        # Write a sentinel into the bind-mounted sessions/ directory so the host
+        # launcher (docker-run.ps1 / docker-run.sh) automatically rebuilds the
+        # image the next time it is invoked.
+        mkdir -p "$SCRIPT_DIR/sessions"
+        touch "$SCRIPT_DIR/sessions/.pending_rebuild"
+        ok "Sentinel written — image will rebuild automatically next time you run docker-run.ps1 / docker-run.sh"
     fi
 else
     info "No .git directory found — skipping self-update"

@@ -88,10 +88,11 @@ try {
 
 # ---------------------------------------------------------------------------
 # 2. Build the image -- only when necessary
-#    * First run  : image does not exist yet          -> build
-#    * After pull : git HEAD changed                  -> rebuild for new code
-#    * No changes : same HEAD, image already exists   -> skip (saves ~10 min)
-#    * --rebuild  : force a full rebuild              -> .\docker-run.ps1 --rebuild
+#    * First run   : image does not exist yet                  -> build
+#    * After pull  : git HEAD changed                          -> rebuild for new code
+#    * No changes  : same HEAD, image already exists           -> skip (saves ~10 min)
+#    * --rebuild   : force a full rebuild                      -> .\docker-run.ps1 --rebuild
+#    * Sentinel    : sessions\.pending_rebuild exists          -> rebuild (update.sh ran inside container)
 # ---------------------------------------------------------------------------
 Write-Header "2/5  Building Noctis Edge Docker image"
 $forceRebuild = $args -contains "--rebuild"
@@ -99,6 +100,15 @@ $imageExists  = $false
 docker image inspect noctis-edge:latest 2>$null | Out-Null
 if ($LASTEXITCODE -eq 0) { $imageExists = $true }
 $codeChanged  = ($gitBefore -ne "" -and $gitAfter -ne "" -and $gitBefore -ne $gitAfter)
+
+# Consume the sentinel written by update.sh when it ran inside the container.
+# The sessions/ directory is bind-mounted, so the file is visible on the host.
+$sentinelFile = Join-Path $SCRIPT_DIR "sessions\.pending_rebuild"
+if (Test-Path $sentinelFile) {
+    Write-Info "Pending rebuild detected (update.sh ran inside container) -- rebuilding image"
+    Remove-Item $sentinelFile -Force
+    $forceRebuild = $true
+}
 
 if ($forceRebuild -or -not $imageExists -or $codeChanged) {
     if (-not $imageExists) {
