@@ -307,6 +307,10 @@ if command -v ollama &>/dev/null; then
             || err "$OLLAMA_REPORT_MODEL pull failed"
     else
         info "Ollama server not running — starting temporarily ..."
+        # Performance env vars — apply on native Linux installs too. Safe no-ops
+        # on CPUs / versions that don't support the underlying optimisation.
+        export OLLAMA_KEEP_ALIVE="${OLLAMA_KEEP_ALIVE:-1h}"
+        export OLLAMA_FLASH_ATTENTION="${OLLAMA_FLASH_ATTENTION:-1}"
         ollama serve &>/dev/null &
         OLLAMA_PID=$!
         info "Waiting up to 30s for Ollama to become ready ..."
@@ -491,7 +495,7 @@ fi
 # =============================================================================
 header "9/10  CVE Knowledge Base sync"
 
-KB_LOCAL="$SCRIPT_DIR/cve_knowledge_base.json"
+KB_LOCAL="$SCRIPT_DIR/CVE_KB"
 VENV="$SCRIPT_DIR/.venv"
 PYTHON="${VENV}/bin/python3"
 [[ -f "$PYTHON" ]] || PYTHON="python3"
@@ -510,39 +514,19 @@ else
 fi
 
 # ── Pull community KB (subscribers only) ────────────────────────────────────────
+# pull_community_kb.py fetches the shard manifest first, then downloads every
+# shard individually and merges them into CVE_KB/.  This ensures the full KB
+# is present on disk before going airgapped — no lazy-loading required.
 if [[ -z "$KB_LICENSE_KEY" ]]; then
     promo "Community KB pull skipped — KB_LICENSE_KEY not set in noctis.conf"
     promo "Unlock community CVE intelligence: https://noctisedge.lemonsqueezy.com"
 else
     info "Pulling community CVE knowledge base (license key found) ..."
     _RELAY="https://noctis-kb-relay.pearcetechnologies1.workers.dev"
-    _TMP_KB="/tmp/_noctis_community_kb_$$.json"
-    HTTP_CODE=$(curl -sS -w "%{http_code}" -o "$_TMP_KB" \
-        --max-time 30 \
-        -X POST "$_RELAY/community-kb" \
-        -H "Content-Type: application/json" \
-        -d "{\"license_key\":\"$KB_LICENSE_KEY\"}" 2>/dev/null)
-    CURL_EXIT=$?
-    if [[ "$CURL_EXIT" != "0" ]]; then
-        err "Community KB download failed (curl error $CURL_EXIT) — will retry on next update"
-        rm -f "$_TMP_KB"
-    elif [[ "$HTTP_CODE" == "200" ]]; then
-        MERGE_OUTPUT=$("$PYTHON" "$SCRIPT_DIR/scripts/merge_kb.py" \
-            "$_TMP_KB" "$KB_LOCAL" 2>&1)
-        MERGE_EXIT=$?
-        if [[ "$MERGE_EXIT" == "0" ]]; then
-            ok "Community KB merged: $MERGE_OUTPUT"
-        else
-            err "KB merge failed: $MERGE_OUTPUT"
-        fi
-        rm -f "$_TMP_KB"
-    elif [[ "$HTTP_CODE" == "403" ]]; then
-        err "License key rejected — check your subscription at https://noctisedge.lemonsqueezy.com"
-        rm -f "$_TMP_KB"
-    else
-        err "Community KB download failed (HTTP $HTTP_CODE) — will retry on next update"
-        rm -f "$_TMP_KB"
-    fi
+    "$PYTHON" "$SCRIPT_DIR/scripts/pull_community_kb.py" \
+        "$_RELAY" "$KB_LICENSE_KEY" "$KB_LOCAL" \
+        && ok "Community KB pull complete" \
+        || err "Community KB pull failed — will retry on next update"
 fi
 
 ok "KB sync done"

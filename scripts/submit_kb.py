@@ -7,6 +7,10 @@ Noctis Edge — CVE Knowledge Base Submission Tool
 
 Usage: submit_kb.py <kb_path> <user_id> [relay_url]
 
+kb_path may be either:
+  - A JSON file (e.g. cve_knowledge_base.json) — legacy single-file format
+  - A directory  (e.g. CVE_KB/)                — sharded format (walks CVE-*.json)
+
 Submits the local CVE knowledge base to the Noctis Edge community relay
 (a Cloudflare Worker).  The relay holds the GitHub credentials server-side —
 no token is required on the user's machine.
@@ -17,6 +21,8 @@ relay_url defaults to RELAY_URL below.  Override via the optional 3rd argument
 Exit codes: 0 = success or skipped, 1 = error
 """
 import json
+import os
+import pathlib
 import re
 import ssl
 import sys
@@ -76,15 +82,34 @@ def main() -> None:
         sys.exit(0)
 
     # ── Load and validate the local KB ───────────────────────────────────────
-    try:
-        with open(kb_path, "r", encoding="utf-8") as fh:
-            kb_data = json.load(fh)
-    except FileNotFoundError:
-        print("[submit_kb] No local knowledge base found — skipping submission.")
-        sys.exit(0)
-    except json.JSONDecodeError as exc:
-        print(f"[submit_kb] ERROR: Invalid JSON in {kb_path}: {exc}", file=sys.stderr)
-        sys.exit(1)
+    # Support both a sharded CVE_KB/ directory and a legacy single JSON file.
+    kb_p = pathlib.Path(kb_path)
+
+    if kb_p.is_dir():
+        shard_files = sorted(kb_p.glob("CVE-*.json"))
+        if not shard_files:
+            print("[submit_kb] CVE_KB/ directory is empty — skipping submission.")
+            sys.exit(0)
+        kb_data: dict = {}
+        for shard_file in shard_files:
+            try:
+                with open(shard_file, "r", encoding="utf-8") as fh:
+                    kb_data.update(json.load(fh))
+            except json.JSONDecodeError as exc:
+                print(
+                    f"[submit_kb] WARNING: Skipping {shard_file.name} (invalid JSON: {exc})",
+                    file=sys.stderr,
+                )
+    else:
+        try:
+            with open(kb_path, "r", encoding="utf-8") as fh:
+                kb_data = json.load(fh)
+        except FileNotFoundError:
+            print("[submit_kb] No local knowledge base found — skipping submission.")
+            sys.exit(0)
+        except json.JSONDecodeError as exc:
+            print(f"[submit_kb] ERROR: Invalid JSON in {kb_path}: {exc}", file=sys.stderr)
+            sys.exit(1)
 
     if not kb_data:
         print("[submit_kb] Local knowledge base is empty — skipping submission.")

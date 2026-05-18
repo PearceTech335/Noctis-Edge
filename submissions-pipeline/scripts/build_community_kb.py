@@ -5,8 +5,8 @@
 """
 Noctis-Edge-Submissions — Community KB Build Script
 
-Usage: build_community_kb.py [output_path] [--trust-admin UUID]
-  output_path defaults to community_kb.json
+Usage: build_community_kb.py [output_dir] [--trust-admin UUID]
+  output_dir defaults to CVE_KB  (a directory, written with sharded files)
   --trust-admin UUID  treat this user's scripts as if confirmed by 2 submitters
 
 Reads all *.json from the repo root (never quarantine/).
@@ -15,7 +15,24 @@ Quality filter:
   - same script_hash must appear in >= 2 independent submissions (different user_id)
     (admin UUID bypasses this requirement when --trust-admin is set)
 Final safety gate: re-runs the full static blocklist before writing output.
-Output: community_kb.json with a built_at ISO timestamp.
+
+Output layout (inside output_dir):
+  CVE_KB/
+    manifest.json          ← shard index (tiny; fetched first by subscribers)
+    CVE-1999-1.json        ← one file per year/sequence shard
+    CVE-2017-1.json
+    CVE-2017-5000.json
+    ...
+
+The manifest.json format:
+  {
+    "built_at": "<ISO timestamp>",
+    "stats": { ... },
+    "shards": [
+      {"name": "CVE-2017-1", "cve_count": 2409},
+      ...
+    ]
+  }
 """
 
 import glob
@@ -24,6 +41,32 @@ import os
 import re
 import sys
 from datetime import datetime, timezone
+
+# ---------------------------------------------------------------------------
+# Shard helpers — must match noctis.py / generate_kb_scripts.py exactly
+# ---------------------------------------------------------------------------
+
+SHARD_SIZE = 5_000
+
+
+def _shard_name(cve_id: str) -> str:
+    """Return the shard filename stem for a given CVE ID.
+
+    CVE-2017-5687  → "CVE-2017-1"      (seq 5687, (5687//5000)*5000=0 → or 1)
+    CVE-2023-30000 → "CVE-2023-30000"  (seq 30000, (30000//5000)*5000=30000)
+    """
+    parts = cve_id.split("-")
+    year  = parts[1]
+    seq   = int(parts[2])
+    start = (seq // SHARD_SIZE) * SHARD_SIZE or 1
+    return f"CVE-{year}-{start}"
+
+
+def _write_atomic(path: str, data: dict) -> None:
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, indent=2)
+    os.replace(tmp, path)
 
 # ---------------------------------------------------------------------------
 # Static blocklist — identical to validate_submissions.py (defence in depth)
@@ -75,15 +118,14 @@ def main() -> None:
         if idx + 1 < len(args):
             trust_admin = args.pop(idx + 1)
         args.pop(idx)
-    output_path = args[0] if args else "community_kb.json"
+    output_dir = args[0] if args else "CVE_KB"
     if trust_admin:
         print(f"[build_kb] Trust-admin mode: UUID {trust_admin} bypasses the ≥2 submitter threshold.")
 
-    # Find all submission files — skip quarantine/ and the output file itself
+    # Find all submission files — skip quarantine/ and the output dir itself
     submission_files = [
         f for f in glob.glob("*.json")
         if os.path.isfile(f)
-        and f != os.path.basename(output_path)
     ]
 
     print(f"[build_kb] Found {len(submission_files)} submission file(s) in repo root.")
@@ -160,28 +202,43 @@ def main() -> None:
             community_kb[cve_id] = {"scripts": accepted}
 
     # -------------------------------------------------------------------------
-    # Write output
+    # Write sharded output + manifest
     # -------------------------------------------------------------------------
-    output = {
-        "built_at": datetime.now(timezone.utc).isoformat(),
-        "stats": {
-            "files_processed": files_ok,
-            "files_skipped": files_skipped,
-            "cves_included": len(community_kb),
-            "scripts_included": included,
-            "filtered_quality": filtered_quality,
-            "filtered_safety": filtered_safety,
-        },
+    built_at = datetime.now(timezone.utc).isoformat()
+    stats = {
+        "files_processed": files_ok,
+        "files_skipped": files_skipped,
+        "cves_included": len(community_kb),
+        "scripts_included": included,
+        "filtered_quality": filtered_quality,
+        "filtered_safety": filtered_safety,
     }
-    output.update(community_kb)
 
-    tmp = output_path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(output, fh, indent=2)
-    os.replace(tmp, output_path)
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Group CVEs by shard
+    shards: dict[str, dict] = {}
+    for cve_id, entry in community_kb.items():
+        shards.setdefault(_shard_name(cve_id), {})[cve_id] = entry
+
+    # Write each shard atomically
+    shard_manifest = []
+    for shard_stem, shard_data in sorted(shards.items()):
+        path = os.path.join(output_dir, f"{shard_stem}.json")
+        _write_atomic(path, shard_data)
+        shard_manifest.append({"name": shard_stem, "cve_count": len(shard_data)})
+        print(f"[build_kb] Wrote {path} ({len(shard_data)} CVE(s))")
+
+    # Write manifest (tiny index consumed by pull_community_kb.py and the Worker)
+    manifest_path = os.path.join(output_dir, "manifest.json")
+    _write_atomic(manifest_path, {
+        "built_at": built_at,
+        "stats":    stats,
+        "shards":   shard_manifest,
+    })
 
     print(
-        f"[build_kb] Built {output_path} — "
+        f"[build_kb] Built {len(shards)} shard(s) in {output_dir}/ — "
         f"{included} script(s) across {len(community_kb)} CVE(s) "
         f"(quality filtered: {filtered_quality}, safety blocked: {filtered_safety})"
     )

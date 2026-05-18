@@ -259,6 +259,10 @@ if curl -s --max-time 3 http://localhost:11434/api/tags &>/dev/null; then
     info "Ollama server is already running"
     STARTED_OLLAMA=0
 else
+    # Performance env vars — apply on native Linux installs too. Safe no-ops
+    # on CPUs / versions that don't support the underlying optimisation.
+    export OLLAMA_KEEP_ALIVE="${OLLAMA_KEEP_ALIVE:-1h}"
+    export OLLAMA_FLASH_ATTENTION="${OLLAMA_FLASH_ATTENTION:-1}"
     ollama serve &>/dev/null &
     OLLAMA_PID=$!
     STARTED_OLLAMA=1

@@ -264,6 +264,9 @@ async function handleSubmit(request, env) {
   return jsonResp({ error: `Upstream write failed (HTTP ${status}) — try again later` }, 502);
 }
 
+// CVE-2017-1, CVE-2018-5000, CVE-2023-30000 — no path components allowed
+const SHARD_NAME_RE = /^CVE-\d{4}-\d+$/;
+
 async function handleCommunityKB(request, env) {
   // ── Parse body ────────────────────────────────────────────────────────────
   let body;
@@ -304,9 +307,28 @@ async function handleCommunityKB(request, env) {
     }, 403);
   }
 
-  // ── Fetch community_kb.json from private GitHub repo ─────────────────────
+  // ── Determine what to serve ───────────────────────────────────────────────
+  // No shard param  → return CVE_KB/manifest.json  (tiny index of available shards)
+  // shard=CVE-2017-1 → return CVE_KB/CVE-2017-1.json  (one shard, ~2-25 MB)
+  // This allows subscribers to pre-download the entire KB before going airgapped:
+  //   1. Pull manifest to get shard list
+  //   2. Loop and pull each named shard → write to local CVE_KB/
+  const shardName = body?.shard ?? null;
+
+  let kbPath;
+  if (shardName === null) {
+    kbPath = "CVE_KB/manifest.json";
+  } else {
+    // Validate strictly — prevents path traversal (no slashes, dots, etc.)
+    if (typeof shardName !== "string" || !SHARD_NAME_RE.test(shardName)) {
+      return jsonResp({ error: "Invalid shard name — expected format: CVE-YYYY-N" }, 400);
+    }
+    kbPath = `CVE_KB/${shardName}.json`;
+  }
+
+  // ── Fetch file from private GitHub KB repo ────────────────────────────────
   const kbResp = await fetch(
-    "https://api.github.com/repos/PearceTech335/Noctis-Edge-KB/contents/community_kb.json",
+    `https://api.github.com/repos/PearceTech335/Noctis-Edge-KB/contents/${kbPath}`,
     {
       headers: {
         ...githubHeaders(env.GITHUB_KB_TOKEN),
@@ -315,8 +337,13 @@ async function handleCommunityKB(request, env) {
     }
   );
 
+  if (kbResp.status === 404) {
+    const label = shardName ? `Shard ${shardName}` : "Community KB manifest";
+    return jsonResp({ error: `${label} not yet available — check back after the next build` }, 404);
+  }
+
   if (!kbResp.ok) {
-    console.error(`[community-kb] GitHub fetch failed HTTP ${kbResp.status}`);
+    console.error(`[community-kb] GitHub fetch failed HTTP ${kbResp.status} for ${kbPath}`);
     return jsonResp({ error: "Community KB temporarily unavailable — try again later" }, 502);
   }
 

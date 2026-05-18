@@ -31,8 +31,21 @@ services:
   # Ollama — local LLM server
   # ---------------------------------------------------------------------------
   ollama:
-    image: ollama/ollama:latest
+    # Pinned to a known-good stable release. 0.5.x is the first series with
+    # proper Qwen3 template support — `think: false` in the options dict is
+    # honoured (no <think> tokens consumed from num_predict budget).
+    # Bump intentionally after re-verifying the curl check in
+    # improvements/fp-hardening-plan.md (Wave 0).
+    image: ollama/ollama:0.5.7
     container_name: noctis-ollama
+    environment:
+      # Keep loaded models resident for the full scan — matches per-request
+      # keep_alive Noctis sends. Server-side default is 5m which would evict
+      # mid-phase between tool runs.
+      - OLLAMA_KEEP_ALIVE=1h
+      # Flash-attention reduces attention-step cost ~15–25% on CPUs that
+      # support the required instructions; safe no-op on others.
+      - OLLAMA_FLASH_ATTENTION=1
     volumes:
       # Persist downloaded models across container restarts
       - ollama_models:/root/.ollama
@@ -77,9 +90,9 @@ services:
       # Planning + scripting model (structured JSON decisions, CVE probe scripts)
       - NOCTIS_OLLAMA_MODEL=qwen2.5-coder:3b-instruct
       - NOCTIS_OLLAMA_SCRIPT_MODEL=qwen2.5-coder:3b-instruct
-      # Narrative prose model (report writing, attacker perspectives)
-      # qwen3:1.7b — same family as qwen3:4b, /no_think supported, ~2x faster on CPU
-      - NOCTIS_OLLAMA_REPORT_MODEL=qwen3:1.7b
+      # Narrative prose model (executive summary, audit, attacker perspectives,
+      # per-finding descriptions).
+      - NOCTIS_OLLAMA_REPORT_MODEL=qwen3:4b
       - NOCTIS_OLLAMA_TIMEOUT=600
       # Bind to all interfaces so the host browser can reach port 8888
       - NOCTIS_BIND_HOST=0.0.0.0
