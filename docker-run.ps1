@@ -184,6 +184,38 @@ if (-not (Test-Path (Join-Path $SCRIPT_DIR "noctis.conf"))) {
 Invoke-DC @("up", "-d", "noctis")
 Write-Ok "Noctis Edge is running"
 
+# ---------------------------------------------------------------------------
+# Auto-rebuild watcher
+#   Polls sessions\.pending_rebuild (written by update.sh inside the
+#   container after a source pull) and rebuilds + restarts the noctis image
+#   automatically -- no user action needed after clicking Update.
+#   Runs as a PowerShell background job for the lifetime of this terminal.
+#   Progress is logged to sessions\.rebuild.log.
+# ---------------------------------------------------------------------------
+$rebuildLog = Join-Path $SCRIPT_DIR "sessions\.rebuild.log"
+New-Item -ItemType Directory -Path (Join-Path $SCRIPT_DIR "sessions") -Force | Out-Null
+# Stop any stale watcher from a previous docker-run.ps1 invocation
+Get-Job -Name "NoctisRebuildWatcher" -ErrorAction SilentlyContinue |
+    Stop-Job -PassThru | Remove-Job -Force
+$watcherJob = Start-Job -Name "NoctisRebuildWatcher" -ScriptBlock {
+    param($dir, $sentinel, $log)
+    while ($true) {
+        Start-Sleep -Seconds 5
+        if (Test-Path $sentinel) {
+            $ts = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+            Add-Content $log "$ts [REBUILD] Update complete -- rebuilding noctis image"
+            Remove-Item -Force $sentinel -ErrorAction SilentlyContinue
+            Set-Location $dir
+            Add-Content $log "$ts [REBUILD] docker compose build noctis ..."
+            docker compose build noctis 2>&1 | ForEach-Object { Add-Content $log "  $_" }
+            Add-Content $log "$ts [REBUILD] docker compose up -d --no-deps noctis ..."
+            docker compose up -d --no-deps noctis 2>&1 | ForEach-Object { Add-Content $log "  $_" }
+            Add-Content $log "$ts [REBUILD] Done -- Noctis is running with the latest code."
+        }
+    }
+} -ArgumentList $SCRIPT_DIR, $sentinelFile, $rebuildLog
+Write-Ok "Auto-rebuild watcher running (job: $($watcherJob.Id))"
+
 # Open browser automatically
 Start-Process "http://localhost:8888"
 
@@ -195,5 +227,7 @@ Write-Host ""
 Write-Host "  Stop:    docker compose down" -ForegroundColor Yellow
 Write-Host "  Logs:    docker compose logs -f noctis" -ForegroundColor Yellow
 Write-Host "  CLI:     docker compose run --rm noctis scan <target>" -ForegroundColor Yellow
+Write-Host "  Update:  click Update in the UI -- rebuild fires automatically" -ForegroundColor Yellow
+Write-Host "  Rebuild: sessions\.rebuild.log" -ForegroundColor Yellow
 Write-Host "============================================================" -ForegroundColor Green
 Write-Host ""

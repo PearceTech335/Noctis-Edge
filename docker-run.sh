@@ -167,6 +167,48 @@ done
 $DC up -d noctis
 ok "Noctis Edge is running"
 
+# ---------------------------------------------------------------------------
+# Auto-rebuild watcher
+#   Polls sessions/.pending_rebuild (written by update.sh inside the
+#   container after a source pull) and rebuilds + restarts the noctis image
+#   automatically -- no user action needed after clicking Update.
+#   Survives terminal close via nohup.  Progress logged to sessions/.rebuild.log.
+# ---------------------------------------------------------------------------
+_REBUILD_LOG="$SCRIPT_DIR/sessions/.rebuild.log"
+_WATCHER_PID_FILE="$SCRIPT_DIR/sessions/.watcher.pid"
+mkdir -p "$SCRIPT_DIR/sessions"
+# Stop any stale watcher from a previous docker-run.sh invocation
+if [[ -f "$_WATCHER_PID_FILE" ]]; then
+    _old_pid=$(cat "$_WATCHER_PID_FILE" 2>/dev/null || true)
+    if [[ -n "$_old_pid" ]] && kill -0 "$_old_pid" 2>/dev/null; then
+        kill "$_old_pid" 2>/dev/null || true
+    fi
+    rm -f "$_WATCHER_PID_FILE"
+fi
+# Export watcher config as env vars so the single-quoted heredoc can use them
+export _NOCTIS_SENTINEL="$_SENTINEL"
+export _NOCTIS_LOG="$_REBUILD_LOG"
+export _NOCTIS_DIR="$SCRIPT_DIR"
+export _NOCTIS_DC="$DC"
+nohup bash -c '
+while true; do
+    sleep 5
+    if [[ -f "$_NOCTIS_SENTINEL" ]]; then
+        ts=$(date "+%Y-%m-%d %H:%M:%S")
+        echo "$ts [REBUILD] Update complete -- rebuilding noctis image" >> "$_NOCTIS_LOG"
+        rm -f "$_NOCTIS_SENTINEL"
+        cd "$_NOCTIS_DIR"
+        echo "$ts [REBUILD] $_NOCTIS_DC build noctis ..." >> "$_NOCTIS_LOG"
+        $_NOCTIS_DC build noctis >> "$_NOCTIS_LOG" 2>&1 || true
+        echo "$ts [REBUILD] $_NOCTIS_DC up -d --no-deps noctis ..." >> "$_NOCTIS_LOG"
+        $_NOCTIS_DC up -d --no-deps noctis >> "$_NOCTIS_LOG" 2>&1 || true
+        echo "$ts [REBUILD] Done -- Noctis is running with the latest code." >> "$_NOCTIS_LOG"
+    fi
+done
+' > /dev/null 2>&1 &
+echo $! > "$_WATCHER_PID_FILE"
+ok "Auto-rebuild watcher started (PID $(cat "$_WATCHER_PID_FILE"))"
+
 echo ""
 echo -e "${GREEN}============================================================${NC}"
 echo -e "${GREEN}  Noctis Edge is ready!${NC}"
@@ -175,5 +217,7 @@ echo ""
 echo -e "  Stop:    ${YELLOW}$DC down${NC}"
 echo -e "  Logs:    ${YELLOW}$DC logs -f noctis${NC}"
 echo -e "  CLI:     ${YELLOW}$DC run --rm noctis scan <target>${NC}"
+echo -e "  Update:  click Update in the UI -- rebuild fires automatically"
+echo -e "  Rebuild: ${YELLOW}sessions/.rebuild.log${NC}"
 echo -e "${GREEN}============================================================${NC}"
 echo ""
