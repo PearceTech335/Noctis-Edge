@@ -2,6 +2,17 @@
 
 ---
 
+## What's New in v0.10.0
+
+- **Single-model runtime:** All default LLM roles now use `qwen2.5-coder:3b-instruct`. Docker launchers, `docker-compose.yml`, `setup.sh`, and `update.sh` no longer pull or configure a separate `REPORT_MODEL`; normal installs need only one ~2 GB model. `MODEL`, `SCRIPT_MODEL`, and `CVE_SCRIPT_MODEL` remain logical roles in code, but by default they resolve to the same physical model.
+- **Large-report filtering:** HTML reports now include clickable severity summary boxes plus a vanilla-JavaScript filter/sort bar for finding text, severity, service type, and sort order. This keeps large scans navigable without external assets or a server-side UI.
+- **Direct remediation actions:** Each finding detail now renders a `[▸ Remediation Action]` section with copy-ready operator steps when LLM remediation data is available, plus a grounded fallback when it is not.
+- **Evidence callouts:** Finding evidence and execution output previews now highlight matching lines and substrings, making relevant proof easier to spot inside raw tool output.
+- **TOC visibility:** The sticky report table of contents now uses a light-green background with dark text and a stronger scroll shadow.
+- **Executive summary quality controls:** Executive summary generation now uses warmer but bounded prose settings and validates severity counts, unsupported CVE claims, unsupported generic web-security advice, markdown/list drift, and falsely reassuring posture language. Invalid prose is replaced with a polished evidence-grounded summary generated from recorded scan data.
+
+---
+
 ## What's New in v0.9.4
 
 - **Bug fix — empty `attacker_perspective` on all CVE matches:** Two root causes were eliminated. (1) `_generate_attacker_perspective()` (qwen3:1.7b) had no `<think>` stripping, so when the model ignored `/no_think` and emitted internal reasoning the entire response was discarded as the raw output. The function now strips both closed and unclosed `<think>` blocks, retries up to `MAX_LLM_RETRIES`, applies a stronger directive (`"Output the answer directly. Do not include any reasoning or <think> tags."`), and `num_predict` set to 500 — sufficient for 2 × 4-sentence paragraphs while keeping calls within the 600s timeout at qwen3:1.7b CPU speeds (~1 t/s). (2) The Phase 2 perspective loop lived inside `_run_cve_test_phase()`, which is gated on `if CVE_TEST:` (off unless `--cve-test` is set), so on every normal scan the loop never ran. Phase 2 has been extracted into a standalone `generate_cve_attacker_perspectives()` function that is now invoked unconditionally in the main scan flow before report audit.

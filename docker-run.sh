@@ -20,9 +20,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-OLLAMA_MODEL="qwen2.5-coder:3b-instruct"    # planning + scan decisions (NOCTIS_OLLAMA_MODEL)
-SCRIPT_MODEL="qwen2.5-coder:3b-instruct"    # CVE scripts + tool scripts (NOCTIS_OLLAMA_SCRIPT_MODEL)
-REPORT_MODEL="qwen3:4b"                     # narrative prose: conclusion, attacker perspective, remediation (NOCTIS_OLLAMA_REPORT_MODEL)
+OLLAMA_MODEL="qwen2.5-coder:3b-instruct"    # all LLM tasks (planning, scripts, reporting)
+SCRIPT_MODEL="qwen2.5-coder:3b-instruct"    # logical script/prose role, same physical model
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; CYAN='\033[1;36m'; NC='\033[0m'
 ok()   { echo -e "${GREEN}[OK]${NC}  $*"; }
 info() { echo -e "${YELLOW}[--]${NC}  $*"; }
@@ -41,7 +40,7 @@ if ! docker info > /dev/null 2>&1; then
 fi
 ok "Docker is running"
 
-# Minimum free disk space required (GB): Ollama image ~2.5 GB + two models ~4 GB + headroom
+# Minimum free disk space required (GB): Ollama image ~2.5 GB + one model ~2 GB + headroom
 MIN_FREE_GB=8
 # macOS df uses 512-byte blocks by default; Linux df uses 1 KB blocks.
 # -k forces 1 KB blocks on both platforms; column 4 is available space.
@@ -142,7 +141,7 @@ ok "Ollama is ready"
 # 4. Pull required LLM models (skips models already in the volume)
 # ---------------------------------------------------------------------------
 hdr "4/5  Pulling LLM models"
-for MODEL in "$OLLAMA_MODEL" "$SCRIPT_MODEL" "$REPORT_MODEL"; do
+for MODEL in "$OLLAMA_MODEL" "$SCRIPT_MODEL"; do
     if $DC exec -T ollama ollama list 2>/dev/null | grep -qF "$MODEL"; then
         ok "${MODEL} already present — skipping download"
     else

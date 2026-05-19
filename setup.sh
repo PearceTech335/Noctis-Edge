@@ -15,7 +15,7 @@
 #    3.  snap — SecLists wordlists
 #    4.  Go   — language runtime (needed for Nuclei)
 #    5.  Nuclei — template-based vulnerability scanner
-#    6.  Ollama — local LLM server + model pull
+#    6.  Ollama — local LLM server + single model pull
 #    7.  Python venv + pip dependencies
 #    8.  CVE/cve-offline — clone & build the offline CVE database
 #    9.  rdpscan         — clone the RDP scanner helper
@@ -30,8 +30,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OLLAMA_MODEL="qwen2.5-coder:3b-instruct"
-OLLAMA_SCRIPT_MODEL="qwen2.5-coder:3b-instruct"
-OLLAMA_REPORT_MODEL="qwen3:4b"
+OLLAMA_SCRIPT_MODEL="$OLLAMA_MODEL"
 
 CVE_REPO="https://github.com/trickest/cve.git"
 CVE_OFFLINE_REPO="https://github.com/trickest/cve-offline.git"
@@ -279,20 +278,19 @@ else
     [[ $_waited -lt 30 ]] && info "Ollama ready after ${_waited}s"
 fi
 
-info "Pulling model: $OLLAMA_MODEL (this may take several minutes on first run) ..."
+info "Pulling model: $OLLAMA_MODEL (single model for planning, scripts, and reporting) ..."
 ollama pull "$OLLAMA_MODEL" \
     && ok "Model $OLLAMA_MODEL ready" \
     || err "Model pull failed — run 'ollama pull $OLLAMA_MODEL' manually after setup"
 
-info "Pulling model: $OLLAMA_SCRIPT_MODEL (code-specialist — script generation) ..."
-ollama pull "$OLLAMA_SCRIPT_MODEL" \
-    && ok "Model $OLLAMA_SCRIPT_MODEL ready" \
-    || err "Model pull failed — run 'ollama pull $OLLAMA_SCRIPT_MODEL' manually after setup"
-
-info "Pulling model: $OLLAMA_REPORT_MODEL (general language — report narrative) ..."
-ollama pull "$OLLAMA_REPORT_MODEL" \
-    && ok "Model $OLLAMA_REPORT_MODEL ready" \
-    || err "Model pull failed — run 'ollama pull $OLLAMA_REPORT_MODEL' manually after setup"
+if [[ "$OLLAMA_SCRIPT_MODEL" != "$OLLAMA_MODEL" ]]; then
+    info "Pulling optional override model: $OLLAMA_SCRIPT_MODEL ..."
+    ollama pull "$OLLAMA_SCRIPT_MODEL" \
+        && ok "Model $OLLAMA_SCRIPT_MODEL ready" \
+        || err "Model pull failed — run 'ollama pull $OLLAMA_SCRIPT_MODEL' manually after setup"
+else
+    ok "Script/prose role uses the same model — no second model pull needed"
+fi
 
 if [[ "${STARTED_OLLAMA:-0}" == "1" ]]; then
     kill "$OLLAMA_PID" 2>/dev/null || true

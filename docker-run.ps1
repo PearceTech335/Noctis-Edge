@@ -20,9 +20,8 @@
 
 $ErrorActionPreference = "Stop"
 
-$OLLAMA_MODEL  = "qwen2.5-coder:3b-instruct"   # planning + scan decisions (NOCTIS_OLLAMA_MODEL)
-$SCRIPT_MODEL  = "qwen2.5-coder:3b-instruct"   # CVE scripts + tool scripts (NOCTIS_OLLAMA_SCRIPT_MODEL)
-$REPORT_MODEL  = "qwen3:4b"                     # narrative prose: conclusion, attacker perspective, remediation (NOCTIS_OLLAMA_REPORT_MODEL)
+$OLLAMA_MODEL  = "qwen2.5-coder:3b-instruct"   # all LLM tasks (planning, scripts, reporting)
+$SCRIPT_MODEL  = "qwen2.5-coder:3b-instruct"   # logical script/prose role, same physical model
 $SCRIPT_DIR    = Split-Path -Parent $MyInvocation.MyCommand.Definition
 
 function Write-Header($msg) {
@@ -154,7 +153,7 @@ Write-Ok "Ollama is ready"
 # ---------------------------------------------------------------------------
 Write-Header "4/5  Pulling LLM models"
 $modelList = Invoke-DC @("exec", "-T", "ollama", "ollama", "list") 2>&1
-foreach ($MODEL in @($OLLAMA_MODEL, $SCRIPT_MODEL, $REPORT_MODEL) | Select-Object -Unique) {
+foreach ($MODEL in @($OLLAMA_MODEL, $SCRIPT_MODEL) | Select-Object -Unique) {
     if ($modelList -match [regex]::Escape($MODEL)) {
         Write-Ok "${MODEL} already present -- skipping download"
     } else {

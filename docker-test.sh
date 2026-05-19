@@ -18,10 +18,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# LLM models used during the test scan.
+# LLM model used during the test scan.
 # SCRIPT_MODEL defaults to OLLAMA_MODEL so the test only needs ONE model download.
 # Override via environment variables to match your docker-compose.yml in production.
-OLLAMA_MODEL="${NOCTIS_OLLAMA_MODEL:-qwen2.5-coder:7b-instruct}"
+OLLAMA_MODEL="${NOCTIS_OLLAMA_MODEL:-qwen2.5-coder:3b-instruct}"
 SCRIPT_MODEL="${NOCTIS_OLLAMA_SCRIPT_MODEL:-${OLLAMA_MODEL}}"
 
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; CYAN='\033[1;36m'; NC='\033[0m'
@@ -107,9 +107,9 @@ done
 ok "Ollama ready"
 
 # ---------------------------------------------------------------------------
-# 3. Pull required models (skip if already in volume)
+# 3. Pull required model (skip if already in volume)
 # ---------------------------------------------------------------------------
-hdr "3/6  Ensuring LLM models are present"
+hdr "3/6  Ensuring LLM model is present"
 
 for MODEL in "$OLLAMA_MODEL" "$SCRIPT_MODEL"; do
     if $DC exec -T ollama ollama list 2>/dev/null | grep -qF "$MODEL"; then

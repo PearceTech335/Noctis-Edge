@@ -66,15 +66,14 @@ Alongside CVE probes, `tooling_knowledge_base.json` accumulates tool-performance
 
 | Item | Size |
 |------|------|
-| Ollama — `qwen2.5-coder:3b-instruct` (planning + scripts) | ~2 GB |
-| Ollama — `qwen3:4b` (report prose) | ~2.6 GB |
+| Ollama — `qwen2.5-coder:3b-instruct` (all LLM tasks) | ~2 GB |
 | Nuclei templates | ~1.5 GB |
 | CVE offline database | ~3–5 GB |
 | SecLists wordlists | ~2 GB |
 | Tool binaries + Python venv | ~1 GB |
 | Scan session outputs | Variable |
 
-> **RAM note:** Only one model is active at a time during the main scan loop. During `--cve-test`, both models may be warm simultaneously — peak concurrent RAM is ~4.6 GB. 8 GB RAM recommended; 16 GB optimal.
+> **RAM note:** Only one model is needed (`qwen2.5-coder:3b-instruct`, ~2 GB). 8 GB RAM recommended; 16 GB optimal.
 
 ---
 
@@ -111,7 +110,7 @@ chmod +x docker-run.sh && ./docker-run.sh
 .\docker-run.ps1
 ```
 
-The launcher script handles everything automatically: pulls latest source, builds the Docker image (all tools + offline CVE database baked in), starts the Ollama sidecar and downloads the LLM models (~4.6 GB total — `qwen2.5-coder:3b-instruct` ~2 GB + `qwen3:4b` ~2.6 GB — one-time download, stored in a Docker volume), then starts the Web UI at **http://localhost:8888**.
+The launcher script handles everything automatically: pulls latest source, builds the Docker image (all tools + offline CVE database baked in), starts the Ollama sidecar and downloads the LLM model (`qwen2.5-coder:3b-instruct` ~2 GB — one-time download, stored in a Docker volume), then starts the Web UI at **http://localhost:8888**.
 
 **Useful Docker commands:**
 ```bash
@@ -146,7 +145,7 @@ chmod +x setup.sh && ./setup.sh
 | apt packages | `nmap`, `curl`, `ffuf`, `hydra`, `ssh-audit`, `dnsenum`, `dnsrecon`, `perl`, `golang-go`, `python3-tk`, and more |
 | SecLists | Wordlists via `snap install seclists` |
 | Nuclei | Go-based template scanner (`~/go/bin/nuclei`) |
-| Ollama | Local LLM server + `qwen2.5-coder:3b-instruct` + `qwen3:4b` |
+| Ollama | Local LLM server + `qwen2.5-coder:3b-instruct` |
 | Python venv | `.venv/` with `requests`, `jinja2`, `pycryptodome`, `flask`, `flask-sock` |
 | CVE database | `CVE/cve-offline/` → `cve-summary.csv`; EPSS scores; NVD CVSS + CWE data |
 | CWE dictionary | `CVE/cwe-data.csv` — MITRE weakness names, descriptions, consequences, mitigations (969 entries) |
@@ -335,14 +334,13 @@ cve_knowledge_base.json           ← cross-engagement CVE test KB (project root
 
 ## Configuration
 
-Top-of-file constants in `noctis.py` (all overridable via environment variables):
+Top-of-file constants in `noctis.py` (all overridable via environment variables). The default deployment uses one physical Ollama model for every LLM role:
 
 | Constant | Default | Env var | Description |
 |----------|---------|---------|-------------|
 | `MODEL` | `qwen2.5-coder:3b-instruct` | `NOCTIS_OLLAMA_MODEL` | Planning, iteration decisions, structured JSON tool selection |
-| `SCRIPT_MODEL` | `qwen2.5-coder:3b-instruct` | `NOCTIS_OLLAMA_SCRIPT_MODEL` | CVE exploit scripts, verification scripts |
-| `CVE_SCRIPT_MODEL` | *(same as `SCRIPT_MODEL`)* | `NOCTIS_OLLAMA_CVE_SCRIPT_MODEL` | CVE probe generation — override with a larger model for better pivoting |
-| `REPORT_MODEL` | `qwen3:4b` | `NOCTIS_OLLAMA_REPORT_MODEL` | Report conclusion, attacker perspective, remediation guidance |
+| `SCRIPT_MODEL` | `qwen2.5-coder:3b-instruct` | `NOCTIS_OLLAMA_SCRIPT_MODEL` | CVE exploit scripts, verification scripts, executive summary, audit, attacker perspectives, per-finding descriptions |
+| `CVE_SCRIPT_MODEL` | *(same as `SCRIPT_MODEL`)* | `NOCTIS_OLLAMA_CVE_SCRIPT_MODEL` | CVE probe generation — optional advanced override; unset by default so no second model is required |
 | `OLLAMA_URL` | `http://localhost:11434/api/generate` | — | Ollama API endpoint |
 | `MAX_ITERATIONS` | `10` | — | Minimum (floor) Phase 2 iteration count — applied when few services detected |
 | `MAX_ITERATIONS_CAP` | `40` | — | Hard ceiling — dynamic budget and auto-extensions can never exceed this |
@@ -382,13 +380,12 @@ Install notes: see [Readme/requirements.md](Readme/requirements.md).
 
 ## Ollama Setup
 
-`setup.sh` installs Ollama and pulls both models automatically. `noctis.py` will also start `ollama serve` automatically and pull any missing model before the scan begins.
+`setup.sh` installs Ollama and pulls the single model automatically. `noctis.py` will also start `ollama serve` automatically and pull any missing model before the scan begins.
 
 Manual install:
 ```bash
 curl -fsSL https://ollama.com/install.sh | sh
-ollama pull qwen2.5-coder:3b-instruct      # planning, CVE probe + verification scripts
-ollama pull qwen3:4b                        # report prose
+ollama pull qwen2.5-coder:3b-instruct      # planning, scripts, and all report prose
 ```
 
 ### Model Roles
@@ -396,11 +393,10 @@ ollama pull qwen3:4b                        # report prose
 | Model | Env var | Purpose |
 |-------|---------|---------|
 | `qwen2.5-coder:3b-instruct` | `NOCTIS_OLLAMA_MODEL` | Tool selection, scan planning, structured JSON decisions |
-| `qwen2.5-coder:3b-instruct` | `NOCTIS_OLLAMA_SCRIPT_MODEL` | CVE exploit and verification scripts |
-| `qwen2.5-coder:3b-instruct` | `NOCTIS_OLLAMA_CVE_SCRIPT_MODEL` | CVE probe generation (override with a larger model for better strategy pivoting) |
-| `qwen3:4b` | `NOCTIS_OLLAMA_REPORT_MODEL` | Report conclusion, attacker perspective, remediation guidance |
+| `qwen2.5-coder:3b-instruct` | `NOCTIS_OLLAMA_SCRIPT_MODEL` | CVE exploit/verification scripts, executive summary, attacker perspectives, per-finding descriptions |
+| `qwen2.5-coder:3b-instruct` | `NOCTIS_OLLAMA_CVE_SCRIPT_MODEL` | CVE probe generation; optional advanced override, unset by default |
 
-`qwen2.5-coder:3b-instruct` is ~2 GB; `qwen3:4b` is ~2.6 GB. During the main scan only one model is active at a time. During `--cve-test` both may be resident simultaneously — peak combined RAM ~4.6 GB. Inference is typically 20–90 s per call on CPU-only hardware after the initial warm load.
+`qwen2.5-coder:3b-instruct` is ~2 GB. Only one model is needed by default — no report-model download and no model-swap overhead. Inference is typically 20–90 s per call on CPU-only hardware after the initial warm load.
 
 ---
 
@@ -507,7 +503,15 @@ The worker is already deployed at `https://noctis-kb-relay.pearcetechnologies1.w
 
 ## Version History
 
-**Current version: v0.9.5**
+**Current version: v0.10.0**
+
+### What's New in v0.10.0
+
+- **Single-model runtime:** Docker, setup, and update paths now pull only `qwen2.5-coder:3b-instruct` by default. Planning, script generation, CVE probes, executive summaries, report audit, attacker perspectives, and per-finding descriptions all route through the coder model. `NOCTIS_OLLAMA_CVE_SCRIPT_MODEL` remains an optional expert override, but no second model is required for normal installs.
+- **Report usability for large scans:** HTML reports now include clickable severity summary boxes, a vanilla-JavaScript finding filter bar, service filtering, sorting, and visible-result counts. Reports remain self-contained static HTML.
+- **Actionable remediation sections:** Each finding detail now includes an explicit `[▸ Remediation Action]` block that surfaces copy-ready remediation steps from the local model/knowledge-base path when available.
+- **Evidence callouts:** Finding evidence and execution output previews now highlight matching lines and substrings so operators can spot the relevant proof faster inside noisy tool output.
+- **Executive summary guardrails:** Summary generation uses warmer prose settings but now validates severity counts, unsupported CVE claims, generic unsupported web-security advice, and markdown/list drift before rendering. If prose fails factual validation, Noctis emits a polished evidence-grounded summary from recorded scan data.
 
 ### What's New in v0.9.5
 

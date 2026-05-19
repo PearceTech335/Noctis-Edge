@@ -2,7 +2,7 @@
 # =============================================================================
 #  Noctis Edge — Update Script
 #  Run: ./update.sh
-#  Updates: apt packages, snap, pip deps, nuclei, Ollama models, CVE database,
+#  Updates: apt packages, snap, pip deps, nuclei, Ollama model, CVE database,
 #           CVE knowledge base (submit + pull), Nuclei KB (submit + pull),
 #           Tool knowledge base (submit + pull), Tool manifest (subscribers only)
 # =============================================================================
@@ -14,8 +14,7 @@ set -euo pipefail
 export GIT_TERMINAL_PROMPT=0
 
 OLLAMA_MODEL="qwen2.5-coder:3b-instruct"
-OLLAMA_SCRIPT_MODEL="qwen2.5-coder:3b-instruct"
-OLLAMA_REPORT_MODEL="qwen3:4b"
+OLLAMA_SCRIPT_MODEL="$OLLAMA_MODEL"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Load per-user configuration (tokens, UUID, paid-tier flag)
@@ -291,20 +290,19 @@ fi
 # =============================================================================
 # 5. Ollama — model refresh
 # =============================================================================
-header "5/10  Ollama models"
+header "5/10  Ollama model"
 if command -v ollama &>/dev/null; then
     # Check if server is running; if not, start it temporarily
     if curl -s --max-time 3 http://localhost:11434/api/tags &>/dev/null; then
-        info "Ollama server is running — pulling latest models ..."
+        info "Ollama server is running — pulling latest model ..."
         ollama pull "$OLLAMA_MODEL" \
             && ok "$OLLAMA_MODEL up to date" \
             || err "$OLLAMA_MODEL pull failed"
-        ollama pull "$OLLAMA_SCRIPT_MODEL" \
-            && ok "$OLLAMA_SCRIPT_MODEL up to date" \
-            || err "$OLLAMA_SCRIPT_MODEL pull failed"
-        ollama pull "$OLLAMA_REPORT_MODEL" \
-            && ok "$OLLAMA_REPORT_MODEL up to date" \
-            || err "$OLLAMA_REPORT_MODEL pull failed"
+        if [[ "$OLLAMA_SCRIPT_MODEL" != "$OLLAMA_MODEL" ]]; then
+            ollama pull "$OLLAMA_SCRIPT_MODEL" \
+                && ok "$OLLAMA_SCRIPT_MODEL up to date" \
+                || err "$OLLAMA_SCRIPT_MODEL pull failed"
+        fi
     else
         info "Ollama server not running — starting temporarily ..."
         # Performance env vars — apply on native Linux installs too. Safe no-ops
@@ -327,12 +325,11 @@ if command -v ollama &>/dev/null; then
         ollama pull "$OLLAMA_MODEL" \
             && ok "$OLLAMA_MODEL up to date" \
             || err "$OLLAMA_MODEL pull failed"
-        ollama pull "$OLLAMA_SCRIPT_MODEL" \
-            && ok "$OLLAMA_SCRIPT_MODEL up to date" \
-            || err "$OLLAMA_SCRIPT_MODEL pull failed"
-        ollama pull "$OLLAMA_REPORT_MODEL" \
-            && ok "$OLLAMA_REPORT_MODEL up to date" \
-            || err "$OLLAMA_REPORT_MODEL pull failed"
+        if [[ "$OLLAMA_SCRIPT_MODEL" != "$OLLAMA_MODEL" ]]; then
+            ollama pull "$OLLAMA_SCRIPT_MODEL" \
+                && ok "$OLLAMA_SCRIPT_MODEL up to date" \
+                || err "$OLLAMA_SCRIPT_MODEL pull failed"
+        fi
         kill "$OLLAMA_PID" 2>/dev/null || true
     fi
 else
