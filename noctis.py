@@ -115,7 +115,7 @@ NIKTO_DEFAULT_MAXTIME     = int(os.getenv("NOCTIS_NIKTO_MAXTIME", "90"))
 NIKTO_MAXTIME_CAP         = 300
 SAFE_MODE       = True   # can also be used with --aggressive flag for aggressive scanning an enumeration
 AIRGAP_MODE     = True   # default on; --dns opts in to internet-dependent DNS enumeration tools
-MSF_VALIDATE    = False  # set via --msf-validate; runs safe MSF check probes for each CVE match
+MSF_VALIDATE    = False  # set via --msf-validate; runs safe MSF checks broadly or post-positive with --cve-test
 CVE_TEST        = False  # set via --cve-test; LLM generates test scripts per matched CVE
 UNATTENDED      = False  # set via --unattended; auto-approves all prompts (no user input required)
 CVE_KB_DIR           = os.path.join(BASE_DIR, "CVE_KB")
@@ -325,7 +325,8 @@ def _load_kev_db() -> dict:
 
 
 CVE_FRESH_ATTEMPTS  = 5  # fresh LLM-generated scripts per CVE (on top of known-exploit + KB replays)
-CVE_VERIFY_ATTEMPTS = 2  # independent verifier scripts run when any attempt returns VULNERABLE
+CVE_VERIFY_ATTEMPTS = 5  # independent verifier scripts run when any attempt returns VULNERABLE
+CVE_VERIFY_CONFIRM_THRESHOLD = 2  # verifier VULNERABLE count required for CONFIRMED_VULNERABLE
 CVE_BATCH_SIZE      = 5  # prompt user to continue after this many CVEs (runaway guard)
 CVE_LOW_CONFIDENCE_THRESHOLD = 0.35
 CVE_DEFAULT_ATTEMPT_BUDGET   = 8
@@ -2933,6 +2934,116 @@ async def _msf_run_check(module: str, options: dict, target: str, msf_path: str,
         "method":      f"Metasploit {action} (non-destructive — no payload executed)",
         "raw_output":  output[:600],
     }
+
+
+async def _msf_run_post_positive_check(cve: dict, target: str,
+                                       available_tools: dict | None) -> dict | None:
+    """Run MSF check-only validation after another probe returns VULNERABLE."""
+    msf_path = (available_tools or {}).get("msfconsole")
+    if not msf_path:
+        print("  [MSF] msfconsole not found — skipping post-positive validation")
+        return None
+
+    cve_id = cve.get("cve_id", "UNKNOWN")
+    svc_port = re.match(r'(\d+)/', cve.get("service", ""))
+    port = svc_port.group(1) if svc_port else "80"
+    registry_entry = MSF_MODULE_REGISTRY.get(cve_id)
+
+    if registry_entry:
+        module = registry_entry["module"]
+        final_score = registry_entry.get("confidence_score", 0.5) - registry_entry.get("risk_score", 0.5)
+        if registry_entry.get("type") != "exploit" or not registry_entry.get("check_supported"):
+            result = {
+                "module": module,
+                "vulnerable": None,
+                "result": "Module found but it does not expose a safe check-only validation path",
+                "method": "Metasploit post-positive check-only validation",
+                "raw_output": "",
+                "tier": "skip",
+                "final_score": round(final_score, 2),
+                "post_positive": True,
+                "msfconsole_invoked": False,
+            }
+            cve["msf_validation"] = result
+            print(f"  [MSF] {cve_id} — module found but no safe check-only path, skipping")
+            return result
+
+        tier = _msf_decision(registry_entry)
+        if tier == "block":
+            dos = registry_entry.get("dos_risk", "")
+            why = ("dos_risk=high" if dos == "high" else
+                   "intrusive" if registry_entry.get("intrusive") else
+                   "exploit with no safe check")
+            result = {
+                "module": module,
+                "vulnerable": None,
+                "result": f"Blocked by safety policy: {why}",
+                "method": "Metasploit post-positive check-only validation",
+                "raw_output": "",
+                "tier": "block",
+                "final_score": round(final_score, 2),
+                "post_positive": True,
+                "msfconsole_invoked": False,
+            }
+            cve["msf_validation"] = result
+            print(f"  [MSF] {cve_id} — BLOCKED ({why}, score {final_score:.2f})")
+            return result
+
+        options = {**registry_entry["default_opts"], "RPORT": port}
+        if tier == "restricted":
+            options = _msf_apply_restrictions(options)
+        print(f"  [MSF] {cve_id} — post-positive check-only → {module} (port {port}) ...",
+              end=" ", flush=True)
+    else:
+        print(f"  [MSF] {cve_id} — searching for post-positive check module ...")
+        module = await _msf_search_module(cve_id, msf_path)
+        if not module:
+            result = {
+                "module": None,
+                "vulnerable": None,
+                "result": "No Metasploit module found for this CVE",
+                "method": "Metasploit post-positive check-only validation",
+                "raw_output": "",
+                "tier": "skip",
+                "final_score": None,
+                "post_positive": True,
+                "msfconsole_invoked": True,
+            }
+            cve["msf_validation"] = result
+            print(f"  [MSF] {cve_id} — no module found")
+            return result
+        if not module.startswith("exploit/"):
+            result = {
+                "module": module,
+                "vulnerable": None,
+                "result": "Module found, but post-positive validation is check-only and this is not an exploit module",
+                "method": "Metasploit post-positive check-only validation",
+                "raw_output": "",
+                "tier": "skip",
+                "final_score": None,
+                "post_positive": True,
+                "msfconsole_invoked": True,
+            }
+            cve["msf_validation"] = result
+            print(f"  [MSF] {cve_id} — {module} is not check-only eligible, skipping")
+            return result
+        options = _msf_apply_restrictions({"RPORT": port})
+        tier = "restricted"
+        final_score = None
+        print(f"  [MSF] {cve_id} — post-positive check-only → {module} (port {port}) ...",
+              end=" ", flush=True)
+
+    result = await _msf_run_check(module, options, target, msf_path, use_run=False)
+    result["tier"] = tier
+    result["final_score"] = round(final_score, 2) if final_score is not None else None
+    result["post_positive"] = True
+    result["msfconsole_invoked"] = True
+    cve["msf_validation"] = result
+    verdict = ("VULNERABLE" if result["vulnerable"] is True else
+               "NOT EXPLOITABLE" if result["vulnerable"] is False else
+               "UNCONFIRMED")
+    print(verdict)
+    return result
 
 
 async def run_msf_validation(report: dict, target: str, session_dir: str,
@@ -8726,21 +8837,20 @@ def _build_rlimit_preexec():
     if os.name != "posix":
         return None
     try:
-        import resource  # noqa: F401
+        import resource as _resource
     except ImportError:
         return None
 
     def _apply():
-        import resource as _r
         limits = (
-            (_r.RLIMIT_CPU,    _RLIMIT_CPU_SECONDS),
-            (_r.RLIMIT_AS,     _RLIMIT_ADDRESS_BYTES),
-            (_r.RLIMIT_NOFILE, _RLIMIT_FD_COUNT),
-            (_r.RLIMIT_FSIZE,  _RLIMIT_FSIZE_BYTES),
+            (_resource.RLIMIT_CPU,    _RLIMIT_CPU_SECONDS),
+            (_resource.RLIMIT_AS,     _RLIMIT_ADDRESS_BYTES),
+            (_resource.RLIMIT_NOFILE, _RLIMIT_FD_COUNT),
+            (_resource.RLIMIT_FSIZE,  _RLIMIT_FSIZE_BYTES),
         )
         for which, value in limits:
             try:
-                _r.setrlimit(which, (value, value))
+                _resource.setrlimit(which, (value, value))
             except (ValueError, OSError):
                 pass  # best-effort \u2014 some kernels reject specific limits
     return _apply
@@ -10128,9 +10238,10 @@ async def run_cve_tests(cve_matches: list, target: str,
       1a. Replay any Nuclei templates already in the nuclei KB (HTTP CVEs only).
       1b. Replay any scripts already in the knowledge base (proven techniques from prior runs).
       2a. Generate a Nuclei template (HTTP CVEs only, if nuclei available).
-      2b. Generate CVE_FRESH_ATTEMPTS new LLM Python scripts with fresh creative approaches.
-      3. On the first VULNERABLE result, run CVE_VERIFY_ATTEMPTS independent verifier scripts
-         using a different technique to confirm and avoid false positives.
+            2b. Generate CVE_FRESH_ATTEMPTS new LLM Python scripts with fresh creative approaches.
+            3. On the first VULNERABLE result, run CVE_VERIFY_ATTEMPTS independent verifier scripts
+                 using a different technique; CVE_VERIFY_CONFIRM_THRESHOLD must agree for confirmation.
+            4. If --msf-validate is enabled, run a post-positive MSF check-only validation.
     Every CVE_BATCH_SIZE CVEs the user is prompted to continue (runaway guard).
     Returns (cve_test_results, updated_kb).
     """
@@ -10182,7 +10293,9 @@ async def run_cve_tests(cve_matches: list, target: str,
         verdict_counts       = {"VULNERABLE": 0, "NOT_VULNERABLE": 0, "INCONCLUSIVE": 0}
         vulnerable_found     = False
         verification_results: list = []
-        verified             = False  # True if ≥1 verifier independently confirms VULNERABLE
+        verified             = False  # True if enough verifier/MSF evidence confirms VULNERABLE
+        verify_confirmed     = 0
+        msf_post_result: dict | None = None
         kb_pending_vulnerable: list = []  # VULNERABLE scripts deferred until Phase 3 confirms
         seen_script_hashes: set[str] = set()
         attempt_budget = _cve_attempt_budget(cve)
@@ -10211,8 +10324,8 @@ async def run_cve_tests(cve_matches: list, target: str,
         #           safe_validation_method / proof_of_impact specifically)
         # ------------------------------------------------------------------
 
-        # Extract MSF validation result for this CVE (populated by run_msf_validation,
-        # which runs before _run_cve_test_phase).
+        # Extract any pre-existing MSF validation result. During --cve-test this
+        # normally starts empty because MSF now runs post-positive.
         msf_hint: dict | None = cve.get("msf_validation") or None
 
         # Short-circuit: MSF already confirmed this CVE as vulnerable — no need to run
@@ -10634,7 +10747,6 @@ async def run_cve_tests(cve_matches: list, target: str,
             _p3_ollama_up = _ollama_is_up()
             if not _p3_ollama_up:
                 print("  [VERIFY] Ollama is not reachable — skipping verification.")
-            verify_confirmed = 0
             for v_i in range(1, CVE_VERIFY_ATTEMPTS + 1):
                 if not _p3_ollama_up:
                     verification_results.append({
@@ -10701,12 +10813,25 @@ async def run_cve_tests(cve_matches: list, target: str,
                     "verdict":     v_verdict,
                 })
 
-            verified = verify_confirmed >= 1
+            verified = verify_confirmed >= CVE_VERIFY_CONFIRM_THRESHOLD
             if verified:
-                print(f"  [VERIFY] CONFIRMED ({verify_confirmed}/{CVE_VERIFY_ATTEMPTS} verifiers agree)")
+                print(f"  [VERIFY] CONFIRMED ({verify_confirmed}/{CVE_VERIFY_ATTEMPTS} verifiers agree; "
+                      f"threshold {CVE_VERIFY_CONFIRM_THRESHOLD})")
             else:
                 print(f"  [VERIFY] UNCONFIRMED — possible false positive "
-                      f"({verify_confirmed}/{CVE_VERIFY_ATTEMPTS} verifiers agree)")
+                      f"({verify_confirmed}/{CVE_VERIFY_ATTEMPTS} verifiers agree; "
+                      f"threshold {CVE_VERIFY_CONFIRM_THRESHOLD})")
+
+        # ------------------------------------------------------------------
+        # Phase 4: Optional post-positive MSF validation. This only runs after
+        # another probe has produced VULNERABLE and only when the operator opted
+        # in with --msf-validate. It uses MSF check-only validation, never exploit.
+        # ------------------------------------------------------------------
+        if vulnerable_found and MSF_VALIDATE:
+            print("  [MSF] Post-positive validation requested (--msf-validate)")
+            msf_post_result = await _msf_run_post_positive_check(cve, target, available_tools)
+            if msf_post_result and msf_post_result.get("vulnerable") is True:
+                verified = True
 
         # ------------------------------------------------------------------
         # Flush deferred VULNERABLE KB entries — now that we know whether
@@ -10754,13 +10879,12 @@ async def run_cve_tests(cve_matches: list, target: str,
         # ------------------------------------------------------------------
         # Overall verdict — confidence-tiered ladder.
         #
-        #   CONFIRMED_VULNERABLE  (~95%) MSF confirms OR ≥2 independent verifier
-        #                                scripts agree (current `verified` flag).
-        #   PROBABLE_VULNERABLE   (~75%) ≥2 LLM probes returned VULNERABLE but
-        #                                verifier disagreement / not enough
-        #                                cross-technique corroboration.
-        #   MATCHED_VERSION       (~40%) Only one signal (single probe or no
-        #                                probe at all) — banner/version match.
+        #   CONFIRMED_VULNERABLE  (~95%) MSF check confirms OR enough independent
+        #                                verifier scripts agree.
+        #   PROBABLE_VULNERABLE   (~75%) One independent verifier confirms OR
+        #                                multiple executed probes returned VULNERABLE.
+        #   MATCHED_VERSION       (~40%) Single unconfirmed vulnerability signal
+        #                                or banner/version match only.
         #   NOT_VULNERABLE        (~90%) ≥2 NOT_VULNERABLE results, no VULNERABLE.
         #   INCONCLUSIVE                 Probes ran with contradictory or
         #                                ambiguous results.
@@ -10770,12 +10894,16 @@ async def run_cve_tests(cve_matches: list, target: str,
         # ------------------------------------------------------------------
         v_count = verdict_counts["VULNERABLE"]
         n_count = verdict_counts["NOT_VULNERABLE"]
+        msf_result = cve.get("msf_validation") or {}
+        msf_confirmed = msf_result.get("vulnerable") is True
+        one_verifier_confirmed = verify_confirmed >= 1
         valid_attempts = _valid_cve_attempts(attempts)
         executed_attempt_count = len(valid_attempts)
         rejected_probe_count = len(attempts) - executed_attempt_count
-        if vulnerable_found and verified:
+        if vulnerable_found and (verified or msf_confirmed):
             overall = "CONFIRMED_VULNERABLE"
-        elif vulnerable_found and v_count >= 2:
+            verified = True
+        elif vulnerable_found and (one_verifier_confirmed or v_count >= 2):
             overall = "PROBABLE_VULNERABLE"
         elif vulnerable_found:
             overall = "MATCHED_VERSION"
@@ -10813,6 +10941,8 @@ async def run_cve_tests(cve_matches: list, target: str,
             "kb_replayed":          kb_selected,
             "kb_pool_size":         kb_count,
             "verified":             verified,
+            "verify_confirmed":     verify_confirmed,
+            "msf_validation":       cve.get("msf_validation") or {},
             "verification_results": verification_results,
             "inconclusive_reason":  inconclusive_reason,
             "attempts":             attempts,
@@ -12739,7 +12869,8 @@ async def main_async():
     # Order:
     #   1a. CVE testing       (SCRIPT_MODEL: exploit scripts + immediate
     #                          remediation + remediation prose)          [--cve-test]
-    #   1b. MSF validation    (tool-only, no LLM; coder still resident)  [--msf-validate]
+    #   1b. MSF validation    (tool-only, no LLM; broad if --cve-test is off,
+    #                          post-positive check-only if --cve-test is on)
     #   2.  generate_report()
     #         - severity calibration           (SCRIPT_MODEL)
     #         - per-finding remediation        (SCRIPT_MODEL)
@@ -12771,14 +12902,16 @@ async def main_async():
             cve_matches.append(enriched)
 
     # Phase 1a — MSF validation (tool-only, no LLM; coder model still loaded)
-    # Runs before CVE testing so safe MSF metadata/check results can guide or
-    # short-circuit generated probe scripts.
+    # Broad validation only runs when CVE testing is not active. With --cve-test,
+    # MSF is deferred to post-positive check-only corroboration inside run_cve_tests.
     _msf_tools_run: list = []
-    if MSF_VALIDATE and cve_matches:
+    if MSF_VALIDATE and cve_matches and not CVE_TEST:
         _print_scan_eta("MSF validation starting", scan_start)
         _msf_stub = {"cve_matches": cve_matches, "tools_run": _msf_tools_run}
         _msf_stub = await run_msf_validation(_msf_stub, target, session_dir, available_tools)
         _print_scan_eta("MSF validation done", scan_start)
+    elif MSF_VALIDATE and cve_matches and CVE_TEST:
+        print("[MSF] --cve-test active: deferring MSF to post-positive check-only validation.")
 
     # Phase 1b — CVE testing (SCRIPT_MODEL: probe scripts + Pass 1 remediations)
     cve_test_results: list = []
@@ -12805,8 +12938,12 @@ async def main_async():
                               pre_cve_matches=cve_matches if cve_matches else None)
     report["cve_test_results"] = cve_test_results
 
-    # Merge MSF tools_run annotation into the report if any checks ran
-    if "msfconsole" in _msf_tools_run and "msfconsole" not in report.get("tools_run", []):
+    # Merge MSF tools_run annotation into the report if any checks/searches ran
+    _post_positive_msf_ran = any(
+        (c.get("msf_validation") or {}).get("msfconsole_invoked")
+        for c in cve_matches
+    )
+    if ("msfconsole" in _msf_tools_run or _post_positive_msf_ran) and "msfconsole" not in report.get("tools_run", []):
         report.setdefault("tools_run", []).append("msfconsole")
 
     # Attach nmap discovery metadata for report consumers and the HTML renderer
