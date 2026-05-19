@@ -29,7 +29,7 @@ import threading
 import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Optional
 
 if __name__ == "__main__":
@@ -79,13 +79,11 @@ OLLAMA_URL     = os.getenv("NOCTIS_OLLAMA_URL", "http://localhost:11434/api/gene
 #   qwen3:1.7b (~1.1 GB)               — narrative prose: report conclusion, remediation guidance
 #   Peak concurrent RAM during --cve-test: ~3.1 GB. 8 GB RAM recommended.
 #   MODEL            — structured JSON tool-selection decisions
-#   SCRIPT_MODEL     — Python exploit / verification script generation
+#   SCRIPT_MODEL     — Python exploit / verification script generation; also all narrative prose
 #   CVE_SCRIPT_MODEL — CVE exploit/test script generation (falls back to SCRIPT_MODEL)
-#   REPORT_MODEL     — narrative prose: attacker perspective, remediation
 MODEL            = os.getenv("NOCTIS_OLLAMA_MODEL",            "qwen2.5-coder:3b-instruct")
 SCRIPT_MODEL     = os.getenv("NOCTIS_OLLAMA_SCRIPT_MODEL",     "qwen2.5-coder:3b-instruct")
 CVE_SCRIPT_MODEL = os.getenv("NOCTIS_OLLAMA_CVE_SCRIPT_MODEL", SCRIPT_MODEL)
-REPORT_MODEL     = os.getenv("NOCTIS_OLLAMA_REPORT_MODEL",     "qwen3:4b")
 OLLAMA_TIMEOUT = int(os.getenv("NOCTIS_OLLAMA_TIMEOUT", "360"))   # seconds — 360s covers cold model reload (~3 min) after RAM eviction
 
 # Ollama inference options applied to all planning/decision calls.
@@ -930,74 +928,6 @@ def _effective_severity_rules(f) -> str | None:
     return sev
 
 
-def _evict_coder_model() -> None:
-    """Unload the planning/scripting model (SCRIPT_MODEL) from Ollama RAM.
-
-    Called once at the phase boundary between all coder-model work (tool
-    selection, severity calibration, _enrich_finding_remediation) and all
-    report-model work (HC descriptions, executive summary, attacker
-    perspectives, conclusion, audit).  Freeing ~2 GB here lets REPORT_MODEL
-    (qwen3:4b, ~2.6 GB) load into contiguous RAM and run without swap
-    pressure — eliminating the 1-2 minute per-call timeouts observed when
-    both models are resident simultaneously on a CPU-only host.
-
-    Non-fatal — silently ignored if Ollama is unavailable or the model was
-    already unloaded."""
-    try:
-        requests.post(
-            OLLAMA_URL,
-            json={
-                "model":      SCRIPT_MODEL,
-                "prompt":     "",
-                "stream":     False,
-                "keep_alive": 0,
-                "options":    {"num_predict": 1},
-            },
-            timeout=15,
-        )
-    except Exception:
-        pass
-
-
-def _preload_report_model() -> None:
-    """Warm REPORT_MODEL with a *representative* prompt so the first real
-    narrative call doesn't pay a KV-cache resize cost on top of the cold
-    weight load.
-
-    Background: Ollama allocates the KV cache to fit the first prompt's
-    `num_ctx`. A 1-token, num_ctx=512 warmup loads the weights but allocates
-    a tiny cache — then the first real call (HC narrative at num_ctx ~3072)
-    triggers a full re-allocation, adding 1–2 minutes on CPU. By warming at
-    the same scale we'll use in practice, the resize cost is paid once and
-    the first real call hits steady-state inference speed immediately.
-
-    Non-fatal — any error is silently ignored."""
-    try:
-        # Build ~600 tokens of innocuous filler so prompt-eval engages and
-        # the model fully initialises its working buffers at production size.
-        warmup_prompt = (
-            "/no_think\n"
-            "Warm-up only. Reply with the single word: ready.\n\n"
-            + ("filler context line for warmup. " * 120)
-        )
-        requests.post(
-            OLLAMA_URL,
-            json={
-                "model":      REPORT_MODEL,
-                "prompt":     warmup_prompt,
-                "stream":     False,
-                "keep_alive": _OLLAMA_KEEP_ALIVE,
-                # num_ctx matches the largest steady-state report-phase prompt
-                # (batched HC narratives + exec summary digest sit ~2.5k–3k).
-                # num_predict 8 fully initialises the generation pipeline.
-                "options":    {"num_predict": 8, "num_ctx": 3072, "temperature": 0},
-            },
-            timeout=OLLAMA_TIMEOUT,
-        )
-    except Exception:
-        pass
-
-
 # Conservative sign-off pattern — only matches actual closings, not body prose.
 # Used by _clean_summary_prose to trim trailing disclaimers without nuking
 # legitimate sentences that happen to start with words like "Note".
@@ -1051,7 +981,18 @@ def _clean_summary_prose(raw: str) -> str:
             break
         out.append(s)
 
-    return "\n".join(out).strip()
+    # Paragraph-level dedup: drop any paragraph whose normalised first 80 chars
+    # match an earlier paragraph (catches verbatim repetition from loop-prone models).
+    result = "\n".join(out).strip()
+    paragraphs = result.split("\n\n")
+    seen: set = set()
+    deduped: list[str] = []
+    for para in paragraphs:
+        key = re.sub(r'\s+', ' ', para.strip())[:80].lower()
+        if key and key not in seen:
+            seen.add(key)
+            deduped.append(para)
+    return "\n\n".join(deduped).strip()
 
 
 def _apply_cve_uplift_to_counts(report: dict) -> None:
@@ -1316,7 +1257,7 @@ def print_tool_status(available, unavailable):
     for name in sorted(unavailable):
         print(f"  [MISSING] {name}")
     if not AIRGAP_MODE:
-        print(f"\n  [DNS]     DNS enumeration enabled:")
+        print("\n  [DNS]     DNS enumeration enabled:")
         for name in sorted(INTERNET_ONLY_TOOLS):
             print(f"            {name}")
     print(f"{'=' * 52}\n")
@@ -1332,7 +1273,7 @@ def request_approval(tool, args, risk_desc=""):
     if UNATTENDED:
         print(f"[*] UNATTENDED: auto-approving {tool}")
         return True
-    print(f"\n[!] APPROVAL REQUIRED")
+    print("\n[!] APPROVAL REQUIRED")
     print(f"    Tool : {tool}")
     print(f"    Args : {args}")
     if risk_desc:
@@ -2987,7 +2928,7 @@ async def run_msf_validation(report: dict, target: str, session_dir: str,
         return report
 
     if SAFE_MODE:
-        print(f"\n[!] MSF VALIDATION — APPROVAL REQUIRED")
+        print("\n[!] MSF VALIDATION — APPROVAL REQUIRED")
         print(f"    {len(cve_matches)} CVE(s) will be probed using 'check' (non-destructive).")
         print(f"    No exploit payloads will be executed. Target: {target}")
         if UNATTENDED:
@@ -3003,9 +2944,9 @@ async def run_msf_validation(report: dict, target: str, session_dir: str,
             return report
 
     print(f"\n{'=' * 52}")
-    print(f"  MSF EXPLOITATION VALIDATION")
+    print("  MSF EXPLOITATION VALIDATION")
     print(f"  Target : {target}  |  CVEs to check : {len(cve_matches)}")
-    print(f"  Method : scored allowlist — check/run only, no payloads")
+    print("  Method : scored allowlist — check/run only, no payloads")
     print(f"{'=' * 52}")
 
     validated = 0
@@ -3771,7 +3712,7 @@ def run_nmap_discovery(target: str, pinned_ports: str | None = None) -> tuple:
     # ------------------------------------------------------------------ #
     # Phase 2 — Port & service enumeration (version + default scripts)    #
     # ------------------------------------------------------------------ #
-    print(f"[+] Nmap Phase 2 — Service/version enumeration")
+    print("[+] Nmap Phase 2 — Service/version enumeration")
     p2_xml = _nmap_run([
         "-Pn", "-sV", "-sC",
         "-T4",
@@ -3830,7 +3771,7 @@ def run_nmap_discovery(target: str, pinned_ports: str | None = None) -> tuple:
     # ------------------------------------------------------------------ #
     # Phase 3 — Targeted NSE scripts per service                         #
     # ------------------------------------------------------------------ #
-    print(f"[+] Nmap Phase 3 — Targeted NSE script execution")
+    print("[+] Nmap Phase 3 — Targeted NSE script execution")
     # Group ports by service family to batch NSE calls
     script_groups: dict = {}  # scripts_csv -> [port, ...]
     for svc in p1_services:
@@ -3922,7 +3863,7 @@ def run_nmap_discovery(target: str, pinned_ports: str | None = None) -> tuple:
     # ------------------------------------------------------------------ #
     # Phase 4 — OS detection                                              #
     # ------------------------------------------------------------------ #
-    print(f"[+] Nmap Phase 4 — OS detection")
+    print("[+] Nmap Phase 4 — OS detection")
     p4_xml = _nmap_run([
         "-Pn", "-O",
         "--osscan-guess",
@@ -3965,7 +3906,7 @@ def run_nmap_discovery(target: str, pinned_ports: str | None = None) -> tuple:
     # ------------------------------------------------------------------ #
     # Phase 5 — Normalise all data                                        #
     # ------------------------------------------------------------------ #
-    print(f"[+] Nmap Phase 5 — Normalising discovery data")
+    print("[+] Nmap Phase 5 — Normalising discovery data")
     # p1_services now carries merged Phase-2 version data and Phase-3 NSE output.
     # Add OS context to each service so the LLM has full host context per record.
     os_str = os_info.get("name", "")
@@ -4171,7 +4112,6 @@ def query_llm(context, broken_tools=None, available_tools=None, used_actions=Non
     if timed_out_tools is None: timed_out_tools = {}
 
     all_tool_descs = {
-        "curl":       'curl: "http://target:port"',
         "nikto":      'nikto: {"url": "http://target:port", "ssl": false}  — optional: ssl:true to force SSL',
         "nikto_cgi":  'nikto_cgi: {"url": "http://target:port", "ssl": false}  — nikto with -C all (scan ALL CGI directories); use after plain nikto if more coverage needed',
         "nuclei":     'nuclei: {"url": "http://target:port", "tags": "cve,lfi,sqli", "severity": "medium,high,critical"}  — optional: tags (template filter), severity filter',
@@ -4750,7 +4690,6 @@ def _describe_cmd(tool, args, available_tools):
         t    = a.get("threads", 8)
         rate = a.get("rate", 25)
         tmo  = a.get("timeout", 8)
-        ret  = a.get("retries", 1)
         maxt = a.get("maxtime", 300)
         ext  = f" -e .{a['extensions'].replace(',', ',.')}" if a.get("extensions") else ""
         meth = f" -X {a['method']}" if a.get("method", "GET") != "GET" else ""
@@ -4838,7 +4777,6 @@ async def execute_async(action, available_tools, session_dir=None):
         threads  = min(int(args.get("threads",  8)),   15)
         rate     = min(int(args.get("rate",    25)),   50)
         timeout  = min(int(args.get("timeout",  8)),   15)
-        retries  = min(int(args.get("retries",  1)),    2)
         maxtime  = min(int(args.get("maxtime", 300)), 600)
         if rate == 0:
             rate = 25   # hard block on unlimited rate
@@ -4927,7 +4865,7 @@ def query_llm_for_service(
         "curl":       'curl: {"url": "http://target:port/path", "method": "GET", "headers": {}}  — optional: method, headers dict',
         "nikto":      'nikto: {"url": "http://target:port", "ssl": false}  — optional: ssl:true',
         "nikto_cgi":  'nikto_cgi: {"url": "http://target:port", "ssl": false}  — nikto with -C all',
-        "nuclei":     f'nuclei: {{"url": "http://target:port", "tags": "cve,lfi,sqli", "severity": "medium,high,critical"}}',
+        "nuclei":     'nuclei: {"url": "http://target:port", "tags": "cve,lfi,sqli", "severity": "medium,high,critical"}',
         "ffuf":       f'ffuf: {{"url": "http://target:port", "wordlist": "{WORDLIST}", "extensions": "php,html", "method": "GET", "match_codes": "200,301,302,401,403", "maxtime": 300}}',
         "ssh_enum":   'ssh_enum: {"host": "...", "port": "22"}',
         "rdp_enum":   'rdp_enum: {"host": "...", "port": "3389"}',
@@ -6540,11 +6478,14 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
     ))
 
     mini_summary = {
-        "target":         target,
-        "services":       [f"{s['port']}/{s.get('name','')} {s.get('product','')} {s.get('version','')}".strip() for s in services],
-        "tools_run":      tools_run,
-        "finding_counts": counts,
-        "cves":           [f"{c['cve_id']} ({c['severity']}) on {c['service']}" for c in cve_matches[:5]],
+        "target":              target,
+        "services":            [f"{s['port']}/{s.get('name','')} {s.get('product','')} {s.get('version','')}".strip() for s in services],
+        "tools_run":           tools_run,
+        "finding_counts":      counts,
+        "cves":                [f"{c['cve_id']} ({c['severity']}) on {c['service']}" for c in cve_matches[:5]],
+        "top_findings":        [f.title for f in all_findings if f.severity in ("critical", "high", "medium")][:5],
+        "banner_conflicts":    [{"port": s["port"], "reason": s["banner_conflict"]} for s in services if s.get("banner_conflict")],
+        "cve_matches_present": bool(cve_matches),
     }
 
     # ── Deterministic anchor sentence ────────────────────────────────────────
@@ -6660,11 +6601,10 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
                     OLLAMA_URL,
                     json={"model": SCRIPT_MODEL, "stream": False,
                           "keep_alive": _OLLAMA_KEEP_ALIVE,
-                          # num_ctx 3072 + num_predict 900 — sized for the
-                          # actual prompt (anchor + mini_summary JSON ~700
-                          # tokens) plus 3 paragraphs of prose.
-                          "options":    {"num_ctx": 3072, "temperature": 0.7,
-                                         "top_p": 0.9, "num_predict": 900},
+                          # num_ctx 3072 + num_predict 450 — tightened from 900 to
+                          # prevent looping; 3 short paragraphs fit comfortably.
+                          "options":    {"num_ctx": 3072, "temperature": 0.4,
+                                         "top_p": 0.9, "num_predict": 450},
                           "prompt": (
                               "Write a 3-paragraph executive summary for a client "
                               "penetration-test report. Plain text only — no markdown, "
@@ -6679,14 +6619,21 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
                               "that appear in the assessment data below. Do not invent, "
                               "assume, or hallucinate vulnerabilities, CVEs, or issues "
                               "not explicitly listed in the data.\n"
+                              f"SEVERITY COUNTS (authoritative): critical={_c} high={_h} medium={_m} low={_l}. "
+                              "Do NOT describe findings in any severity bucket whose count is zero.\n"
+                              "If cve_matches_present is false, do NOT claim any service is vulnerable "
+                              "to known CVEs or reference any CVE identifier.\n"
+                              "Only name findings that appear in top_findings. "
+                              "Only describe banner_conflict services as potentially vulnerable if they "
+                              "are explicitly listed in the cves data.\n"
                               "P1 = scope, services discovered, finding categories, "
                               "and what the severity spread says about overall posture.\n"
-                              "P2 = name the 2–3 most serious issues and the realistic "
-                              "business impact (focus on impact, not technique).\n"
+                              "P2 = name the 2–3 most serious issues by their exact title from top_findings "
+                              "and the realistic business impact (focus on impact, not technique).\n"
                               "P3 = remediation urgency (days vs weeks) and any "
                               "systemic process/policy gaps.\n"
                               "End paragraph 3 with a complete sentence ending in a "
-                              "full stop. Do NOT repeat the opening sentence verbatim.\n"
+                              "full stop. Do NOT repeat any sentence verbatim.\n"
                               f"Opening sentence (weave in naturally): {_anchor}\n"
                               f"Assessment data: {json.dumps(mini_summary, separators=(',', ':'))}"
                           )},
@@ -6696,8 +6643,19 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
                 if "response" in payload:
                     continuation = _clean_summary_prose(payload["response"])
                     if continuation:
-                        conclusion = f"{_anchor}\n\n{continuation}"
-                        conclusion_llm_ok = True
+                        # Post-generation sanity check: reject hallucinated severity
+                        # buckets or CVE claims that contradict the actual data.
+                        _bad = (
+                            (_c == 0 and re.search(r'\bcritical\b', continuation, re.I))
+                            or (_h == 0 and re.search(r'\bhigh[- ]severity\b|\bhigh-risk find', continuation, re.I))
+                            or (not cve_matches and re.search(r'CVE-\d|known vulnerabilit', continuation, re.I))
+                        )
+                        if _bad:
+                            # Hallucination detected — fall back to anchor-only conclusion
+                            conclusion_llm_ok = False
+                        else:
+                            conclusion = f"{_anchor}\n\n{continuation}"
+                            conclusion_llm_ok = True
                     break
             except Exception as e:
                 print(f"[!] Conclusion LLM error (attempt {attempt + 1}/{MAX_LLM_RETRIES}): {e}")
@@ -7459,8 +7417,6 @@ def _hc_ssh(target: str, port: str, svc: dict) -> list:
     """Check SSH configuration from NSE output."""
     findings = []
     nse: dict = svc.get("nse_output", {})
-    nse_sum: str = svc.get("nse_summary", "").lower()
-
     # --- Auth methods ---------------------------------------------------------
     auth_raw = nse.get("ssh-auth-methods", "") or ""
     if "password" in auth_raw.lower() or "keyboard-interactive" in auth_raw.lower():
@@ -8254,14 +8210,12 @@ def _run_service_health_checks(services: list, target: str) -> list[Finding]:
     for svc in services:
         name = svc.get("name", "").lower()
         port = svc.get("port", "?")
-        dispatched = False
         for fragment, fn in _HC_DISPATCH:
             if fragment in name:
                 try:
                     results.extend(fn(target, port, svc))
                 except Exception as exc:
                     print(f"  [hc] {fragment} check error on port {port}: {exc}")
-                dispatched = True
                 break
         # Universal banner check always runs regardless of dispatch
         try:
@@ -8416,7 +8370,7 @@ def _sanitise_script(obj: dict) -> dict | None:
 
         fixed = _fix_literal_newlines(script)
         if fixed != script:
-            print(f"\n  [Script] Sanitiser fixed bare newline(s) in string literal(s)")
+            print("\n  [Script] Sanitiser fixed bare newline(s) in string literal(s)")
         script = fixed
 
         try:
@@ -9029,7 +8983,7 @@ Reply with ONLY this JSON (no markdown, no code fences):
 
 
 def _generate_cve_test_script(cve: dict, target: str, previous_attempts: list,
-                               kb_entry: dict | None, iteration: int,
+                               kb_entry: dict | None,
                                msf_hint: dict | None = None) -> dict | None:
     """
     Ask the LLM to generate a single safe test script for the given CVE.
@@ -9397,7 +9351,7 @@ def _print_timing(start: float, done: int, total: int) -> None:
     print(f"  Elapsed: {_fmt_dur(elapsed)}  |  ETA: {eta_str}  ({done}/{total} attempts)")
 
 
-def _print_scan_eta(label: str, scan_start: datetime, frac_done: float) -> None:
+def _print_scan_eta(label: str, scan_start: datetime) -> None:
     """Print a one-line phase milestone: label and elapsed time."""
     elapsed = (datetime.now() - scan_start).total_seconds()
     print(f"[*] ── {label} | Elapsed: {_fmt_dur(elapsed)}")
@@ -9671,7 +9625,7 @@ async def run_cve_tests(cve_matches: list, target: str,
 
         has_method = bool(cve.get("safe_validation_method") or cve.get("proof_of_impact"))
         if has_method:
-            print(f"  [P0] Attempting known test method ...")
+            print("  [P0] Attempting known test method ...")
             p0_gen = _generate_known_exploit_script(cve, target, msf_hint=msf_hint)
             if p0_gen:
                 language = p0_gen["language"]
@@ -9888,7 +9842,7 @@ async def run_cve_tests(cve_matches: list, target: str,
         #   LLM sees real feedback — what failed and why — and can adapt.
         # ------------------------------------------------------------------
         if vulnerable_found:
-            print(f"  [Phase 2] VULNERABLE already found — skipping LLM script generation.")
+            print("  [Phase 2] VULNERABLE already found — skipping LLM script generation.")
         new_slots   = CVE_FRESH_ATTEMPTS if not vulnerable_found else 0
         done_new    = 0
 
@@ -9896,7 +9850,7 @@ async def run_cve_tests(cve_matches: list, target: str,
         # connection errors and to surface the real failure reason.
         _p2_ollama_up = _ollama_is_up() if new_slots > 0 else True
         if new_slots > 0 and not _p2_ollama_up:
-            print(f"  [Phase 2] Ollama is not reachable — skipping LLM script generation.")
+            print("  [Phase 2] Ollama is not reachable — skipping LLM script generation.")
 
         for i in range(1, new_slots + 1):
             if not _p2_ollama_up:
@@ -9907,7 +9861,7 @@ async def run_cve_tests(cve_matches: list, target: str,
             attempt_num = len(attempts) + 1
             sp = _Spinner(f"[{i:02d}/{new_slots:02d}] Generating script ...").start()
             generated = _generate_cve_test_script(
-                cve, target, attempts, kb_entry, attempt_num, msf_hint=msf_hint
+                cve, target, attempts, kb_entry, msf_hint=msf_hint
             )
             sp.stop(" OK" if generated else " SKIPPED (parse failure)")
 
@@ -10013,7 +9967,7 @@ async def run_cve_tests(cve_matches: list, target: str,
             print(f"\n  [VERIFY] VULNERABLE found — running {CVE_VERIFY_ATTEMPTS} independent verifier(s) ...")
             _p3_ollama_up = _ollama_is_up()
             if not _p3_ollama_up:
-                print(f"  [VERIFY] Ollama is not reachable — skipping verification.")
+                print("  [VERIFY] Ollama is not reachable — skipping verification.")
             verify_confirmed = 0
             for v_i in range(1, CVE_VERIFY_ATTEMPTS + 1):
                 if not _p3_ollama_up:
@@ -10356,14 +10310,14 @@ def _enrich_hc_findings_batch(findings: list) -> None:
             resp = requests.post(
                 OLLAMA_URL,
                 json={
-                    "model":      REPORT_MODEL,
+                    "model":      SCRIPT_MODEL,
                     "prompt":     prompt,
                     "stream":     False,
-                    "think":      False,
                     "keep_alive": _OLLAMA_KEEP_ALIVE,
                     "options":    {
                         "num_ctx":     4096,
-                        "temperature": 0.2,
+                        "temperature": 0.7,
+                        "top_p":       0.9,
                         "num_predict": _num_predict,
                     },
                 },
@@ -10688,14 +10642,14 @@ def _generate_attacker_perspectives_batch(cves: list) -> dict:
             resp = requests.post(
                 OLLAMA_URL,
                 json={
-                    "model":      REPORT_MODEL,
+                    "model":      SCRIPT_MODEL,
                     "prompt":     prompt,
                     "stream":     False,
-                    "think":      False,
                     "keep_alive": _OLLAMA_KEEP_ALIVE,
                     "options":    {
                         "num_ctx":     4096,
-                        "temperature": 0.2,
+                        "temperature": 0.7,
+                        "top_p":       0.9,
                         "num_predict": _num_predict,
                     },
                 },
@@ -10992,7 +10946,7 @@ def _rewrite_truncated_conclusion(report: dict, prior_conclusion: str,
         resp = requests.post(
             OLLAMA_URL,
             json={
-                "model":      REPORT_MODEL,
+                "model":      SCRIPT_MODEL,
                 "prompt":     prompt,
                 "stream":     False,
                 "keep_alive": _OLLAMA_KEEP_ALIVE,
@@ -11068,13 +11022,16 @@ def _audit_report(report: dict, _pass: int = 1) -> dict:
 
     prompt = (
         "/no_think\n"
-        "Audit the executive summary against the data digest below. Check:\n"
-        "1. Counts mentioned in the summary match the actual counts.\n"
-        "2. The most serious findings (top of digest) are reflected appropriately.\n"
-        "3. Any CVE matches mentioned have accurate verdicts.\n"
-        "4. The prose is professional, complete (not truncated), free of contradictions.\n\n"
+        "Audit the executive summary against the data digest below.\n"
+        "Flag needs_revision=true if ANY of these conditions hold:\n"
+        "  - A paragraph appears more than once (verbatim or near-verbatim).\n"
+        "  - A severity word (critical/high/medium/low) is mentioned while its "
+        "count in FINDING COUNTS is 0.\n"
+        "  - A CVE ID or 'known vulnerabilit' phrase appears while CVE MATCHES is empty.\n"
+        "  - A finding is described that does not appear in TOP FINDINGS.\n"
+        "  - The prose is truncated (ends mid-sentence) or contains contradictions.\n\n"
         "Return ONLY a JSON object — no prose outside it, no markdown fences:\n"
-        '{"needs_revision": true|false, "audit_notes": "<1-2 sentence assessment>"}\n\n'
+        '{"needs_revision": true|false, "audit_notes": "<1-2 sentence description of issues found, or OK>"}\n\n'
         f"DATA DIGEST:\n{digest}"
     )
 
@@ -11084,7 +11041,7 @@ def _audit_report(report: dict, _pass: int = 1) -> dict:
         resp = requests.post(
             OLLAMA_URL,
             json={
-                "model":      REPORT_MODEL,
+                "model":      SCRIPT_MODEL,
                 "prompt":     prompt,
                 "stream":     False,
                 "keep_alive": _OLLAMA_KEEP_ALIVE,
@@ -11123,6 +11080,7 @@ def _audit_report(report: dict, _pass: int = 1) -> dict:
                 notes = txt
     except Exception as e:
         print(f"[!] Report audit error: {e}")
+        report["audit_notes"] = f"Audit error: {e}"
     finally:
         _sp.stop(f" done ({_fmt_dur(time.monotonic() - _t0)})")
 
@@ -11296,9 +11254,9 @@ async def _run_cve_test_phase(report: dict, target: str, session_dir: str,
 
     if SAFE_MODE:
         print(f"\n{'!' * 52}")
-        print(f"  CVE TEST — APPROVAL REQUIRED")
+        print("  CVE TEST — APPROVAL REQUIRED")
         print(f"  {len(cve_matches)} CVE(s) will be tested with LLM-generated scripts.")
-        print(f"  Scripts are read-only probes — no destructive payloads.")
+        print("  Scripts are read-only probes — no destructive payloads.")
         print(f"  Target: {target}")
         print(f"{'!' * 52}")
         if UNATTENDED:
@@ -11644,7 +11602,7 @@ async def main_async():
     if not AIRGAP_MODE:
         print(f"  DNS     : ENABLED — {', '.join(sorted(INTERNET_ONLY_TOOLS))} active")
     else:
-        print(f"  DNS     : disabled (use --dns to enable DNS enumeration)")
+        print("  DNS     : disabled (use --dns to enable DNS enumeration)")
     print(f"  Session : {session_id}")
     print(f"  Dir     : {session_dir}")
 
@@ -11679,7 +11637,7 @@ async def main_async():
     print("  Nmap Discovery — 5 Phases")
     print(f"{'=' * 52}")
     services, nmap_meta = run_nmap_discovery(target, pinned_ports=pinned_ports)
-    _print_scan_eta("Nmap discovery done", scan_start, 0.12)
+    _print_scan_eta("Nmap discovery done", scan_start)
 
     if not services:
         print("[!] No open services found. Exiting.")
@@ -11832,7 +11790,7 @@ async def main_async():
             scan_records.extend(wave_records)
             phase1_count = sum(r.get("findings_count", 0) for r in wave_records)
             print(f"\n[+] Phase 1 complete — {len(wave_records)} tool(s) run, {phase1_count} finding(s)")
-            _print_scan_eta("Phase 1 done", scan_start, 0.20)
+            _print_scan_eta("Phase 1 done", scan_start)
             # Persist KB and refresh context so sequential loop gets updated rates
             _save_tool_kb(tool_kb)
             context["tool_kb_text"] = _tool_kb_summary(tool_kb)
@@ -11854,7 +11812,7 @@ async def main_async():
 
     total_batches = max(1, -(-len(services) // PROBE_BATCH_SIZE))  # ceiling div
     print(f"\n{'=' * 52}")
-    print(f"  Phase 2 — Batched Service Probe Loop")
+    print("  Phase 2 — Batched Service Probe Loop")
     print(f"  Services: {len(services)}  |  "
           f"Batch size: {PROBE_BATCH_SIZE}  |  "
           f"Batches: {total_batches}  |  "
@@ -11899,7 +11857,7 @@ async def main_async():
     print(f"[+] Phase 2 complete — {len(all_findings)} total finding(s) on {target}")
     print(f"[+] Total scan time: {_fmt_dur(time.monotonic() - loop_start)}")
     print(f"{'=' * 52}")
-    _print_scan_eta("Iterations complete", scan_start, 0.70)
+    _print_scan_eta("Iterations complete", scan_start)
 
     # Save session state early so a crash during the long LLM phases doesn't
     # lose target metadata.
@@ -11954,7 +11912,7 @@ async def main_async():
     # Phase 1a — CVE testing (SCRIPT_MODEL: exploit probe scripts + Pass 1 remediations)
     cve_test_results: list = []
     if CVE_TEST and cve_matches:
-        _print_scan_eta("CVE testing starting", scan_start, 0.72)
+        _print_scan_eta("CVE testing starting", scan_start)
         # _run_cve_test_phase mutates cve_matches items in-place (adds overall_verdict
         # etc.) and returns cve_test_results via the stub dict.
         _stub = {"cve_matches": cve_matches}
@@ -11962,7 +11920,7 @@ async def main_async():
                                           available_tools=available_tools)
         cve_test_results = _stub.get("cve_test_results", [])
         _cve_script_failed = _stub.get("cve_llm_failed", 0)
-        _print_scan_eta("CVE testing done", scan_start, 0.80)
+        _print_scan_eta("CVE testing done", scan_start)
     else:
         _cve_script_failed = 0
 
@@ -11971,10 +11929,10 @@ async def main_async():
     # reference confirmed exploit check outcomes in every narrative it produces.
     _msf_tools_run: list = []
     if MSF_VALIDATE and cve_matches:
-        _print_scan_eta("MSF validation starting", scan_start, 0.82)
+        _print_scan_eta("MSF validation starting", scan_start)
         _msf_stub = {"cve_matches": cve_matches, "tools_run": _msf_tools_run}
         _msf_stub = await run_msf_validation(_msf_stub, target, session_dir, available_tools)
-        _print_scan_eta("MSF validation done", scan_start, 0.86)
+        _print_scan_eta("MSF validation done", scan_start)
 
     # ══════════════════════════════════════════════════════════════════════════
     # SINGLE MODEL SWAP — generate_report() owns the eviction boundary.
@@ -12018,11 +11976,6 @@ async def main_async():
         # Regenerate conclusion now that CVE verdicts are known.
         report["conclusion"], report["conclusion_llm_ok"] = _build_conclusion_with_cve(report, target)
 
-    # Audit still uses REPORT_MODEL (qwen3:4b) for its strict JSON discipline.
-    # Swap models now: evict the coder model to free RAM, then warm qwen3.
-    _evict_coder_model()
-    _preload_report_model()
-
     # Proof-read the completed report for coherence and accuracy before save.
     report = _audit_report(report)
 
@@ -12035,7 +11988,7 @@ async def main_async():
     with open(html_path, "w") as fh:
         fh.write(html_content)
     print(f"[+] HTML report → {html_path}")
-    _print_scan_eta("Reports saved", scan_start, 0.97)
+    _print_scan_eta("Reports saved", scan_start)
 
     # Console summary
     print(f"\n{'=' * 52}")
@@ -12091,7 +12044,7 @@ async def main_async():
             print(f"    [{f.get('severity','?').upper():8}] [{v}] {f.get('title','')[:60]}")
 
     print(f"\n  Conclusion : {report.get('conclusion', '')}")
-    print(f"\n  Reports:")
+    print("\n  Reports:")
     print(f"    JSON : {json_path}")
     print(f"    HTML : {html_path}")
     print(f"{'=' * 52}")
@@ -12146,7 +12099,7 @@ def _report_from_json(json_path: str):
     print(f"  Profile   : {report.get('profile', 'unknown')}")
     svc_strs = [f"{s.get('name', '')}:{s.get('port', '')}" for s in report.get("services", [])]
     print(f"  Services  : {', '.join(svc_strs) or 'none'}")
-    print(f"\n  Severity Breakdown:")
+    print("\n  Severity Breakdown:")
     print(f"    Critical : {counts.get('critical', 0)}")
     print(f"    High     : {counts.get('high', 0)}")
     print(f"    Medium   : {counts.get('medium', 0)}")
@@ -12167,7 +12120,7 @@ def _report_from_json(json_path: str):
             print(f"    [{label:<14}] {c.get('cve_id', '')} — {c.get('summary', '')[:55]}")
 
     print(f"\n  Conclusion : {report.get('conclusion', '')}")
-    print(f"\n  Reports:")
+    print("\n  Reports:")
     print(f"    JSON : {json_path}")
     print(f"    HTML : {html_path}")
     print(f"{'=' * 52}")

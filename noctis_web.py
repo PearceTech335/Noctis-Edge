@@ -27,14 +27,11 @@ if __name__ == "__main__":
         os.execve(_VENV_PY, [_VENV_PY, __file__, *sys.argv[1:]], _env)
 
 import json
-import os
 import pty
-import queue
 import re
 import select
 import subprocess
 import threading
-from pathlib import Path
 
 from flask import Flask, render_template_string, request, jsonify
 from flask_sock import Sock
@@ -284,7 +281,7 @@ def api_start():
 
 @app.route("/api/stop", methods=["POST"])
 def api_stop():
-    global _process, _running
+    global _running
     with _lock:
         proc = _process
     if proc and proc.poll() is None:
@@ -1446,7 +1443,7 @@ def main():
         print(f"[*] Open your browser at: http://localhost:{port}")
     else:
         print(f"[*] Open your browser at: http://127.0.0.1:{port}")
-    print(f"[*] Press Ctrl+C to stop the server\n")
+    print("[*] Press Ctrl+C to stop the server\n")
 
     # use_reloader=False is important — the scanner subprocess must not be forked
     app.run(host=bind_host, port=port, debug=False, use_reloader=False, threaded=True)
