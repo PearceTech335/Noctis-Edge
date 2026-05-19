@@ -9398,15 +9398,9 @@ def _print_timing(start: float, done: int, total: int) -> None:
 
 
 def _print_scan_eta(label: str, scan_start: datetime, frac_done: float) -> None:
-    """Print a one-line phase status: current time, elapsed, and estimated completion."""
-    now     = datetime.now()
-    elapsed = (now - scan_start).total_seconds()
-    if frac_done > 0.02:
-        eta = scan_start + timedelta(seconds=elapsed / frac_done)
-        eta_str = eta.strftime("%H:%M:%S")
-    else:
-        eta_str = "calculating…"
-    print(f"[*] ── {label} | Time: {now.strftime('%H:%M:%S')} | Elapsed: {_fmt_dur(elapsed)} | Est. completion: {eta_str}")
+    """Print a one-line phase milestone: label and elapsed time."""
+    elapsed = (datetime.now() - scan_start).total_seconds()
+    print(f"[*] ── {label} | Elapsed: {_fmt_dur(elapsed)}")
 
 
 def _script_score(s: dict) -> float:
