@@ -6,7 +6,7 @@
 
 - **Single-model runtime:** All default LLM roles now use `qwen2.5-coder:3b-instruct`. Docker launchers, `docker-compose.yml`, `setup.sh`, and `update.sh` no longer pull or configure a separate `REPORT_MODEL`; normal installs need only one ~2 GB model. `MODEL`, `SCRIPT_MODEL`, and `CVE_SCRIPT_MODEL` remain logical roles in code, but by default they resolve to the same physical model.
 - **Large-report filtering:** HTML reports now include clickable severity summary boxes plus a vanilla-JavaScript filter/sort bar for finding text, severity, service type, and sort order. This keeps large scans navigable without external assets or a server-side UI.
-- **Direct remediation actions:** Each finding detail now renders a `[▸ Remediation Action]` section with copy-ready operator steps when LLM remediation data is available, plus a grounded fallback when it is not.
+- **Cleaner remediation layout:** Finding details keep remediation in the existing `IMMEDIATE REMEDIATION PATH` and `Long-term Fix` cards, avoiding duplicate action sections while preserving copy-ready operator steps.
 - **Evidence callouts:** Finding evidence and execution output previews now highlight matching lines and substrings, making relevant proof easier to spot inside raw tool output.
 - **TOC visibility:** The sticky report table of contents now uses a light-green background with dark text and a stronger scroll shadow.
 - **Executive summary quality controls:** Executive summary generation now uses warmer but bounded prose settings and validates severity counts, unsupported CVE claims, unsupported generic web-security advice, markdown/list drift, and falsely reassuring posture language. Invalid prose is replaced with a polished evidence-grounded summary generated from recorded scan data.

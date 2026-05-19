@@ -509,7 +509,7 @@ The worker is already deployed at `https://noctis-kb-relay.pearcetechnologies1.w
 
 - **Single-model runtime:** Docker, setup, and update paths now pull only `qwen2.5-coder:3b-instruct` by default. Planning, script generation, CVE probes, executive summaries, report audit, attacker perspectives, and per-finding descriptions all route through the coder model. `NOCTIS_OLLAMA_CVE_SCRIPT_MODEL` remains an optional expert override, but no second model is required for normal installs.
 - **Report usability for large scans:** HTML reports now include clickable severity summary boxes, a vanilla-JavaScript finding filter bar, service filtering, sorting, and visible-result counts. Reports remain self-contained static HTML.
-- **Actionable remediation sections:** Each finding detail now includes an explicit `[▸ Remediation Action]` block that surfaces copy-ready remediation steps from the local model/knowledge-base path when available.
+- **Cleaner remediation layout:** Finding details now keep remediation in the existing `IMMEDIATE REMEDIATION PATH` and `Long-term Fix` cards, avoiding duplicate action sections while preserving copy-ready operator steps.
 - **Evidence callouts:** Finding evidence and execution output previews now highlight matching lines and substrings so operators can spot the relevant proof faster inside noisy tool output.
 - **Executive summary guardrails:** Summary generation uses warmer prose settings but now validates severity counts, unsupported CVE claims, generic unsupported web-security advice, and markdown/list drift before rendering. If prose fails factual validation, Noctis emits a polished evidence-grounded summary from recorded scan data.
 

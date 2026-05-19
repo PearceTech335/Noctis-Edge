@@ -5933,23 +5933,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       {% endif %}
       {% set _sw = f.llm_remediation_short | parse_json %}
       {% set _lf = f.llm_remediation_long | parse_json %}
-            <details open style="background:#081b0d;border:1px solid #2e7d32;border-radius:6px;margin:0 0 .8em 0">
-                <summary style="cursor:pointer;color:#a5d6a7;font-weight:700;padding:.65em .9em;user-select:none;list-style:none">[&#9656; Remediation Action]</summary>
-                <div style="border-top:1px solid #1b5e20;padding:.75em .95em;color:#c8e6c9;font-size:.88em;line-height:1.65">
-                    {% if _sw %}
-                    <div style="margin-bottom:.55em;color:#e8f5e9;font-weight:700">Copy-ready operator steps</div>
-                    <ol style="margin:.25em 0 .7em 0;padding-left:1.25em">{% for _s in _sw %}<li style="margin:.35em 0"><code style="background:#07120a;color:#dcedc8;border:1px solid #1b5e20;border-radius:4px;padding:.12em .35em;white-space:pre-wrap">{{ _s }}</code></li>{% endfor %}</ol>
-                    {% elif f.description %}
-                    <div style="white-space:pre-wrap">{{ f.description | remediation_excerpt }}</div>
-                    {% else %}
-                    <div>Review the evidence above, restrict the exposed service or feature, then re-run the recorded command to confirm the finding is no longer present.</div>
-                    {% endif %}
-                    {% if _lf %}
-                    <div style="margin-top:.6em;color:#81d4fa;font-weight:700">Long-term control</div>
-                    <ol style="margin:.25em 0 0 0;padding-left:1.25em;color:#b3e5fc">{% for _l in _lf[:2] %}<li style="margin:.3em 0">{{ _l }}</li>{% endfor %}</ol>
-                    {% endif %}
-                </div>
-            </details>
       {% if not _sw and f.llm_remediation_failed %}
       <div style="background:#2a1d00;border-left:4px solid #ffb300;border-radius:0 6px 6px 0;padding:.8em 1em;margin-bottom:.8em;display:flex;align-items:flex-start;gap:.7em">
         <span style="color:#ffb300;font-size:1.1em;flex-shrink:0">&#9888;</span>
@@ -6693,17 +6676,6 @@ def _evidence_callouts(text, context=""):
     return "\n".join(rendered)
 
 
-def _remediation_excerpt(text) -> str:
-    raw = str(text or "").strip()
-    if not raw:
-        return ""
-    match = re.search(r"(?is)remediation\s*[:\-–—]?\s*(.+)", raw)
-    if not match:
-        return "Review the evidence, apply the vendor or platform hardening guidance for this issue, and re-test the target."
-    excerpt = re.split(r"(?is)\n\s*(business impact|references|steps to reproduce)\s*[:\-–—]?", match.group(1))[0]
-    return excerpt.strip()[:900]
-
-
 def generate_html_report(report_data):
     # Back-fill inconclusive_reason for reports generated before this field existed
     cve_results = report_data.get("cve_test_results", [])
@@ -6761,7 +6733,6 @@ def generate_html_report(report_data):
     _env.filters['safe_url']   = lambda u: u if isinstance(u, str) and u.startswith(('https://', 'http://')) else '#'
     _env.filters['parse_json'] = lambda s: json.loads(s) if (s and s.strip().startswith('[')) else None
     _env.filters['evidence_callouts'] = _evidence_callouts
-    _env.filters['remediation_excerpt'] = _remediation_excerpt
     return _env.from_string(HTML_TEMPLATE).render(**data)
 
 
@@ -10875,7 +10846,7 @@ def _enrich_finding_remediation(f) -> None:
         "short_steps = 3 immediate workaround actions an operator can complete TODAY without a full upgrade.\n"
         "  Rules: name the exact service, config file, or CLI command tailored to the observed product; "
         "use imperative verbs that match the CLASSIFICATION above; each step 1-2 sentences max.\n\n"
-        "long_steps = 3 permanent remediation actions for the development/infrastructure backlog.\n"
+        "long_steps = 3 permanent fix steps for the development/infrastructure backlog.\n"
         "  Rules: reference the specific component, version upgrade path, or architectural change; "
         "each step 1-2 sentences max.\n\n"
         f"Technology context: {product or f.service}. "
