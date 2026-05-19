@@ -2,13 +2,24 @@
 
 ---
 
+## What's New in v0.10.1
+
+- **Scan timeout and service-planning hardening:** HTTP-only tools (`nikto`, `nuclei`, `ffuf`) are now gated to confirmed HTTP/HTTPS services, preventing wasted web scans against SMB, SSH, RPC, and other non-HTTP ports. Tool timeouts are recorded as explicit incomplete coverage instead of being buried in otherwise successful-looking output.
+- **CVE probe quality controls:** CVE replay and generation now reject duplicate scripts, placeholder probes, dummy targets, and protocol-mismatched raw probes before execution. Rejected probes are shown separately as non-evidence, do not inflate `INCONCLUSIVE`, and cannot push a CVE toward `NOT_VULNERABLE`.
+- **`NOT_TESTABLE` CVE verdict:** When every available generated or replayed probe is rejected before execution, Noctis now reports `NOT_TESTABLE` with a manual-review reason instead of treating bad probes as negative evidence.
+- **Safer 3b script generation:** The CVE script prompts no longer teach the model placeholder examples such as `PORT`, `PROBE`, `SIGNATURE`, `X-Version`, or fake version constants. When the supplied CVE detail is insufficient for a protocol-correct check, the model is directed to emit a low-confidence `INCONCLUSIVE` script instead of inventing raw TCP probes.
+- **CVE applicability pruning:** Low-confidence and obvious product-mismatched CVEs are routed to manual review rather than broad active probing, reducing noisy CVE tests on unrelated services.
+- **Report polish:** The floating table of contents now uses a blue style aligned with the report palette while remaining visually distinct during scrolling. CVE testing evidence now shows rejected-probe counts alongside executed verdict counts.
+- **Docker validation:** The `noctis` Docker image was rebuilt from this code and the scanner changes were validated with syntax/lint checks plus targeted smoke tests for rejected-probe accounting.
+
+---
+
 ## What's New in v0.10.0
 
 - **Single-model runtime:** All default LLM roles now use `qwen2.5-coder:3b-instruct`. Docker launchers, `docker-compose.yml`, `setup.sh`, and `update.sh` no longer pull or configure a separate `REPORT_MODEL`; normal installs need only one ~2 GB model. `MODEL`, `SCRIPT_MODEL`, and `CVE_SCRIPT_MODEL` remain logical roles in code, but by default they resolve to the same physical model.
 - **Large-report filtering:** HTML reports now include clickable severity summary boxes plus a vanilla-JavaScript filter/sort bar for finding text, severity, service type, and sort order. This keeps large scans navigable without external assets or a server-side UI.
 - **Cleaner remediation layout:** Finding details keep remediation in the existing `IMMEDIATE REMEDIATION PATH` and `Long-term Fix` cards, avoiding duplicate action sections while preserving copy-ready operator steps.
 - **Evidence callouts:** Finding evidence and execution output previews now highlight matching lines and substrings, making relevant proof easier to spot inside raw tool output.
-- **TOC visibility:** The sticky report table of contents now uses a light-green background with dark text and a stronger scroll shadow.
 - **Executive summary quality controls:** Executive summary generation now uses warmer but bounded prose settings and validates severity counts, unsupported CVE claims, unsupported generic web-security advice, markdown/list drift, and falsely reassuring posture language. Invalid prose is replaced with a polished evidence-grounded summary generated from recorded scan data.
 
 ---

@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # <https://www.gnu.org/licenses/agpl-3.0.html>
 """
-Noctis Edge — Security Through Exposure  v0.10.0
+Noctis Edge — Security Through Exposure  v0.10.1
 Implements: structured findings, verification,
 approval gates, async execution, HTML reports,
 service-specific enumerations, risk scoring,
@@ -12,7 +12,7 @@ EPSS exploit-probability scoring, NVD CVSS offline database,
 NIST CSF 2.0 compliance mapping, and OT/ICS asset classification.
 """
 
-VERSION = "v0.10.0"
+VERSION = "v0.10.1"
 
 import asyncio
 import dataclasses
@@ -327,9 +327,14 @@ def _load_kev_db() -> dict:
 CVE_FRESH_ATTEMPTS  = 5  # fresh LLM-generated scripts per CVE (on top of known-exploit + KB replays)
 CVE_VERIFY_ATTEMPTS = 2  # independent verifier scripts run when any attempt returns VULNERABLE
 CVE_BATCH_SIZE      = 5  # prompt user to continue after this many CVEs (runaway guard)
+CVE_LOW_CONFIDENCE_THRESHOLD = 0.35
+CVE_DEFAULT_ATTEMPT_BUDGET   = 8
+CVE_HIGH_CONFIDENCE_BUDGET   = 14
+CVE_LOW_CONFIDENCE_BUDGET    = 4
 
 # Tools that rely on internet OSINT sources and should be skipped in airgap mode
 INTERNET_ONLY_TOOLS = {"amass", "dnsenum", "dnsrecon"}
+HTTP_ONLY_SCAN_TOOLS = {"nikto", "nikto_cgi", "nuclei", "ffuf", "nuclei_aggressive"}
 
 # ---------------------------------------------------------------------------
 # TOOL CONFIDENCE WEIGHTS
@@ -4060,10 +4065,13 @@ def rank_and_annotate_services(services):
             port_int = 0
         ot_info = _OT_PORTS.get(port_int, {})
         asset_type = _classify_asset(s)
+        recommended_tools = _filter_tools_for_service(
+            _tools_for_service(s.get("name", ""), port=port_int), s
+        )
         annotated.append({
             **s,
             "priority":          _service_priority(s),
-            "recommended_tools": _tools_for_service(s.get("name", "")),
+            "recommended_tools": recommended_tools,
             "cves":              [],
             "asset_type":        asset_type,
             "ot_protocol":       ot_info.get("protocol", ""),
@@ -4424,7 +4432,7 @@ def _untested_service_fallback(
         if any(port in ak for ak in used_actions):
             continue
         # Pick the best tool from the service's recommended list
-        rec_tools = svc.get("recommended_tools", []) or ["curl"]
+        rec_tools = _filter_tools_for_service(svc.get("recommended_tools", []) or ["curl"], svc)
         for tool in rec_tools:
             if tool in broken_tools:
                 continue
@@ -4436,6 +4444,8 @@ def _untested_service_fallback(
             if tool == "rdp_enum"  and "rdpscan"   not in available_tools:
                 continue
             if tool in ("nxc_smb", "nxc_ldap") and "nxc" not in available_tools:
+                continue
+            if tool in HTTP_ONLY_SCAN_TOOLS and not _is_http_service(svc):
                 continue
             # Build minimal args for the chosen tool
             proto = "https" if ("ssl" in svc_name.lower() or "https" in svc_name.lower()) else "http"
@@ -4517,11 +4527,13 @@ def query_llm_parallel(context, broken_tools=None, available_tools=None, used_ac
         "mysql_enum": 'mysql_enum: {"host": "...", "port": "3306"}',
         "mssql_enum": 'mssql_enum: {"host": "...", "port": "1433"}',
     }
+    web_unmatched = [s for s in unmatched if _is_http_service(s)]
     available_descs = [
         f"- {desc}" for name, desc in all_tool_descs.items()
         if name not in broken_tools
         and not (name == "ssh_enum"  and "ssh-audit" not in available_tools)
         and not (name == "rdp_enum"  and "rdpscan"   not in available_tools)
+        and (name not in HTTP_ONLY_SCAN_TOOLS or bool(web_unmatched))
     ]
     tools_block = "\n".join(available_descs)
 
@@ -4584,6 +4596,8 @@ If no suitable tool exists: {{"actions": []}}"""
                     if not isinstance(action, dict):
                         continue
                     if not validate_action(action):
+                        continue
+                    if not _http_tool_allowed_for_action(action, unmatched):
                         continue
                     key = f"{action['tool']}:{str(action.get('args', ''))}"
                     if key in used_actions or key in seen:
@@ -4906,6 +4920,53 @@ def _recommended_tool_names(recommended_tools: list) -> list[str]:
     return names
 
 
+def _timed_out_output(output: str | None) -> bool:
+    """Return True when a tool output represents a hard timeout."""
+    return bool(output) and "command timed out" in output.lower()
+
+
+def _filter_tools_for_service(tools: list[str], svc: dict) -> list[str]:
+    """Remove protocol-specific tools that do not fit the detected service."""
+    if _is_http_service(svc):
+        return tools
+    return [tool for tool in tools if tool not in HTTP_ONLY_SCAN_TOOLS]
+
+
+def _action_port(action: dict) -> str:
+    """Best-effort extraction of the target port from a planner action."""
+    args = action.get("args", {}) if isinstance(action, dict) else {}
+    if isinstance(args, dict):
+        if args.get("port"):
+            return str(args.get("port"))
+        url = str(args.get("url", ""))
+    else:
+        url = str(args)
+    m = re.search(r'https?://[^/:\s]+:(\d+)', url)
+    if m:
+        return m.group(1)
+    if url.startswith("https://"):
+        return "443"
+    if url.startswith("http://"):
+        return "80"
+    return ""
+
+
+def _service_for_action(action: dict, services: list) -> dict | None:
+    port = _action_port(action)
+    if not port:
+        return None
+    return next((svc for svc in services if str(svc.get("port", "")) == port), None)
+
+
+def _http_tool_allowed_for_action(action: dict, services: list) -> bool:
+    """Return whether an action's HTTP-only tool matches a real HTTP service."""
+    tool = action.get("tool", "")
+    if tool not in HTTP_ONLY_SCAN_TOOLS:
+        return True
+    svc = _service_for_action(action, services)
+    return bool(svc and _is_http_service(svc))
+
+
 def _tool_is_available(tool: str, available_tools: dict) -> bool:
     """Return whether a logical Noctis tool has the required local binary."""
     if tool == "nikto_cgi":
@@ -5021,11 +5082,13 @@ def query_llm_for_service(
         "mysql_enum": 'mysql_enum: {"host": "...", "port": "3306"}',
         "mssql_enum": 'mssql_enum: {"host": "...", "port": "1433"}',
     }
+    svc_is_http = _is_http_service(svc)
     available_descs = [
         f"- {desc}" for tname, desc in all_tool_descs.items()
         if tname not in broken_tools
         and not (tname == "ssh_enum" and "ssh-audit"  not in available_tools)
         and not (tname == "rdp_enum" and "rdpscan"    not in available_tools)
+        and (tname not in HTTP_ONLY_SCAN_TOOLS or svc_is_http)
     ]
     tools_block = "\n".join(available_descs)
 
@@ -5136,6 +5199,8 @@ or
                     stripped = stripped.rsplit("```", 1)[0]
                 action = json.loads(stripped.strip())
                 if validate_action(action):
+                    if not _http_tool_allowed_for_action(action, [svc]):
+                        return {"tool": "none"}
                     return action
             except json.JSONDecodeError:
                 pass
@@ -5261,7 +5326,7 @@ async def run_service_probe_batch(
                 tool = orig_action.get("tool", "?")
                 st   = orig_action["_svc_state"]
 
-                timed_out_w = "Command timed out" in (output or "")
+                timed_out_w = _timed_out_output(output)
                 _record_tool_outcome(
                     tool_kb, tool,
                     _svc_key(tool, orig_action.get("args", ""), services_batch),
@@ -5356,6 +5421,7 @@ async def run_parallel_wave(actions, available_tools, session_dir):
                 output, findings = result
             output = output or ""
             broken = is_tool_broken(output)
+            timed_out = (not broken) and _timed_out_output(output)
 
             if findings and not broken:
                 for f in findings:
@@ -5372,8 +5438,8 @@ async def run_parallel_wave(actions, available_tools, session_dir):
                 "tool":           tool,
                 "args":           args,
                 "cmd":            _describe_cmd(tool, args, available_tools),
-                "status":         "broken" if broken else "ok",
-                "timed_out":      (not broken) and ("Command timed out" in output),
+                "status":         "broken" if broken else ("timeout" if timed_out else "ok"),
+                "timed_out":      timed_out,
                 "output":         output[:400],
                 "findings_count": len(findings) if not broken else 0,
                 "phase":          "parallel-wave",
@@ -5632,10 +5698,10 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   .report-hero-left .meta{color:#ccc;font-size:.92em;line-height:1.9}
   .report-hero-left .meta strong{color:#00d4ff}
   .report-hero-logo{flex-shrink:0;display:flex;align-items:stretch}
-    .toc{position:sticky;top:0;z-index:3;background:#c8f7c5;color:#123018;border:1px solid #4caf50;border-radius:6px;padding:.55em .8em;margin:0 0 18px 0;display:flex;flex-wrap:wrap;gap:.45em .8em;align-items:center;font-size:.84em;box-shadow:0 4px 18px rgba(0,0,0,.28)}
-    .toc strong{color:#123018;margin-right:.3em}
-    .toc a{color:#173b1d;text-decoration:none;padding:.15em .35em;border-radius:4px;font-weight:600}
-    .toc a:hover{background:#2e7d32;color:#fff}
+    .toc{position:sticky;top:0;z-index:3;background:#0b3454;color:#e1f5fe;border:1px solid #29b6f6;border-radius:6px;padding:.55em .8em;margin:0 0 18px 0;display:flex;flex-wrap:wrap;gap:.45em .8em;align-items:center;font-size:.84em;box-shadow:0 8px 24px rgba(0,0,0,.35),0 0 0 1px rgba(0,212,255,.14)}
+    .toc strong{color:#b3e5fc;margin-right:.3em}
+    .toc a{color:#d7f3ff;text-decoration:none;padding:.15em .35em;border-radius:4px;font-weight:600}
+    .toc a:hover{background:#00d4ff;color:#061724}
   @media print{
     body{background:#fff!important;color:#000!important;padding:12px}
     h1,h2{color:#000!important;border-color:#000!important}
@@ -6066,6 +6132,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       <span style="color:#ff5252;font-weight:700">&#128308; CONFIRMED EXPLOITABLE</span> &mdash; Active probing confirmed this CVE is exploitable on this host.<br>
       <span style="color:#66bb6a;font-weight:700">&#9989; NOT VULNERABLE</span> &mdash; Tested; host was not found to be affected. Severity reflects the general CVE risk class.<br>
       <span style="color:#ffca28;font-weight:700">&#9888; INCONCLUSIVE</span> &mdash; Probes ran but could not confirm or rule out exploitability; verify manually.<br>
+    <span style="color:#64b5f6;font-weight:700">&#9432; NOT TESTABLE</span> &mdash; Available generated probes were rejected before execution because they were low-quality or unsafe.<br>
       <span style="color:#90a4ae;font-weight:700">&#9680; UNVERIFIED</span> &mdash; Matched by version fingerprint only; not actively probed. May be a false positive.
     </div>
   </div>
@@ -6144,6 +6211,11 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         <span style="font-size:1.2em">&#9888;</span>
         <div><strong style="color:#ffca28;font-size:.92em">TESTING INCONCLUSIVE</strong><div style="color:#ffe082;font-size:.84em;margin-top:.2em">Probes ran but could not confirm or rule out exploitability. Treat as potentially exposed and verify manually.</div></div>
       </div>
+            {% elif _tv == 'NOT_TESTABLE' %}
+            <div style="background:#071d2e;border-left:4px solid #29b6f6;border-radius:0 6px 6px 0;padding:.7em 1em;margin-bottom:1em;display:flex;align-items:center;gap:.7em">
+                <span style="font-size:1.2em">&#9432;</span>
+                <div><strong style="color:#64b5f6;font-size:.92em">NOT TESTABLE BY GENERATED PROBES</strong><div style="color:#b3e5fc;font-size:.84em;margin-top:.2em">No executed probe produced valid evidence. Low-quality or protocol-mismatched probes were rejected before use; verify manually.</div></div>
+            </div>
       {% else %}
       <div style="background:#111820;border-left:4px solid #546e7a;border-radius:0 6px 6px 0;padding:.7em 1em;margin-bottom:1em;display:flex;align-items:center;gap:.7em">
         <span style="font-size:1.2em">&#9680;</span>
@@ -6342,14 +6414,15 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         {% if _tv == 'CONFIRMED_VULNERABLE' %}{% set _vbg="#3d0000" %}{% set _vborder="#ff1744" %}
         {% elif _tv == 'NOT_VULNERABLE' %}{% set _vbg="#0a2a12" %}{% set _vborder="#43a047" %}
         {% elif _tv == 'PROBABLE_VULNERABLE' %}{% set _vbg="#3a1800" %}{% set _vborder="#ff9800" %}
-        {% elif _tv == 'MATCHED_VERSION' or _tv == 'VULNERABLE' %}{% set _vbg="#2a1a00" %}{% set _vborder="#ffb300" %}
+                {% elif _tv == 'MATCHED_VERSION' or _tv == 'VULNERABLE' %}{% set _vbg="#2a1a00" %}{% set _vborder="#ffb300" %}
+                {% elif _tv == 'NOT_TESTABLE' %}{% set _vbg="#071d2e" %}{% set _vborder="#29b6f6" %}
         {% else %}{% set _vbg="#1c1c1c" %}{% set _vborder="#757575" %}{% endif %}
         <div style="border-left:3px solid {{ _vborder }};background:{{ _vbg }};border-radius:0 4px 4px 0;padding:.6em .9em;margin-bottom:.5em;font-size:.86em">
           <div style="display:flex;gap:.8em;align-items:center;flex-wrap:wrap">
             <strong style="color:#e0e0e0">Active Probe Results</strong>
-            <span style="color:#aaa;font-size:.82em">{{ _tr.attempts_run }} attempts &mdash; V:{{ _tr.verdict_counts.VULNERABLE }} N:{{ _tr.verdict_counts.NOT_VULNERABLE }} I:{{ _tr.verdict_counts.INCONCLUSIVE }} &mdash; KB replayed: {{ _tr.kb_replayed }}</span>
+                        <span style="color:#aaa;font-size:.82em">{{ _tr.attempts_run }} executed &mdash; V:{{ _tr.verdict_counts.VULNERABLE }} N:{{ _tr.verdict_counts.NOT_VULNERABLE }} I:{{ _tr.verdict_counts.INCONCLUSIVE }}{% if _tr.rejected_probes %} R:{{ _tr.rejected_probes }}{% endif %} &mdash; KB replayed: {{ _tr.kb_replayed }}</span>
           </div>
-          {% if _tv == 'INCONCLUSIVE' and _tr.inconclusive_reason %}
+                    {% if (_tv == 'INCONCLUSIVE' or _tv == 'NOT_TESTABLE') and _tr.inconclusive_reason %}
           <div style="color:#ffe082;font-size:.84em;margin-top:.4em">{{ _tr.inconclusive_reason }}</div>
           {% endif %}
         </div>
@@ -6376,6 +6449,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             {% if a.get('source') == 'kb_replay' %}<span style="color:#ce93d8;font-size:.8em">[KB]</span>{% endif %}
             {% if a.verdict == 'VULNERABLE' %}<span style="color:#ef9a9a">&#9679;</span>
             {% elif a.verdict == 'NOT_VULNERABLE' %}<span style="color:#a5d6a7">&#9679;</span>
+            {% elif a.verdict == 'REJECTED_PROBE' %}<span style="color:#64b5f6">&#9679;</span>
             {% else %}<span style="color:#ffcc80">&#9679;</span>{% endif %}
             {{ a.verdict }} &mdash; {{ a.strategy[:80] }} ({{ a.language }})
           </summary>
@@ -6840,7 +6914,7 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
     # Timed-out tools for coverage section
     timed_out_scan_records = [
         r for r in scan_records
-        if r.get("timed_out") or "Command timed out" in (r.get("output", "") or "")
+        if r.get("timed_out") or _timed_out_output(r.get("output", ""))
     ]
 
     cve_matches = []
@@ -7120,7 +7194,14 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
         "target_info":   target_info.to_dict() if target_info else {},
         "compliance_summary": compliance_summary,
         "timed_out_tools": [
-            {"tool": r.get("tool", ""), "args": str(r.get("args", "") or "")}
+            {
+                "tool": r.get("tool", ""),
+                "args": str(r.get("args", "") or ""),
+                "cmd": r.get("cmd", ""),
+                "status": r.get("status", "timeout"),
+                "phase": r.get("phase", ""),
+                "output": (r.get("output", "") or "")[:160],
+            }
             for r in timed_out_scan_records
         ],
         "effective_severity_map": _eff_sev_map,
@@ -9299,7 +9380,7 @@ FORBIDDEN — product/service name presence alone MUST NEVER produce VERDICT: VU
     if '200 OK' in response: ...            # generic success is not vulnerability evidence
 
 Path 1 template (version-based):
-    m = re.search(r'ProductName[_/ ]([\d.]+)', banner)
+    m = re.search(r'([0-9]+(?:\.[0-9]+)+)', banner)
     if not m: print('VERDICT: INCONCLUSIVE')        # no version found
     elif tuple(int(x) for x in m.group(1).split('.')) <= (MAX_VER,): print('VERDICT: VULNERABLE')
     else: print('VERDICT: NOT_VULNERABLE')
@@ -9330,9 +9411,12 @@ Mark INCONCLUSIVE when: CVE lacks technical detail, network fails, auth required
   ambiguous, no version string found (for version-based probes), or behaviour is indeterminate.
 Never rely on: generic HTTP 200 responses, page titles alone, unverified headers, or ambiguous errors.
 Never use: example.com, localhost, 127.0.0.1, placeholder paths, TODO markers, or dummy values.
+If the CVE needs credentials, write access, a missing product/version range, or a protocol-specific
+handshake you cannot implement correctly, return an INCONCLUSIVE-only script with low confidence.
+For SMB CVEs, do not send arbitrary raw text over TCP; use protocol-correct evidence or return INCONCLUSIVE.
 
 Reply with ONLY this JSON (no markdown, no code fences):
-{{"language": "python", "probe_type": "<version_banner|header_check|unauthenticated_get|tcp_banner|error_pattern_match|timing_probe|config_disclosure|api_version_check|protocol_fingerprint>", "strategy": "<one sentence>", "confidence": 0.0, "script": "import requests\\ntry:\\n  r = requests.get('http://{target}/', timeout=5)\\n  if 'X-Version' in r.headers:\\n    print('VERDICT: VULNERABLE')\\n  else:\\n    print('VERDICT: NOT_VULNERABLE')\\nexcept Exception:\\n  print('VERDICT: INCONCLUSIVE')"}}"""
+{{"language": "python", "probe_type": "protocol_fingerprint", "strategy": "No safe target-specific validation path is available from the supplied CVE details", "confidence": 0.0, "script": "print('VERDICT: INCONCLUSIVE')"}}"""
 
     _t0       = time.monotonic()
     _timed_out = False
@@ -9475,7 +9559,7 @@ FORBIDDEN — product/service name presence alone MUST NEVER produce VERDICT: VU
     if '200 OK' in response: ...            # generic success is not vulnerability evidence
 
 Path 1 template (version-based):
-    m = re.search(r'ProductName[_/ ]([\d.]+)', banner)
+    m = re.search(r'([0-9]+(?:\.[0-9]+)+)', banner)
     if not m: print('VERDICT: INCONCLUSIVE')        # no version found
     elif tuple(int(x) for x in m.group(1).split('.')) <= (MAX_VER,): print('VERDICT: VULNERABLE')
     else: print('VERDICT: NOT_VULNERABLE')
@@ -9506,9 +9590,12 @@ Mark INCONCLUSIVE when: CVE lacks technical detail, network fails, auth required
   ambiguous, no version string found (for version-based probes), or behaviour is indeterminate.
 Never rely on: generic HTTP 200 responses, page titles alone, unverified headers, or ambiguous errors.
 Never use: example.com, localhost, 127.0.0.1, placeholder paths, TODO markers, or dummy values.
+If the CVE needs credentials, write access, a missing product/version range, or a protocol-specific
+handshake you cannot implement correctly, return an INCONCLUSIVE-only script with low confidence.
+For SMB CVEs, do not send arbitrary raw text over TCP; use protocol-correct evidence or return INCONCLUSIVE.
 
 Reply with ONLY this JSON (no markdown, no code fences):
-{{"language": "python", "probe_type": "<version_banner|header_check|unauthenticated_get|tcp_banner|error_pattern_match|timing_probe|config_disclosure|api_version_check|protocol_fingerprint>", "strategy": "<one sentence NOT in banned list>", "confidence": 0.0, "script": "import socket\\ntry:\\n  s = socket.create_connection(('{target}', PORT), timeout=5)\\n  s.send(b'PROBE\\r\\n')\\n  data = s.recv(512)\\n  print('VERDICT: VULNERABLE' if b'SIGNATURE' in data else 'VERDICT: NOT_VULNERABLE')\\n  s.close()\\nexcept Exception:\\n  print('VERDICT: INCONCLUSIVE')"}}"""
+{{"language": "python", "probe_type": "protocol_fingerprint", "strategy": "No safe target-specific validation path is available from the supplied CVE details", "confidence": 0.0, "script": "print('VERDICT: INCONCLUSIVE')"}}"""
 
     _t0        = time.monotonic()
     _timed_out  = False
@@ -9616,7 +9703,7 @@ FORBIDDEN — product/service name presence alone MUST NEVER produce VERDICT: VU
     if '200 OK' in response: ...            # generic success is not vulnerability evidence
 
 Path 1 template (version-based):
-    m = re.search(r'ProductName[_/ ]([\d.]+)', banner)
+    m = re.search(r'([0-9]+(?:\.[0-9]+)+)', banner)
     if not m: print('VERDICT: INCONCLUSIVE')        # no version found
     elif tuple(int(x) for x in m.group(1).split('.')) <= (MAX_VER,): print('VERDICT: VULNERABLE')
     else: print('VERDICT: NOT_VULNERABLE')
@@ -9648,9 +9735,12 @@ Mark INCONCLUSIVE when evidence is ambiguous, the check cannot complete, no vers
   found (for version-based probes), or the behavioural indicator was indeterminate.
 Never rely on: generic HTTP 200 responses, page titles alone, unverified headers, or ambiguous errors.
 Never use: example.com, localhost, 127.0.0.1, placeholder paths, TODO markers, or dummy values.
+If the CVE needs credentials, write access, a missing product/version range, or a protocol-specific
+handshake you cannot implement correctly, return an INCONCLUSIVE-only script with low confidence.
+For SMB CVEs, do not send arbitrary raw text over TCP; use protocol-correct evidence or return INCONCLUSIVE.
 
 Reply with ONLY this JSON (no markdown, no code fences):
-{{"language": "python", "probe_type": "<version_banner|header_check|unauthenticated_get|tcp_banner|error_pattern_match|timing_probe|config_disclosure|api_version_check|protocol_fingerprint>", "strategy": "<different strategy>", "confidence": 0.0, "script": "import socket,re\\ntry:\\n  s=socket.create_connection(('{target}',PORT),timeout=5)\\n  banner=s.recv(512).decode(errors='ignore')\\n  m=re.search(r'Product/([\\.\\d]+)',banner)\\n  if not m: print('VERDICT: INCONCLUSIVE')\\n  elif tuple(int(x) for x in m.group(1).split('.'))<=VULN_MAX: print('VERDICT: VULNERABLE')\\n  else: print('VERDICT: NOT_VULNERABLE')\\nexcept Exception: print('VERDICT: INCONCLUSIVE')"}}"""
+{{"language": "python", "probe_type": "protocol_fingerprint", "strategy": "Independent confirmation is not safely possible from the supplied evidence", "confidence": 0.0, "script": "print('VERDICT: INCONCLUSIVE')"}}"""
 
     _t0        = time.monotonic()
     _timed_out  = False
@@ -9806,6 +9896,123 @@ def _select_kb_scripts(scripts: list) -> list:
     low = random.sample(low_pool, min(LOW_SAMPLE, len(low_pool))) if low_pool else []
 
     return top + mid + low
+
+
+_CVE_PLACEHOLDER_TOKENS = (
+    "PROBE",
+    "SIGNATURE",
+    "SIGNATURE_FOUND",
+    "VULNERABLE_SIGNATURE",
+    "PLACEHOLDER",
+    "SIGNATURE_ERROR",
+    "TODO",
+    "FIXME",
+    "DUMMY",
+    "ERROR_MESSAGE",
+    "UNEXPECTED_RESPONSE",
+    "ProductName",
+    "DELAY_THRESHOLD",
+    "VULN_MAX",
+    "X-Version",
+    "TARGET_PORT",
+)
+
+
+def _cve_match_confidence(cve: dict) -> float:
+    try:
+        return float(cve.get("match_confidence", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _cve_attempt_budget(cve: dict) -> int:
+    confidence = _cve_match_confidence(cve)
+    if cve.get("kev_listed") or confidence >= 0.75:
+        return CVE_HIGH_CONFIDENCE_BUDGET
+    if confidence < CVE_LOW_CONFIDENCE_THRESHOLD:
+        return CVE_LOW_CONFIDENCE_BUDGET
+    return CVE_DEFAULT_ATTEMPT_BUDGET
+
+
+def _cve_manual_review_reason(cve: dict) -> str:
+    """Return a reason to skip active probes and leave the CVE for operator review."""
+    if cve.get("kev_listed"):
+        return ""
+    msf_hint = cve.get("msf_validation") or {}
+    if msf_hint.get("module") or msf_hint.get("vulnerable") is True:
+        return ""
+    confidence = _cve_match_confidence(cve)
+    service = (cve.get("service") or "").lower()
+    summary = (cve.get("summary") or "").lower()
+    version = str(cve.get("version_affected") or "").lower()
+    if confidence < CVE_LOW_CONFIDENCE_THRESHOLD:
+        return f"Skipped active testing because match confidence is {confidence:.2f}; manual validation is safer."
+    if version in {"", "unknown", "see nvd advisory"} and confidence < 0.6:
+        return "Skipped active testing because the affected version is unknown and the match is not high-confidence."
+    mismatch_rules = (
+        ("ssh", ("dropbear",), "The target is OpenSSH, but the CVE text targets Dropbear behavior."),
+        ("kerberos", ("thor agent", "bind "), "The detected Kerberos service does not match the product named in the CVE text."),
+        ("microsoft-ds", ("node.js", "linksys ea6500"), "The SMB service evidence does not match the product named in the CVE text."),
+    )
+    for service_token, summary_tokens, reason in mismatch_rules:
+        if service_token in service and any(token in summary for token in summary_tokens):
+            return reason
+    return ""
+
+
+def _script_quality_rejection(script: str, language: str, cve: dict) -> str:
+    """Reject placeholder or protocol-mismatched CVE probes before execution."""
+    if not script.strip():
+        return "empty script"
+    for token in _CVE_PLACEHOLDER_TOKENS:
+        if token in script:
+            return f"placeholder token {token!r}"
+    if re.search(r"\bPORT\b", script):
+        return "literal PORT placeholder"
+    if re.search(r"\b(localhost|127\.0\.0\.1|example\.com)\b", script, re.I):
+        return "dummy target value"
+    service = (cve.get("service") or "").lower()
+    if "http" not in service and re.search(r"https?://[^'\"\s]+", script, re.I):
+        return "HTTP probe generated for non-HTTP service"
+    if ("microsoft-ds" in service or "smb" in service) and "socket.create_connection" in script:
+        sends_raw_data = re.search(r"\.send(?:all)?\s*\(", script) is not None
+        has_smb_marker = any(marker in script for marker in ("\\xffSMB", "\\xfeSMB", "SMB2"))
+        uses_smb_tool = any(tool in script for tool in ("smbclient", "rpcclient", "nxc"))
+        if sends_raw_data and not (has_smb_marker or uses_smb_tool):
+            return "raw TCP probe is not SMB protocol-correct"
+    if service.startswith("22/") and "dropbear" in (cve.get("summary") or "").lower():
+        return "Dropbear-specific probe generated for OpenSSH service"
+    return ""
+
+
+def _attempt_is_rejected(attempt: dict) -> bool:
+    return attempt.get("rejected") is True or attempt.get("verdict") == "REJECTED_PROBE"
+
+
+def _valid_cve_attempts(attempts: list) -> list:
+    return [attempt for attempt in attempts if not _attempt_is_rejected(attempt)]
+
+
+def _normalized_script_hash(script: str) -> str:
+    normalized = re.sub(r"\s+", " ", script.strip())
+    return hashlib.sha256(normalized.encode("utf-8", errors="ignore")).hexdigest()
+
+
+def _append_rejected_cve_attempt(attempts: list, source: str, strategy: str,
+                                 language: str, script: str, reason: str) -> None:
+    attempts.append({
+        "attempt_num": len(attempts) + 1,
+        "source": source,
+        "strategy": f"{strategy} [rejected: {reason}]",
+        "language": language,
+        "script": script,
+        "script_path": "",
+        "output": f"[REJECTED] Probe was not executed: {reason}",
+        "verdict": "REJECTED_PROBE",
+        "rejected": True,
+        "rejection_reason": reason,
+        "valid_evidence": False,
+    })
 
 
 def _derive_inconclusive_reason(cve: dict, attempts: list) -> str:
@@ -9977,6 +10184,27 @@ async def run_cve_tests(cve_matches: list, target: str,
         verification_results: list = []
         verified             = False  # True if ≥1 verifier independently confirms VULNERABLE
         kb_pending_vulnerable: list = []  # VULNERABLE scripts deferred until Phase 3 confirms
+        seen_script_hashes: set[str] = set()
+        attempt_budget = _cve_attempt_budget(cve)
+
+        manual_reason = _cve_manual_review_reason(cve)
+        if manual_reason:
+            print(f"  [SKIP] {manual_reason}")
+            cve_test_results.append({
+                "cve_id":               cve_id,
+                "vulnerability_type":   cve.get("vulnerability_type", ""),
+                "service":              cve.get("service", ""),
+                "overall_verdict":      "INCONCLUSIVE",
+                "verdict_counts":       verdict_counts,
+                "attempts_run":         0,
+                "kb_replayed":          0,
+                "kb_pool_size":         kb_count,
+                "verified":             False,
+                "verification_results": [],
+                "inconclusive_reason":  manual_reason,
+                "attempts":             [],
+            })
+            continue
 
         # ------------------------------------------------------------------
         # Phase 0: Targeted known-exploit attempt (implements the documented
@@ -10026,36 +10254,51 @@ async def run_cve_tests(cve_matches: list, target: str,
                 language = p0_gen["language"]
                 strategy = p0_gen["strategy"]
                 script   = p0_gen["script"]
-                ext      = ".py" if language == "python" else ".sh"
-                safe_cve = re.sub(r"[^a-zA-Z0-9_-]", "_", cve_id)
-                script_path = os.path.join(cve_tests_dir, f"{safe_cve}_known_exploit{ext}")
-                with open(script_path, "w", encoding="utf-8") as fh:
-                    fh.write(script)
-                sp = _Spinner("[P0] Running known-exploit script ...").start()
-                run_result = await asyncio.get_event_loop().run_in_executor(
-                    None, lambda s=script, l=language: _run_script(s, l, cve_tests_dir, timeout=30)
-                )
-                output = run_result["output"]
-                if run_result["timed_out"]:
-                    output = f"[TIMED OUT]\n{output}"
-                elif run_result["error"]:
-                    output = f"[ERROR: {run_result['error']}]\n{output}"
-                m       = re.search(r"VERDICT:\s*(VULNERABLE|NOT_VULNERABLE|INCONCLUSIVE)", output)
-                verdict = m.group(1) if m else "INCONCLUSIVE"
-                verdict_counts[verdict] = verdict_counts.get(verdict, 0) + 1
-                if verdict == "VULNERABLE":
-                    vulnerable_found = True
-                sp.stop(f" {verdict}")
-                attempts.append({
-                    "attempt_num": 1,
-                    "source":      "known_exploit",
-                    "strategy":    f"[Known] {strategy}",
-                    "language":    language,
-                    "script":      script,
-                    "script_path": script_path,
-                    "output":      output[:600],
-                    "verdict":     verdict,
-                })
+                reject_reason = _script_quality_rejection(script, language, cve)
+                script_hash = _normalized_script_hash(script)
+                if reject_reason:
+                    print(f"  [P0] Rejected unsafe/low-quality probe: {reject_reason}")
+                    _append_rejected_cve_attempt(attempts, "known_exploit", f"[Known] {strategy}", language, script, reject_reason)
+                    script = ""
+                elif script_hash in seen_script_hashes:
+                    print("  [P0] Rejected duplicate probe")
+                    _append_rejected_cve_attempt(attempts, "known_exploit", f"[Known] {strategy}", language, script, "duplicate probe")
+                    script = ""
+                else:
+                    seen_script_hashes.add(script_hash)
+                if not script:
+                    pass
+                else:
+                    ext      = ".py" if language == "python" else ".sh"
+                    safe_cve = re.sub(r"[^a-zA-Z0-9_-]", "_", cve_id)
+                    script_path = os.path.join(cve_tests_dir, f"{safe_cve}_known_exploit{ext}")
+                    with open(script_path, "w", encoding="utf-8") as fh:
+                        fh.write(script)
+                    sp = _Spinner("[P0] Running known-exploit script ...").start()
+                    run_result = await asyncio.get_event_loop().run_in_executor(
+                        None, lambda s=script, l=language: _run_script(s, l, cve_tests_dir, timeout=30)
+                    )
+                    output = run_result["output"]
+                    if run_result["timed_out"]:
+                        output = f"[TIMED OUT]\n{output}"
+                    elif run_result["error"]:
+                        output = f"[ERROR: {run_result['error']}]\n{output}"
+                    m       = re.search(r"VERDICT:\s*(VULNERABLE|NOT_VULNERABLE|INCONCLUSIVE)", output)
+                    verdict = m.group(1) if m else "INCONCLUSIVE"
+                    verdict_counts[verdict] = verdict_counts.get(verdict, 0) + 1
+                    if verdict == "VULNERABLE":
+                        vulnerable_found = True
+                    sp.stop(f" {verdict}")
+                    attempts.append({
+                        "attempt_num": len(attempts) + 1,
+                        "source":      "known_exploit",
+                        "strategy":    f"[Known] {strategy}",
+                        "language":    language,
+                        "script":      script,
+                        "script_path": script_path,
+                        "output":      output[:600],
+                        "verdict":     verdict,
+                    })
             else:
                 print("  [P0] Known-exploit script generation failed — skipping.")
 
@@ -10113,6 +10356,9 @@ async def run_cve_tests(cve_matches: list, target: str,
             else:
                 print(f"  [KB] Replaying {kb_selected} known script(s) ...")
         for kb_idx, kb_script in enumerate(selected_scripts, 1):
+            if len(attempts) >= attempt_budget:
+                print(f"  [KB] Attempt budget reached ({attempt_budget}) — skipping remaining KB scripts.")
+                break
             language   = kb_script.get("language", "python")
             strategy   = kb_script.get("strategy", "KB replay")
             script     = kb_script.get("script", "")
@@ -10120,6 +10366,17 @@ async def run_cve_tests(cve_matches: list, target: str,
                 continue
             # Substitute the TARGET_HOST placeholder with the current scan target
             script = script.replace("TARGET_HOST", target)
+            reject_reason = _script_quality_rejection(script, language, cve)
+            script_hash = _normalized_script_hash(script)
+            if reject_reason:
+                print(f"  [KB {kb_idx:02d}] Rejected probe: {reject_reason}")
+                _append_rejected_cve_attempt(attempts, "kb_replay", f"[KB] {strategy}", language, script, reject_reason)
+                continue
+            if script_hash in seen_script_hashes:
+                print(f"  [KB {kb_idx:02d}] Rejected duplicate probe")
+                _append_rejected_cve_attempt(attempts, "kb_replay", f"[KB] {strategy}", language, script, "duplicate probe")
+                continue
+            seen_script_hashes.add(script_hash)
             ext        = ".py" if language == "python" else ".sh"
             safe_cve   = re.sub(r"[^a-zA-Z0-9_-]", "_", cve_id)
             script_path = os.path.join(cve_tests_dir, f"{safe_cve}_kb_{kb_idx:02d}{ext}")
@@ -10238,7 +10495,8 @@ async def run_cve_tests(cve_matches: list, target: str,
         # ------------------------------------------------------------------
         if vulnerable_found:
             print("  [Phase 2] VULNERABLE already found — skipping LLM script generation.")
-        new_slots   = CVE_FRESH_ATTEMPTS if not vulnerable_found else 0
+        remaining_budget = max(0, attempt_budget - len(attempts))
+        new_slots   = min(CVE_FRESH_ATTEMPTS, remaining_budget) if not vulnerable_found else 0
         done_new    = 0
 
         # Check Ollama once before generation to avoid burning all slots on
@@ -10267,6 +10525,19 @@ async def run_cve_tests(cve_matches: list, target: str,
             language    = generated["language"]
             strategy    = generated["strategy"]
             script      = generated["script"]
+            reject_reason = _script_quality_rejection(script, language, cve)
+            script_hash = _normalized_script_hash(script)
+            if reject_reason:
+                print(f"  [{attempt_num:02d}] Rejected generated probe: {reject_reason}")
+                _append_rejected_cve_attempt(attempts, "llm_generated", strategy, language, script, reject_reason)
+                done_new += 1
+                continue
+            if script_hash in seen_script_hashes:
+                print(f"  [{attempt_num:02d}] Rejected duplicate generated probe")
+                _append_rejected_cve_attempt(attempts, "llm_generated", strategy, language, script, "duplicate probe")
+                done_new += 1
+                continue
+            seen_script_hashes.add(script_hash)
             ext         = ".py" if language == "python" else ".sh"
             safe_cve    = re.sub(r"[^a-zA-Z0-9_-]", "_", cve_id)
             script_path = os.path.join(
@@ -10386,6 +10657,19 @@ async def run_cve_tests(cve_matches: list, target: str,
                 v_lang   = v_gen["language"]
                 v_strat  = v_gen["strategy"]
                 v_script = v_gen["script"]
+                v_reject_reason = _script_quality_rejection(v_script, v_lang, cve)
+                if v_reject_reason:
+                    print(f"  [V{v_i}] Rejected verifier: {v_reject_reason}")
+                    verification_results.append({
+                        "verifier_num": v_i,
+                        "strategy":    f"{v_strat} [rejected: {v_reject_reason}]",
+                        "language":    v_lang,
+                        "script":      v_script,
+                        "output":      f"[REJECTED] Verifier was not executed: {v_reject_reason}",
+                        "verdict":     "INCONCLUSIVE",
+                        "rejected":    True,
+                    })
+                    continue
                 v_ext    = ".py" if v_lang == "python" else ".sh"
                 safe_cve = re.sub(r"[^a-zA-Z0-9_-]", "_", cve_id)
                 v_path   = os.path.join(cve_tests_dir, f"{safe_cve}_verify_{v_i:02d}{v_ext}")
@@ -10486,13 +10770,18 @@ async def run_cve_tests(cve_matches: list, target: str,
         # ------------------------------------------------------------------
         v_count = verdict_counts["VULNERABLE"]
         n_count = verdict_counts["NOT_VULNERABLE"]
+        valid_attempts = _valid_cve_attempts(attempts)
+        executed_attempt_count = len(valid_attempts)
+        rejected_probe_count = len(attempts) - executed_attempt_count
         if vulnerable_found and verified:
             overall = "CONFIRMED_VULNERABLE"
         elif vulnerable_found and v_count >= 2:
             overall = "PROBABLE_VULNERABLE"
         elif vulnerable_found:
             overall = "MATCHED_VERSION"
-        elif n_count >= max(1, len(attempts) // 2 + 1):
+        elif executed_attempt_count == 0 and rejected_probe_count > 0:
+            overall = "NOT_TESTABLE"
+        elif n_count >= max(1, executed_attempt_count // 2 + 1):
             overall = "NOT_VULNERABLE"
         else:
             overall = "INCONCLUSIVE"
@@ -10503,9 +10792,15 @@ async def run_cve_tests(cve_matches: list, target: str,
               f"I:{verdict_counts['INCONCLUSIVE']}, KB:{kb_selected}/{kb_count} replayed)  "
               f"[CVE time: {cve_elapsed}]")
 
-        inconclusive_reason = (
-            _derive_inconclusive_reason(cve, attempts) if overall == "INCONCLUSIVE" else ""
-        )
+        if overall == "NOT_TESTABLE":
+            inconclusive_reason = (
+                f"Rejected {rejected_probe_count} low-quality or protocol-mismatched probe(s); "
+                "no valid active evidence was executed."
+            )
+        elif overall == "INCONCLUSIVE":
+            inconclusive_reason = _derive_inconclusive_reason(cve, valid_attempts)
+        else:
+            inconclusive_reason = ""
 
         cve_test_results.append({
             "cve_id":               cve_id,
@@ -10513,7 +10808,8 @@ async def run_cve_tests(cve_matches: list, target: str,
             "service":              cve.get("service", ""),
             "overall_verdict":      overall,
             "verdict_counts":       verdict_counts,
-            "attempts_run":         len(attempts),
+            "attempts_run":         executed_attempt_count,
+            "rejected_probes":      rejected_probe_count,
             "kb_replayed":          kb_selected,
             "kb_pool_size":         kb_count,
             "verified":             verified,
@@ -12282,7 +12578,7 @@ async def main_async():
                 tool = action["tool"]
                 args = action.get("args", "")
                 used_actions.add(f"{tool}:{str(args)}")
-                timed_out_w = "Command timed out" in (output or "")
+                timed_out_w = _timed_out_output(output)
                 _record_tool_outcome(
                     tool_kb, tool,
                     _svc_key(tool, args, services),
@@ -12336,7 +12632,7 @@ async def main_async():
         for action, output, findings, broken in wave_results:
             tool = action["tool"]
             args = action.get("args", "")
-            timed_out_w = "Command timed out" in (output or "")
+            timed_out_w = _timed_out_output(output)
             _record_tool_outcome(
                 tool_kb, tool,
                 _svc_key(tool, args, services),
@@ -12474,7 +12770,17 @@ async def main_async():
             enriched["service"] = f"{s['port']}/{s.get('name', '')}"
             cve_matches.append(enriched)
 
-    # Phase 1a — CVE testing (SCRIPT_MODEL: exploit probe scripts + Pass 1 remediations)
+    # Phase 1a — MSF validation (tool-only, no LLM; coder model still loaded)
+    # Runs before CVE testing so safe MSF metadata/check results can guide or
+    # short-circuit generated probe scripts.
+    _msf_tools_run: list = []
+    if MSF_VALIDATE and cve_matches:
+        _print_scan_eta("MSF validation starting", scan_start)
+        _msf_stub = {"cve_matches": cve_matches, "tools_run": _msf_tools_run}
+        _msf_stub = await run_msf_validation(_msf_stub, target, session_dir, available_tools)
+        _print_scan_eta("MSF validation done", scan_start)
+
+    # Phase 1b — CVE testing (SCRIPT_MODEL: probe scripts + Pass 1 remediations)
     cve_test_results: list = []
     if CVE_TEST and cve_matches:
         _print_scan_eta("CVE testing starting", scan_start)
@@ -12488,16 +12794,6 @@ async def main_async():
         _print_scan_eta("CVE testing done", scan_start)
     else:
         _cve_script_failed = 0
-
-    # Phase 1b — MSF validation (tool-only, no LLM; coder model still loaded)
-    # Writes msf_validation onto each cve_match dict so report prose can
-    # reference confirmed exploit check outcomes in every narrative it produces.
-    _msf_tools_run: list = []
-    if MSF_VALIDATE and cve_matches:
-        _print_scan_eta("MSF validation starting", scan_start)
-        _msf_stub = {"cve_matches": cve_matches, "tools_run": _msf_tools_run}
-        _msf_stub = await run_msf_validation(_msf_stub, target, session_dir, available_tools)
-        _print_scan_eta("MSF validation done", scan_start)
 
     # ══════════════════════════════════════════════════════════════════════════
     # SINGLE MODEL SWAP — generate_report() owns the eviction boundary.

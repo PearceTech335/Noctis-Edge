@@ -46,6 +46,8 @@ Most automated scanners report which CVEs *exist* on a system. **Noctis Edge tes
 
 The `--cve-test` flag instructs the local LLM to generate safe, targeted probe scripts for each matched CVE. Scripts run on-device with a strict timeout and print a clear `VULNERABLE` / `NOT_VULNERABLE` / `INCONCLUSIVE` verdict. Results accumulate in `cve_knowledge_base.json` — on subsequent runs against the same CVE, proven scripts are replayed first, giving faster, higher-confidence results without any LLM call.
 
+Noctis keeps active validation evidence-gated: HTTP-only tools such as Nikto, Nuclei, and ffuf are reserved for confirmed HTTP/HTTPS services, tool timeouts are recorded as explicit incomplete coverage, and low-confidence or product-mismatched CVEs are routed to manual review instead of generating broad active probes. CVE probe scripts are deduplicated and screened for placeholders, dummy targets, and protocol-mismatched raw probes before execution; rejected probes are reported separately and are not counted as negative evidence.
+
 Running `./update.sh` submits your local CVE and Tooling knowledge bases to the community repository via Cloudflare relay — **no target data, credentials, or environment variables ever leave your machine**. Submissions are anonymised (CVE ID or service fingerprint only). Community-contributed scripts are vetted before inclusion. Pulling the aggregated community KB requires a [Noctis Edge Intelligence subscription](https://noctisedge.lemonsqueezy.com).
 
 Alongside CVE probes, `tooling_knowledge_base.json` accumulates tool-performance data — which invocations produced real findings versus noise against specific service fingerprints. The LLM uses this history as context on each new engagement, progressively improving tool selection and script quality over time.
@@ -503,7 +505,17 @@ The worker is already deployed at `https://noctis-kb-relay.pearcetechnologies1.w
 
 ## Version History
 
-**Current version: v0.10.0**
+**Current version: v0.10.1**
+
+### What's New in v0.10.1
+
+- **Scan timeout and service-planning hardening:** HTTP-only tools such as `nikto`, `nuclei`, and `ffuf` are now gated to confirmed HTTP/HTTPS services, preventing wasted web scans against SMB, SSH, RPC, and other non-HTTP ports. Tool timeouts are recorded as explicit incomplete coverage instead of being buried in otherwise successful-looking output.
+- **CVE probe quality controls:** CVE replay and generation now reject duplicate scripts, placeholder probes, dummy targets, and protocol-mismatched raw probes before execution. Rejected probes are shown separately as non-evidence, do not inflate `INCONCLUSIVE`, and cannot push a CVE toward `NOT_VULNERABLE`.
+- **`NOT_TESTABLE` CVE verdict:** When every available generated or replayed probe is rejected before execution, Noctis now reports `NOT_TESTABLE` with a manual-review reason instead of treating bad probes as negative evidence.
+- **Safer 3b script generation:** The CVE script prompts no longer teach the model placeholder examples such as `PORT`, `PROBE`, `SIGNATURE`, `X-Version`, or fake version constants. When the supplied CVE detail is insufficient for a protocol-correct check, the model is directed to emit a low-confidence `INCONCLUSIVE` script instead of inventing raw TCP probes.
+- **CVE applicability pruning:** Low-confidence and obvious product-mismatched CVEs are routed to manual review rather than broad active probing, reducing noisy CVE tests on unrelated services.
+- **Report polish:** The floating table of contents now uses a blue style aligned with the report palette while remaining visually distinct during scrolling. CVE testing evidence now shows rejected-probe counts alongside executed verdict counts.
+- **Docker validation:** The `noctis` Docker image was rebuilt from this code and the scanner changes were validated with syntax/lint checks plus targeted smoke tests for rejected-probe accounting.
 
 ### What's New in v0.10.0
 
