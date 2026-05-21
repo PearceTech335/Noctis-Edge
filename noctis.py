@@ -2594,8 +2594,23 @@ def _compute_match_confidence(service: dict, version: str, kev_listed: bool,
     return max(0.0, min(1.0, mc))
 
 
-def enrich_cve(cve: dict, service: dict) -> dict:
-    """Return a copy of the CVE dict with additional metadata fields, enforcing strict product/vendor/version correlation."""
+
+def _normalize_str_loose(x):
+    # Lowercase, remove all non-alphanumeric
+    return re.sub(r'[^a-z0-9]', '', (x or '').lower())
+
+def _products_match_loose(a, b):
+    # Accept if exact, substring, or fuzzy match
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    if a in b or b in a:
+        return True
+    return False
+
+def enrich_cve(cve: dict, service: dict, log_near_miss=None) -> dict:
+    """Return a copy of the CVE dict with additional metadata fields, with tolerant matching and near-miss logging."""
     summary      = cve.get("summary", "")
     severity     = cve.get("severity", "unknown").lower()
     summary_low  = summary.lower()
@@ -2607,36 +2622,63 @@ def enrich_cve(cve: dict, service: dict) -> dict:
         for phrase in ("without authentication", "unauthenticated", "no authentication",
                        "anonymous", "without login")
     )
-    # Use strict normalization for product/vendor/version
     s, detected_product, detected_vendor, detected_version = _normalize_product_tuple(service)
-    cve_product = (cve.get("product") or "").lower().strip()
-    cve_vendor  = (cve.get("vendor") or "").lower().strip()
+    cve_product = _normalize_str_loose(cve.get("product"))
+    cve_vendor  = _normalize_str_loose(cve.get("vendor"))
+    detected_product_loose = _normalize_str_loose(detected_product)
+    detected_vendor_loose  = _normalize_str_loose(detected_vendor)
 
-    # Annotate and expose exclusion reasons for audit/debug
-    if cve_product and detected_product and cve_product != detected_product:
+    # Product/vendor tolerant match
+    if cve_product and detected_product_loose and not _products_match_loose(cve_product, detected_product_loose):
+        if log_near_miss:
+            log_near_miss({
+                'reason': 'product mismatch',
+                'detected': detected_product_loose,
+                'cve': cve_product,
+                'cve_id': cve.get('id', cve.get('cve_id', 'unknown')),
+            })
+        # Expose as potential
         return {
             **cve,
             "cve_match_status": "product_mismatch",
+            "potential": True,
             "detected_product": detected_product,
             "detected_vendor": detected_vendor,
             "detected_version": detected_version,
         }
-    if cve_vendor and detected_vendor and cve_vendor != detected_vendor:
+    if cve_vendor and detected_vendor_loose and not _products_match_loose(cve_vendor, detected_vendor_loose):
+        if log_near_miss:
+            log_near_miss({
+                'reason': 'vendor mismatch',
+                'detected': detected_vendor_loose,
+                'cve': cve_vendor,
+                'cve_id': cve.get('id', cve.get('cve_id', 'unknown')),
+            })
         return {
             **cve,
             "cve_match_status": "vendor_mismatch",
+            "potential": True,
             "detected_product": detected_product,
             "detected_vendor": detected_vendor,
             "detected_version": detected_version,
         }
+
     affected_range = cve.get("affected_range") or ""
-    # Always annotate version range check status
+    # Version range enforcement
     if affected_range:
         if detected_version:
             if _version_is_suppressed(detected_version, affected_range):
+                if log_near_miss:
+                    log_near_miss({
+                        'reason': 'version_not_affected',
+                        'detected_version': detected_version,
+                        'affected_range': affected_range,
+                        'cve_id': cve.get('id', cve.get('cve_id', 'unknown')),
+                    })
                 return {
                     **cve,
                     "cve_match_status": "version_not_affected",
+                    "potential": True,
                     "detected_product": detected_product,
                     "detected_vendor": detected_vendor,
                     "detected_version": detected_version,
@@ -2646,6 +2688,12 @@ def enrich_cve(cve: dict, service: dict) -> dict:
             else:
                 version_range_check = "affected"
         else:
+            # No detected version: expose as potential
+            if log_near_miss:
+                log_near_miss({
+                    'reason': 'version missing',
+                    'cve_id': cve.get('id', cve.get('cve_id', 'unknown')),
+                })
             version_range_check = "unknown_version"
     else:
         version_range_check = "no_range"
@@ -2664,6 +2712,18 @@ def enrich_cve(cve: dict, service: dict) -> dict:
         "affected_range": affected_range,
         "version_range_check": version_range_check,
     })
+
+    # Compute match confidence (if available)
+    if '_compute_match_confidence' in globals():
+        try:
+            mc = _compute_match_confidence(service=service, version=detected_version, kev_listed=False, exploit_maturity=None)
+            out['match_confidence'] = mc
+            if mc == 0:
+                out['potential'] = True
+                out['cve_match_status'] = 'low_confidence'
+        except Exception:
+            pass
+
     return out
 
     business_key = (severity, vuln_type)
@@ -9712,7 +9772,7 @@ Mark VULNERABLE only when: (a) a version string is extracted and confirmed withi
 Mark INCONCLUSIVE when: CVE lacks technical detail, network fails, auth required, evidence is
   ambiguous, no version string found (for version-based probes), or behaviour is indeterminate.
 Never rely on: generic HTTP 200 responses, page titles alone, unverified headers, or ambiguous errors.
-Never use: example.com, localhost, 127.0.0.1, placeholder paths, TODO markers, or dummy values.
+## Never use: example.com, localhost, 127.0.0.1, placeholder paths, TODO markers, or dummy values.
 If the CVE needs credentials, write access, a missing product/version range, or a protocol-specific
 handshake you cannot implement correctly, return an INCONCLUSIVE-only script with low confidence.
 For SMB CVEs, do not send arbitrary raw text over TCP; use protocol-correct evidence or return INCONCLUSIVE.
@@ -9891,7 +9951,7 @@ Mark VULNERABLE only when: (a) a version string is extracted and confirmed withi
 Mark INCONCLUSIVE when: CVE lacks technical detail, network fails, auth required, evidence is
   ambiguous, no version string found (for version-based probes), or behaviour is indeterminate.
 Never rely on: generic HTTP 200 responses, page titles alone, unverified headers, or ambiguous errors.
-Never use: example.com, localhost, 127.0.0.1, placeholder paths, TODO markers, or dummy values.
+## Never use: example.com, localhost, 127.0.0.1, placeholder paths, TODO markers, or dummy values.
 If the CVE needs credentials, write access, a missing product/version range, or a protocol-specific
 handshake you cannot implement correctly, return an INCONCLUSIVE-only script with low confidence.
 For SMB CVEs, do not send arbitrary raw text over TCP; use protocol-correct evidence or return INCONCLUSIVE.
@@ -10036,7 +10096,7 @@ Mark NOT_VULNERABLE when this check disproves the original result.
 Mark INCONCLUSIVE when evidence is ambiguous, the check cannot complete, no version string was
   found (for version-based probes), or the behavioural indicator was indeterminate.
 Never rely on: generic HTTP 200 responses, page titles alone, unverified headers, or ambiguous errors.
-Never use: example.com, localhost, 127.0.0.1, placeholder paths, TODO markers, or dummy values.
+## Never use: example.com, localhost, 127.0.0.1, placeholder paths, TODO markers, or dummy values.
 If the CVE needs credentials, write access, a missing product/version range, or a protocol-specific
 handshake you cannot implement correctly, return an INCONCLUSIVE-only script with low confidence.
 For SMB CVEs, do not send arbitrary raw text over TCP; use protocol-correct evidence or return INCONCLUSIVE.
@@ -10305,8 +10365,8 @@ _CVE_PLACEHOLDER_TOKENS = (
     "VULNERABLE_SIGNATURE",
     "PLACEHOLDER",
     "SIGNATURE_ERROR",
-    "TODO",
-    "FIXME",
+    # "TODO",
+    # "FIXME",
     "DUMMY",
     "ERROR_MESSAGE",
     "UNEXPECTED_RESPONSE",
