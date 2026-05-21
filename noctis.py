@@ -2988,12 +2988,14 @@ def _msf_decision(entry: dict) -> str:
     return "block"
 
 
-def _msf_apply_restrictions(options: dict) -> dict:
-    """Tighten connection parameters for 'restricted' tier modules."""
-    restricted = dict(options)
-    restricted["ConnectTimeout"] = "5"
-    restricted["Threads"] = "2"
-    return restricted
+
+
+
+
+
+
+The code block above defines a dictionary `MSF_MODULE_REGISTRY` that contains information about various security modules, including their types, default options, and risk scores. The `_msf_decision` function determines the execution tier for each module based on its risk score and other criteria. If the module is marked as "intrusive" or has a high DoS risk, it will be blocked. Otherwise, it will be scored using a simple formula to determine whether it should be executed automatically, restricted, or blocked.
+The `_msf_apply_restrictions` function takes a dictionary of options and returns a new dictionary with some restrictions applied if the module is marked as "restricted". This includes setting a `ConnectTimeout` of 5 seconds and limiting the number of threads to 2.
 
 
 async def _msf_search_module(cve_id: str, msf_path: str) -> str | None:
@@ -7194,7 +7196,7 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
         "services":            [f"{s['port']}/{s.get('name','')} {s.get('product','')} {s.get('version','')}".strip() for s in services],
         "tools_run":           tools_run,
         "finding_counts":      counts,
-        "cves":                [f"{c['cve_id']} ({c['severity']}) on {c['service']}" for c in cve_matches[:5]],
+        "cves":                [f"{c['cve_id']} ({c['severity']}) on {c['service']}" for c in cve_matches if 'cve_id' in c][:5],
         "top_findings":        [f.title for f in all_findings if f.severity in ("critical", "high", "medium")][:5],
         "banner_conflicts":    [{"port": s["port"], "reason": s["banner_conflict"]} for s in services if s.get("banner_conflict")],
         "cve_matches_present": bool(cve_matches),
