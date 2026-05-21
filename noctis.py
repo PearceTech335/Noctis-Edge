@@ -12,7 +12,7 @@ EPSS exploit-probability scoring, NVD CVSS offline database,
 NIST CSF 2.0 compliance mapping, and OT/ICS asset classification.
 """
 
-VERSION = "v0.10.1"
+VERSION = "v0.11.0"
 
 import asyncio
 import dataclasses
@@ -118,6 +118,47 @@ AIRGAP_MODE     = True   # default on; --dns opts in to internet-dependent DNS e
 MSF_VALIDATE    = False  # set via --msf-validate; runs safe MSF checks broadly or post-positive with --cve-test
 CVE_TEST        = False  # set via --cve-test; LLM generates test scripts per matched CVE
 UNATTENDED      = False  # set via --unattended; auto-approves all prompts (no user input required)
+UNSAFE_VERIFY   = False  # set via --unsafe; opt-in intrusive verifier tier; requires typed UNSAFE prompt
+
+# ---------------------------------------------------------------------------
+# --unsafe legal notice. The text below is shown verbatim at session start
+# whenever --unsafe is requested. A SHA-256 of the rendered notice is stored
+# in the per-session acknowledgment record so any post-hoc tampering with the
+# constant is detectable. Keep wording aligned with commercial offensive-
+# security tools (Cobalt Strike, Burp Pro, Metasploit Pro).
+# ---------------------------------------------------------------------------
+LEGAL_NOTICE_UNSAFE = """\
+============================================================
+             NOCTIS EDGE \u2014 UNSAFE VERIFICATION MODE
+============================================================
+You have requested --unsafe verification. This mode enables
+intrusive verification techniques against the specified
+target, including relaxed sandbox restrictions on LLM-
+generated probes and the use of Metasploit auxiliary modules
+flagged as intrusive. These actions may impact the
+availability, integrity, or stability of the target system.
+
+By proceeding, you represent and warrant that:
+  1. You are the owner of the target system(s), OR you have
+     obtained prior, written, and explicit authorization from
+     the system owner to perform offensive security testing.
+  2. Your testing is conducted within the scope of that
+     authorization and complies with all applicable laws,
+     regulations, and contractual obligations in your
+     jurisdiction (including but not limited to the U.S.
+     Computer Fraud and Abuse Act, the UK Computer Misuse
+     Act, and EU Directive 2013/40/EU).
+  3. You accept full and sole responsibility for any direct
+     or indirect consequences of this scan, including but not
+     limited to service disruption, data loss, or third-party
+     impact.
+
+Noctis Edge, its authors, contributors, and distributors
+provide this software \"AS IS\", without warranty of any kind,
+and disclaim all liability for any damage, loss, or legal
+action arising from its use. Use of --unsafe constitutes
+acceptance of these terms.
+"""
 CVE_KB_DIR           = os.path.join(BASE_DIR, "CVE_KB")
 KB_SHARD_SIZE        = 5_000   # max CVE sequence numbers per shard file
 NUCLEI_KB_PATH       = os.path.join(BASE_DIR, "nuclei_kb.json")
@@ -327,6 +368,7 @@ def _load_kev_db() -> dict:
 CVE_FRESH_ATTEMPTS  = 5  # fresh LLM-generated scripts per CVE (on top of known-exploit + KB replays)
 CVE_VERIFY_ATTEMPTS = 5  # independent verifier scripts run when any attempt returns VULNERABLE
 CVE_VERIFY_CONFIRM_THRESHOLD = 2  # verifier VULNERABLE count required for CONFIRMED_VULNERABLE
+CVE_UNSAFE_VERIFY_ATTEMPTS = 2  # extra intrusive verifier scripts run only under --unsafe
 CVE_BATCH_SIZE      = 5  # prompt user to continue after this many CVEs (runaway guard)
 CVE_LOW_CONFIDENCE_THRESHOLD = 0.35
 CVE_DEFAULT_ATTEMPT_BUDGET   = 8
@@ -2247,8 +2289,20 @@ def _version_is_suppressed(detected_ver: str, summary_or_fixed_ver: str) -> bool
     if not detected_ver or not summary_or_fixed_ver:
         return False
     try:
-        # Detect call style: if the argument looks like a CVE summary (contains
-        # spaces / English words) re-parse it; otherwise treat as a bare version.
+        # Minimal robust dash-range support: e.g. '1.20.0-1.22.0'
+        dash_range = None
+        if '-' in summary_or_fixed_ver and not any(c.isalpha() for c in summary_or_fixed_ver):
+            parts = summary_or_fixed_ver.split('-')
+            if len(parts) == 2:
+                lower, upper = parts
+                det = _parse_semver(detected_ver)
+                low = _parse_semver(lower)
+                up = _parse_semver(upper)
+                if det == (0, 0, 0, 0) or low == (0, 0, 0, 0) or up == (0, 0, 0, 0):
+                    return False
+                # Suppressed if detected_ver > upper (exclusive upper bound)
+                return det > up
+        # Existing logic
         is_summary = bool(re.search(r'[a-zA-Z]', summary_or_fixed_ver)) and (
             " " in summary_or_fixed_ver or len(summary_or_fixed_ver) > 32
         )
@@ -2541,7 +2595,7 @@ def _compute_match_confidence(service: dict, version: str, kev_listed: bool,
 
 
 def enrich_cve(cve: dict, service: dict) -> dict:
-    """Return a copy of the CVE dict with additional metadata fields."""
+    """Return a copy of the CVE dict with additional metadata fields, enforcing strict product/vendor/version correlation."""
     summary      = cve.get("summary", "")
     severity     = cve.get("severity", "unknown").lower()
     summary_low  = summary.lower()
@@ -2553,8 +2607,64 @@ def enrich_cve(cve: dict, service: dict) -> dict:
         for phrase in ("without authentication", "unauthenticated", "no authentication",
                        "anonymous", "without login")
     )
-    product  = service.get("product") or service.get("name", "")
-    version  = service.get("version", "")
+    # Use strict normalization for product/vendor/version
+    s, detected_product, detected_vendor, detected_version = _normalize_product_tuple(service)
+    cve_product = (cve.get("product") or "").lower().strip()
+    cve_vendor  = (cve.get("vendor") or "").lower().strip()
+
+    # Annotate and expose exclusion reasons for audit/debug
+    if cve_product and detected_product and cve_product != detected_product:
+        return {
+            **cve,
+            "cve_match_status": "product_mismatch",
+            "detected_product": detected_product,
+            "detected_vendor": detected_vendor,
+            "detected_version": detected_version,
+        }
+    if cve_vendor and detected_vendor and cve_vendor != detected_vendor:
+        return {
+            **cve,
+            "cve_match_status": "vendor_mismatch",
+            "detected_product": detected_product,
+            "detected_vendor": detected_vendor,
+            "detected_version": detected_version,
+        }
+    affected_range = cve.get("affected_range") or ""
+    # Always annotate version range check status
+    if affected_range:
+        if detected_version:
+            if _version_is_suppressed(detected_version, affected_range):
+                return {
+                    **cve,
+                    "cve_match_status": "version_not_affected",
+                    "detected_product": detected_product,
+                    "detected_vendor": detected_vendor,
+                    "detected_version": detected_version,
+                    "affected_range": affected_range,
+                    "version_range_check": "not_affected",
+                }
+            else:
+                version_range_check = "affected"
+        else:
+            version_range_check = "unknown_version"
+    else:
+        version_range_check = "no_range"
+
+    version_status = "potential" if not detected_version else "confirmed"
+    out = dict(cve)
+    out.update({
+        "vuln_type": vuln_type,
+        "remote": remote,
+        "requires_auth": requires_auth,
+        "detected_product": detected_product,
+        "detected_vendor": detected_vendor,
+        "detected_version": detected_version,
+        "version_status": version_status,
+        "cve_match_status": "matched",
+        "affected_range": affected_range,
+        "version_range_check": version_range_check,
+    })
+    return out
 
     business_key = (severity, vuln_type)
     business_impact = (
@@ -2856,10 +2966,17 @@ def _msf_decision(entry: dict) -> str:
     - 0.2–0.5 → "restricted"
     - < 0.2   → "block"
     """
+
+    # Unsafe override: allow 'unsafe_check' for intrusive or medium DoS risk if operator acknowledged
     if entry.get("dos_risk") == "high":
         return "block"
     if entry.get("intrusive"):
+        if 'UNSAFE_VERIFY' in globals() and UNSAFE_VERIFY:
+            return "unsafe_check"
         return "block"
+    if entry.get("dos_risk") == "medium":
+        if 'UNSAFE_VERIFY' in globals() and UNSAFE_VERIFY:
+            return "unsafe_check"
     if entry.get("type") == "exploit" and not entry.get("check_supported"):
         return "block"
 
@@ -2952,22 +3069,6 @@ async def _msf_run_post_positive_check(cve: dict, target: str,
     if registry_entry:
         module = registry_entry["module"]
         final_score = registry_entry.get("confidence_score", 0.5) - registry_entry.get("risk_score", 0.5)
-        if registry_entry.get("type") != "exploit" or not registry_entry.get("check_supported"):
-            result = {
-                "module": module,
-                "vulnerable": None,
-                "result": "Module found but it does not expose a safe check-only validation path",
-                "method": "Metasploit post-positive check-only validation",
-                "raw_output": "",
-                "tier": "skip",
-                "final_score": round(final_score, 2),
-                "post_positive": True,
-                "msfconsole_invoked": False,
-            }
-            cve["msf_validation"] = result
-            print(f"  [MSF] {cve_id} — module found but no safe check-only path, skipping")
-            return result
-
         tier = _msf_decision(registry_entry)
         if tier == "block":
             dos = registry_entry.get("dos_risk", "")
@@ -2989,11 +3090,18 @@ async def _msf_run_post_positive_check(cve: dict, target: str,
             print(f"  [MSF] {cve_id} — BLOCKED ({why}, score {final_score:.2f})")
             return result
 
-        options = {**registry_entry["default_opts"], "RPORT": port}
-        if tier == "restricted":
-            options = _msf_apply_restrictions(options)
-        print(f"  [MSF] {cve_id} — post-positive check-only → {module} (port {port}) ...",
-              end=" ", flush=True)
+        if tier == "unsafe_check":
+            why = ("intrusive" if registry_entry.get("intrusive") else "dos_risk=medium")
+            print(f"  [MSF] {cve_id} — operator-acknowledged unsafe check ({why})")
+            # Use normal options, but print a warning
+            options = {**registry_entry["default_opts"], "RPORT": port}
+            # No restrictions, but still only 'check' action
+        elif tier == "restricted":
+            options = _msf_apply_restrictions({**registry_entry["default_opts"], "RPORT": port})
+            print(f"  [MSF] {cve_id} — post-positive check-only → {module} (port {port}) ... [restricted]", end=" ", flush=True)
+        else:
+            options = {**registry_entry["default_opts"], "RPORT": port}
+            print(f"  [MSF] {cve_id} — post-positive check-only → {module} (port {port}) ...", end=" ", flush=True)
     else:
         print(f"  [MSF] {cve_id} — searching for post-positive check module ...")
         module = await _msf_search_module(cve_id, msf_path)
@@ -5943,7 +6051,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   </div>
 </div>
 {% endif %}
-{% if not conclusion_llm_ok %}<div style="background:#1a1000;border:1px solid #ff6d00;border-radius:6px;padding:8px 14px;margin:0 0 10px 0;font-size:.85em"><strong style="color:#ff9800">&#9888; Executive Summary Evidence-Grounded</strong><span style="color:#ffe0b2;margin-left:.5em">The summary below was rebuilt from recorded scan data after automated prose failed factual validation.</span></div>{% endif %}<div class="conclusion">{% for para in conclusion.split('\n\n') %}{% if para.strip() %}<p style="margin:0 0 .75em 0">{{ para.strip() }}</p>{% endif %}{% endfor %}</div>
+{% if not conclusion_llm_ok %}<div style="background:#1a1000;border:1px solid #ff6d00;border-radius:6px;padding:8px 14px;margin:0 0 10px 0;font-size:.85em"><strong style="color:#ff9800">&#9888; Executive Summary Evidence-Grounded</strong><span style="color:#ffe0b2;margin-left:.5em">This summary was rebuilt from scan evidence after the automated summary did not meet factual accuracy standards.</span></div>{% endif %}<div class="conclusion">{% for para in conclusion.split('\n\n') %}{% if para.strip() %}<p style="margin:0 0 .75em 0">{{ para.strip() }}</p>{% endif %}{% endfor %}</div>
 {% if audit_notes %}<details style="margin:.5em 0 1em 0;border:1px solid #263238;border-radius:5px;background:#0a1520"><summary style="cursor:pointer;color:#546e7a;font-size:.8em;padding:.45em .9em;user-select:none;list-style:none">{% if conclusion_revised %}<span style="color:#ffb74d">&#x270F; Report Audit &mdash; conclusion revised</span>{% else %}<span style="color:#4caf50">&#x2713; Report Audit &mdash; no changes required</span>{% endif %}</summary><div style="padding:.6em 1em .7em;font-size:.83em;color:#78909c;line-height:1.65;border-top:1px solid #263238">{{ audit_notes }}</div></details>{% endif %}
 
 {% if compliance_summary %}
@@ -6038,22 +6146,29 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 </div>
 {% if findings %}
 {% macro render_finding(f) %}
-{%- set _esev = _eff_sev.get(f.finding_id, f.severity) %}
-    <details class="finding-card" data-severity="{{ _esev|lower }}" data-service="{{ f.service|lower }}" data-tool="{{ f.tool|lower }}" data-risk="{{ '%.5f'|format(f.risk_score or 0) }}" data-title="{{ f.title|lower }}" data-search="{{ (f.title ~ ' ' ~ f.evidence ~ ' ' ~ f.tool ~ ' ' ~ f.service ~ ' ' ~ (f.vuln_type or ''))|lower }}" style="margin-bottom:.8em;border:1px solid {% if _esev == 'critical' %}#ff4757{% elif _esev == 'high' %}#ff6b35{% elif _esev == 'medium' %}#ffa502{% elif _esev == 'low' %}#2ed573{% else %}#70a1ff{% endif %};border-radius:6px;background:#16213e">
-    <summary style="padding:10px 14px;cursor:pointer;display:flex;flex-wrap:wrap;align-items:center;gap:8px;list-style:none">
-      <span class="badge badge-{{ _esev }}">{{ _esev|upper }}</span>
-      {%- if _esev != f.severity %}<span style="color:#666;font-size:.72em;white-space:nowrap" title="Scanner reported {{ f.severity|upper }} — downgraded due to evidence quality">scanner:&nbsp;{{ f.severity|upper }}</span>{%- endif %}
+{%- set _esev = f.effective_severity if f.effective_severity is defined else _eff_sev.get(f.finding_id, f.severity) %}
+{%- set _tsev = f.theoretical_severity if f.theoretical_severity is defined else f.severity %}
+        <details class="finding-card" data-severity="{{ _esev|lower }}" data-service="{{ f.service|lower }}" data-tool="{{ f.tool|lower }}" data-risk="{{ '%.5f'|format(f.risk_score or 0) }}" data-title="{{ f.title|lower }}" data-search="{{ (f.title ~ ' ' ~ f.evidence ~ ' ' ~ f.tool ~ ' ' ~ f.service ~ ' ' ~ (f.vuln_type or ''))|lower }}" style="margin-bottom:.8em;border:1px solid {% if _esev == 'critical' %}#ff4757{% elif _esev == 'high' %}#ff6b35{% elif _esev == 'medium' %}#ffa502{% elif _esev == 'low' %}#2ed573{% else %}#70a1ff{% endif %};border-radius:6px;background:#16213e">
+        <summary style="padding:10px 14px;cursor:pointer;display:flex;flex-wrap:wrap;align-items:center;gap:8px;list-style:none">
+            <span class="badge badge-{{ _esev }}" title="Effective Severity">{{ _esev|upper }}</span>
+            <span class="badge badge-{{ _tsev }}" style="opacity:.7;margin-left:2px;" title="Theoretical Severity">{{ _tsev|upper }}</span>
+            {%- if _esev != _tsev %}
+                <span style="background:#ffb300;color:#000;padding:.2em .6em;border-radius:3px;font-size:.75em;font-weight:700;white-space:nowrap;margin-left:2px;" title="Severity capped or downgraded due to evidence quality or validation">CAPPED</span>
+            {%- endif %}
+            {%- if _esev != f.severity and _tsev == f.severity %}<span style="color:#666;font-size:.72em;white-space:nowrap" title="Scanner reported {{ f.severity|upper }} — downgraded due to evidence quality">scanner:&nbsp;{{ f.severity|upper }}</span>{%- endif %}
       {%- if f.finding_id in _confirmed_ids %}<span style="background:#b71c1c;color:#fff;padding:1px 6px;border-radius:8px;font-size:.72em;font-weight:700">&#10003; CONFIRMED</span>
       {%- elif f.finding_id in _probable_ids %}<span style="background:#bf360c;color:#fff;padding:1px 6px;border-radius:8px;font-size:.72em;font-weight:700">~ PROBABLE</span>
       {%- elif f.finding_id in _review_ids %}<span style="background:#37474f;color:#cfd8dc;padding:1px 6px;border-radius:8px;font-size:.72em;font-weight:700">&#9888; REVIEW</span>
       {%- else %}<span style="background:#1a2a3a;color:#79b8d4;padding:1px 6px;border-radius:8px;font-size:.72em">INFO</span>
       {%- endif %}
-      <span style="font-weight:600;flex:1;min-width:180px">{{ f.title }}</span>
-      <span style="color:#aaa;font-size:.82em" title="{{ f.tool }}">{{ _tool_labels.get(f.tool, f.tool) }}</span>
-      <span style="color:#888;font-size:.82em">{{ f.service }}</span>
-      <span style="color:#aaa;font-size:.82em">Risk:&nbsp;<strong>{{ "%.2f"|format(f.risk_score) }}</strong></span>
-      <span class="{{ 'ok' if f.verified else ('probe-inc' if f.verification_status == 'probe_inconclusive' else 'pend') }}" style="font-size:.82em">{% if f.verification_status == 'probe_inconclusive' %}&#9888; probe inconclusive{% else %}{{ f.verification_status }}{% endif %}</span>
-      {% if f.manual_review %}<span style="background:#ff9800;color:#000;padding:.2em .5em;border-radius:3px;font-size:.75em;font-weight:700;white-space:nowrap">&#9888; MANUAL REVIEW</span>{% endif %}
+            <span style="font-weight:600;flex:1;min-width:180px">{{ f.title }}</span>
+            <span style="color:#aaa;font-size:.82em" title="{{ f.tool }}">{{ _tool_labels.get(f.tool, f.tool) }}</span>
+            <span style="color:#888;font-size:.82em">{{ f.service }}</span>
+            <span style="color:#aaa;font-size:.82em">Risk:&nbsp;<strong>{{ "%.2f"|format(f.risk_score) }}</strong></span>
+            <span class="{{ 'ok' if f.verified else ('probe-inc' if f.verification_status == 'probe_inconclusive' else 'pend') }}" style="font-size:.82em">{% if f.verification_status == 'probe_inconclusive' %}&#9888; probe inconclusive{% else %}{{ f.verification_status }}{% endif %}</span>
+            {% if f.manual_review or f.verification_status == 'probe_inconclusive' %}
+                <span style="background:#ff9800;color:#000;padding:.2em .5em;border-radius:3px;font-size:.75em;font-weight:700;white-space:nowrap;margin-left:2px;">&#9888; MANUAL REVIEW</span>
+            {% endif %}
     </summary>
     <div style="padding:12px 16px;border-top:1px solid #0f3460">
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:.8em;margin-bottom:1em;font-size:.88em">
@@ -6138,15 +6253,18 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         <ol style="margin:.25em 0 0 0;padding-left:1.25em;font-size:.87em;color:#b3e5fc;line-height:1.65">{% for _l in _lf %}<li style="margin:.3em 0">{{ _l }}</li>{% endfor %}</ol>
       </div>
       {% endif %}
-      {% if f.verification_status == 'probe_inconclusive' %}
-      <div style="margin-bottom:.8em;background:#1a1200;border-left:3px solid #ff9800;border-radius:0 4px 4px 0;padding:.7em 1em">
-        <strong style="color:#ff9800">&#9888; Probe Inconclusive</strong>
-        <div style="font-size:.85em;color:#ffe082;margin-top:.3em;line-height:1.5">
-          {% if f.verifier_tool %}Probed with <code style="background:#0d1117;padding:.1em .4em;border-radius:3px">{{ f.verifier_tool }}</code> — no confirming evidence found.{% else %}Could not be confirmed by automated verification.{% endif %}
-          Manual inspection recommended before treating as a confirmed finding.
-        </div>
-      </div>
-      {% endif %}
+            {% if f.verification_status == 'probe_inconclusive' or f.manual_review %}
+            <div style="margin-bottom:.8em;background:#1a1200;border-left:3px solid #ff9800;border-radius:0 4px 4px 0;padding:.7em 1em">
+                <strong style="color:#ff9800">&#9888; Inconclusive / Manual Review Required</strong>
+                <div style="font-size:.85em;color:#ffe082;margin-top:.3em;line-height:1.5">
+                    {% if f.concise_narrative %}<div style="margin-bottom:.3em">{{ f.concise_narrative }}</div>{% endif %}
+                    {% if f.verification_status == 'probe_inconclusive' %}
+                        {% if f.verifier_tool %}Probed with <code style="background:#0d1117;padding:.1em .4em;border-radius:3px">{{ f.verifier_tool }}</code> — no confirming evidence found.{% else %}Could not be confirmed by automated verification.{% endif %}
+                    {% endif %}
+                    <div style="margin-top:.3em">Manual inspection recommended before treating as a confirmed finding.</div>
+                </div>
+            </div>
+            {% endif %}
       {% if f.http_response %}
       <details style="margin-bottom:.8em">
         <summary style="cursor:pointer;color:#90caf9;font-size:.88em">&#9654; Raw HTTP Response</summary>
@@ -6971,6 +7089,8 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
     _ambiguous: list = []
     for f in all_findings:
         result = _effective_severity_rules(f)
+        # Store the original/theoretical severity for UI/reporting
+        f.theoretical_severity = f.severity
         if result is None:
             _ambiguous.append(f)
         else:
@@ -6990,6 +7110,22 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
     for f in all_findings:
         if f.finding_id not in _eff_sev_map:
             _eff_sev_map[f.finding_id] = _cap_severity(f.severity, "medium")
+        # Store the effective severity for UI/reporting
+        f.effective_severity = _eff_sev_map[f.finding_id]
+        # If severity is capped/downgraded due to inconclusive/manual review, add a badge/callout
+        if (
+            (getattr(f, "manual_review", False) or f.verification_status == "probe_inconclusive")
+            and f.effective_severity != f.theoretical_severity
+        ):
+            f.severity_capped = True
+        else:
+            f.severity_capped = False
+        # For inconclusive/manual review, ensure narrative is concise and marked
+        if f.severity_capped:
+            if not hasattr(f, "narrative") or not f.narrative:
+                f.narrative = "Manual review required. Severity capped pending verification."
+            else:
+                f.narrative = f.narrative.strip() + "\n\nManual review required. Severity capped pending verification."
 
     _SEV_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
     all_findings.sort(
@@ -7316,6 +7452,7 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
             for r in timed_out_scan_records
         ],
         "effective_severity_map": _eff_sev_map,
+        "theoretical_severity_map": {f.finding_id: f.theoretical_severity for f in all_findings},
     }
 
 
@@ -7640,40 +7777,50 @@ _PRODUCT_LABEL_MAP = dict(
 )
 
 
-def _normalize_product(product: str) -> str:
-    """Normalize an nmap product string to a short lowercase identifier.
 
-    Returns an empty string when the product is unknown or uninformative,
-    in which case the caller should fall back to the bare service label.
+# Expanded product and vendor mapping for strict normalization
+_PRODUCT_VENDOR_MAP = {
+    # product: (normalized_product, normalized_vendor)
+    "openssh": ("openssh", "openbsd"),
+    "dropbear": ("dropbear", "matt johnston"),
+    "libssh": ("libssh", "libssh"),
+    "proftpd": ("proftpd", "proftpd project"),
+    "vsftpd": ("vsftpd", "vsftpd project"),
+    "pure-ftpd": ("pure-ftpd", "pureftpd"),
+    "apache": ("apache", "apache"),
+    "nginx": ("nginx", "nginx"),
+    "lighttpd": ("lighttpd", "lighttpd"),
+    # ... extend as needed for all common services ...
+}
+
+def _normalize_product_tuple(service: dict) -> tuple:
     """
-    if not product:
-        return ""
-    p = product.lower().strip()
-    # Strip trailing noise: version numbers, parenthetical OS qualifiers
-    p = re.sub(r'\s*\([^)]*\)\s*$', '', p)   # e.g. "(Ubuntu)"
-    p = re.sub(r'[\s/]\d[\d.]*.*$', '', p)    # e.g. " 2.4.51"
+    Normalize a service dict to (service, product, vendor, version).
+    - service: protocol/service name (e.g. 'ssh')
+    - product: normalized product (e.g. 'openssh')
+    - vendor: normalized vendor (e.g. 'openbsd')
+    - version: version string (may be empty)
+    """
+    raw_service = (service.get("name") or "").lower().strip()
+    raw_product = (service.get("product") or "").lower().strip()
+    version     = (service.get("version") or "").strip()
+    # Remove parenthetical OS qualifiers and trailing version from product
+    p = re.sub(r'\s*\([^)]*\)\s*$', '', raw_product)
+    p = re.sub(r'[\s/]\d[\d.]*.*$', '', p)
     p = p.strip()
-    for prefix, label in _PRODUCT_LABEL_MAP.items():
-        if p.startswith(prefix):
-            return label
-    # Generic normalisation: lower, collapse whitespace → hyphens, cap length
-    p = re.sub(r'\s+', '-', p)
-    return p[:24] if p else ""
+    # Map to normalized product/vendor if possible
+    product, vendor = _PRODUCT_VENDOR_MAP.get(p, (p, ""))
+    # Fallback: if product is empty, use service name
+    if not product:
+        product = raw_service
+    return (raw_service, product, vendor, version)
 
 
 def _svc_key(tool: str, args, services: list) -> str:
-    """Derive a product-qualified service key from action context.
-
-    Format: "<product>/<protocol>" when the server software is known
-    (e.g. "nginx/http", "openssh/ssh", "mssql/mssql"), otherwise just the
-    protocol label (e.g. "http", "ssh").  Port numbers are intentionally
-    excluded — the KB tracks *what works against which infrastructure*, not
-    against which port number a service happened to run on during one scan.
-    """
+    """Derive a product-qualified service key from action context using normalized tuple."""
     if tool in _TOOL_SVC_DIRECT:
         return _TOOL_SVC_DIRECT[tool]
 
-    # Try to match port from URL/host args to a discovered service
     url = ""
     if isinstance(args, dict):
         url = args.get("url", "") or args.get("host", "")
@@ -7685,14 +7832,11 @@ def _svc_key(tool: str, args, services: list) -> str:
         port = port_m.group(1)
         for svc in services:
             if str(svc.get("port", "")) == port:
-                raw        = svc.get("name", "").lower()
-                protocol   = _SVC_KEY_MAP.get(raw, raw.split("/")[-1] or "unknown")
-                product    = _normalize_product(svc.get("product", ""))
+                s, product, vendor, version = _normalize_product_tuple(svc)
+                protocol = _SVC_KEY_MAP.get(s, s.split("/")[-1] or "unknown")
                 if product:
                     return f"{product}/{protocol}"
                 return protocol
-
-    # No port match — fall back to tool's default service type
     return _TOOL_SVC_FALLBACK.get(tool, "unknown")
 
 
@@ -8816,12 +8960,46 @@ def _run_service_health_checks(services: list, target: str) -> list[Finding]:
 # _run_script sandbox constants (Wave C8). Tokens that must not appear in any
 # LLM-generated probe \u2014 a tripwire for filesystem mutation, shell injection,
 # and dynamic-import hallucinations. Not a substitute for adversarial review.
+#
+# Two tiers:
+#   _DANGER_PATTERNS_ALWAYS  \u2014 absolute prohibitions enforced in EVERY tier,
+#       including the --unsafe verifier tier. These are actions that can damage
+#       the scanning host, the target host's persistence, or the operator's
+#       network regardless of operator authorisation.
+#   _DANGER_PATTERNS_SAFE_ONLY \u2014 additional tokens blocked in the default
+#       tier but allowed under --unsafe so a verifier may use raw exec/eval,
+#       shell=True, raw socket binds, etc. to confirm a finding.
+#   _DANGER_PATTERNS \u2014 union, kept as the legacy alias for callers that
+#       have not yet been migrated to a tier-aware call site.
 # ---------------------------------------------------------------------------
-_DANGER_PATTERNS: tuple[str, ...] = (
-    "os.system(", "os.unlink(", "os.remove(", "os.rmdir(",
-    "shutil.rmtree(", "shell=True", "eval(", "exec(", "__import__(",
-    "socket.bind(", "compile(", "open(/etc/", "open('/etc/", 'open("/etc/',
+_DANGER_PATTERNS_ALWAYS: tuple[str, ...] = (
+    "os.unlink(", "os.remove(", "os.rmdir(",
+    "shutil.rmtree(", "shutil.move(",
+    "rm -rf", "rm-rf",                           # shell-form filesystem wipes
+    "mkfs.", "mkfs ",                            # filesystem reformat
+    "dd of=/dev", "dd if=/dev/zero of=",         # raw block-device writes
+    "shutdown ", "shutdown\t", "shutdown-",
+    "reboot ", "reboot\t", "halt ", "poweroff",
+    "init 0", "init 6", "telinit ",
+    "insmod ", "modprobe ", "rmmod ",            # kernel module load/unload
+    ":(){:|:&};:", ":(){ :|:& };:",              # classic fork-bomb
+    "iptables -F", "iptables --flush",           # disable firewall
+    "ufw disable", "systemctl stop firewalld",
+    "bash -i", "sh -i", "/dev/tcp/",             # reverse-shell primitives
+    "nc -e", "ncat -e", "/bin/bash -i",
+    "open(/etc/", "open('/etc/", 'open("/etc/',  # write attempts into host config
+    "open(/boot/", "open('/boot/", 'open("/boot/',
+    "curl -o /etc/", "curl -o /boot/",
+    "wget -O /etc/", "wget -O /boot/",
 )
+
+_DANGER_PATTERNS_SAFE_ONLY: tuple[str, ...] = (
+    "os.system(", "shell=True",
+    "eval(", "exec(", "__import__(",
+    "socket.bind(", "compile(",
+)
+
+_DANGER_PATTERNS: tuple[str, ...] = _DANGER_PATTERNS_ALWAYS + _DANGER_PATTERNS_SAFE_ONLY
 
 # Per-process rlimits applied via preexec_fn on Linux. Keep modest so a runaway
 # LLM probe can't exhaust scanner resources \u2014 these are bounds, not budgets.
@@ -8859,17 +9037,38 @@ def _build_rlimit_preexec():
 _RLIMIT_PREEXEC = _build_rlimit_preexec()
 
 
-def _run_script(script: str, language: str, cwd: str, timeout: int = 30) -> dict:
+def _run_script(script: str, language: str, cwd: str, timeout: int = 30,
+                tier: str = "safe") -> dict:
     """Write script to a temp file, execute it, return result dict.
 
     Defence-in-depth sandbox: pre-execution token blocklist (rejects routine
     LLM hallucinations that would damage the scanning host), Linux rlimits via
     preexec_fn, and a hard wall-clock timeout.
+
+    Tiers:
+      - "safe"             \u2014 default; applies BOTH `_DANGER_PATTERNS_ALWAYS`
+                              and `_DANGER_PATTERNS_SAFE_ONLY`.
+      - "unsafe_verifier"  \u2014 only valid after the operator has accepted the
+                              `--unsafe` legal notice; applies only the
+                              `_DANGER_PATTERNS_ALWAYS` set so a verifier may
+                              use raw exec/eval/shell=True etc. to confirm.
+                              Hard wall-clock, rlimits, and the always-banned
+                              tokens are still enforced.
     """
     import uuid
 
+    if tier == "unsafe_verifier" and not UNSAFE_VERIFY:
+        # Defensive: refuse to honour the unsafe tier unless --unsafe was set.
+        return {
+            "output":     "",
+            "returncode": -1,
+            "timed_out":  False,
+            "error":      "Script rejected by sandbox \u2014 'unsafe_verifier' tier requested without --unsafe",
+        }
+
+    active_patterns = _DANGER_PATTERNS_ALWAYS if tier == "unsafe_verifier" else _DANGER_PATTERNS
     flat_lower = script.replace(" ", "").replace("\t", "").lower()
-    for token in _DANGER_PATTERNS:
+    for token in active_patterns:
         if token.replace(" ", "").lower() in flat_lower:
             return {
                 "output":     "",
@@ -9895,6 +10094,104 @@ Reply with ONLY this JSON (no markdown, no code fences):
     return None
 
 
+def _generate_unsafe_verification_script(cve: dict, target: str, triggering_attempt: dict) -> dict | None:
+    """Generate an intrusive verification script that is allowed to use the
+    relaxed `_DANGER_PATTERNS_SAFE_ONLY` primitives (exec/eval/shell=True/raw
+    socket binds). Only ever invoked after the operator has typed UNSAFE at
+    session start and the safe verifier ladder failed to reach the confirmation
+    threshold. The probe MUST still be read-only with respect to the target
+    (no payload delivery, no persistence, no DoS).
+    """
+    _trig_strategy = triggering_attempt.get('strategy', '') if triggering_attempt else ''
+    _trig_script   = (triggering_attempt.get('script', '') if triggering_attempt else '')[:800]
+    _trig_output   = (triggering_attempt.get('output', '') if triggering_attempt else '')[:400]
+
+    prompt = f"""/no_think
+Write an INTRUSIVE but READ-ONLY Python 3 verification script to confirm or deny a prior VULNERABLE result that the safe verifier ladder could not confirm. The operator has explicitly authorised intrusive verification (--unsafe). Reply with JSON only.
+
+CVE: {cve.get('cve_id', '')} on {target}:{cve.get('service', '')}
+Product: {cve.get('product', '')} \u2014 {cve.get('summary', '')[:150]}
+
+### PRIOR EVIDENCE
+Strategy:  {_trig_strategy}
+Output excerpt:
+{_trig_output}
+
+### REFERENCE SCRIPT
+{_trig_script}
+
+### UNSAFE-TIER RULES \u2014 MANDATORY
+- READ-ONLY against the target: NEVER deliver an exploit payload, never write to disk on the target, never trigger reboot/crash/DoS, never modify configuration, never write or modify any user/account/password.
+- You MAY use shell=True, subprocess with shell pipelines, raw socket primitives, exec()/eval() on your OWN parsing logic, longer timeouts (up to 25s), and intrusive read probes (raw TCP byte payloads, deliberately malformed-but-non-crashing protocol frames, oversized but bounded reads).
+- You MUST NOT: run rm -rf, mkfs, dd of=/dev*, shutdown/reboot/halt, insmod/modprobe/rmmod, fork bombs, reverse shells (bash -i, nc -e), /dev/tcp/, writes to /etc/ or /boot/. These remain hard-blocked regardless of --unsafe.
+- Use a DIFFERENT observable indicator than the reference script.
+- Probe ONLY the supplied target host/IP. Do not connect to any other host.
+
+### LANGUAGE
+Python 3 only. Standard library + requests/urllib3 only. No third-party packages.
+
+### IMPLEMENTATION
+- Default timeout: 12 seconds. Maximum: 25 seconds.
+- Handle all network and parsing failures gracefully \u2014 the script must never crash.
+- Use single quotes (') for all strings to avoid breaking the JSON.
+- The probe MUST match the target protocol and service type.
+
+### VERDICT
+Script MUST print EXACTLY ONE of:
+VERDICT: VULNERABLE
+VERDICT: NOT_VULNERABLE
+VERDICT: INCONCLUSIVE
+
+Mark VULNERABLE only when the intrusive check confirms the vulnerable behaviour via (a) a parsed version string within the CVE range, or (b) a direct observation of the vulnerable behaviour. Product/service name presence alone is NEVER sufficient.
+Mark NOT_VULNERABLE when this check disproves the original result.
+Mark INCONCLUSIVE when evidence is ambiguous or the check cannot complete.
+
+Reply with ONLY this JSON (no markdown, no code fences):
+{{"language": "python", "probe_type": "intrusive_protocol", "strategy": "Intrusive read-only confirmation is not safely possible from the supplied evidence", "confidence": 0.0, "script": "print('VERDICT: INCONCLUSIVE')"}}"""
+
+    _t0 = time.monotonic()
+    _timed_out = False
+    _parse_fail_raw = ""
+    _sp = _Spinner("[ LLM ]  Generating unsafe verifier ...").start()
+    try:
+        for _attempt in range(MAX_LLM_RETRIES):
+            try:
+                resp = requests.post(
+                    OLLAMA_URL,
+                    json={
+                        "model":      CVE_SCRIPT_MODEL,
+                        "prompt":     prompt,
+                        "stream":     False,
+                        "keep_alive": _OLLAMA_KEEP_ALIVE,
+                        "options":    {"num_ctx": 2048, "temperature": 0.4},
+                    },
+                    timeout=OLLAMA_TIMEOUT,
+                )
+                payload = resp.json()
+                raw = payload.get("response", "")
+                obj = _parse_llm_script_response(raw)
+                if obj:
+                    return obj
+                _parse_fail_raw = raw[:300]
+            except requests.exceptions.Timeout:
+                _timed_out = True
+                break
+            except requests.exceptions.ConnectionError as exc:
+                print(f"\n  [LLM] Ollama connection error: {exc}")
+                break
+            except Exception as exc:
+                print(f"\n  [LLM] Unexpected error: {exc}")
+    finally:
+        _elapsed = _fmt_dur(time.monotonic() - _t0)
+        if _timed_out:
+            _sp.stop(f" TIMED OUT ({_elapsed})")
+        else:
+            _sp.stop(f" done ({_elapsed})")
+        if _parse_fail_raw:
+            print(f"  [LLM] Parse failure (unsafe) \u2014 raw (first 300): {_parse_fail_raw!r}")
+    return None
+
+
 class _Spinner:
     """Inline terminal spinner for long blocking steps (no extra deps)."""
     _FRAMES = ("|", "/", "-", "\\")
@@ -10092,6 +10389,26 @@ def _script_quality_rejection(script: str, language: str, cve: dict) -> str:
             return "raw TCP probe is not SMB protocol-correct"
     if service.startswith("22/") and "dropbear" in (cve.get("summary") or "").lower():
         return "Dropbear-specific probe generated for OpenSSH service"
+
+    # Harden: reject product/banner-only checks without version or behavioral validation
+    # Look for common product/banner-only patterns
+    banner_patterns = [
+        r"if ['\"]?[A-Za-z0-9\-\_ ]+['\"]? in banner",
+        r"if ['\"]?[A-Za-z0-9\-\_ ]+['\"]? in r\.headers\.get\(",
+        r"if ['\"]?[A-Za-z0-9\-\_ ]+['\"]? in data",
+        r"if ['\"]?[A-Za-z0-9\-\_ ]+['\"]? in response",
+        r"if ['\"]?Server['\"]? in r\.headers",
+        r"if ['\"]?200 OK['\"]? in response",
+    ]
+    # Only match if there is no version extraction or behavioral check
+    has_version_check = re.search(r"re\.search\(.*[0-9]+\\.[0-9]+", script)
+    has_behavioral_check = re.search(r"VERDICT: VULNERABLE", script) and (
+        re.search(r"specific|disclosure|exploit|error|read|leak|bypass|unauth|directory|file|access|overflow|crash|execute|shell|inject|traversal|arbitrary|command|code|response|payload|pattern|indicator|symptom|proof", script, re.I)
+    )
+    if not has_version_check and not has_behavioral_check:
+        for pat in banner_patterns:
+            if re.search(pat, script):
+                return "product/banner-only check without version or behavioral validation"
     return ""
 
 
@@ -10293,8 +10610,10 @@ async def run_cve_tests(cve_matches: list, target: str,
         verdict_counts       = {"VULNERABLE": 0, "NOT_VULNERABLE": 0, "INCONCLUSIVE": 0}
         vulnerable_found     = False
         verification_results: list = []
+        unsafe_verification_results: list = []
         verified             = False  # True if enough verifier/MSF evidence confirms VULNERABLE
         verify_confirmed     = 0
+        unsafe_verify_confirmed = 0
         msf_post_result: dict | None = None
         kb_pending_vulnerable: list = []  # VULNERABLE scripts deferred until Phase 3 confirms
         seen_script_hashes: set[str] = set()
@@ -10823,6 +11142,104 @@ async def run_cve_tests(cve_matches: list, target: str,
                       f"threshold {CVE_VERIFY_CONFIRM_THRESHOLD})")
 
         # ------------------------------------------------------------------
+        # Phase 3b: --unsafe verifier escalation. Only runs when the operator
+        # has typed UNSAFE at session start AND the safe verifier ladder did
+        # not reach the confirmation threshold. Uses the relaxed
+        # 'unsafe_verifier' sandbox tier (still rlimits + always-banned
+        # tokens; allows exec/eval/shell=True/raw sockets). Read-only intent.
+        # Unsafe confirmations are merged with safe verifier confirmations
+        # toward the same `CVE_VERIFY_CONFIRM_THRESHOLD`.
+        # ------------------------------------------------------------------
+        if vulnerable_found and not verified and UNSAFE_VERIFY:
+            triggering = next((a for a in attempts if a["verdict"] == "VULNERABLE"), None)
+            print(f"\n  [UNSAFE] Safe ladder unconfirmed \u2014 running "
+                  f"{CVE_UNSAFE_VERIFY_ATTEMPTS} intrusive verifier(s) (operator acknowledged)")
+            unsafe_dir = os.path.join(cve_tests_dir, "unsafe")
+            os.makedirs(unsafe_dir, exist_ok=True)
+            _u_ollama_up = _ollama_is_up()
+            if not _u_ollama_up:
+                print("  [UNSAFE] Ollama is not reachable \u2014 skipping unsafe verification.")
+            for u_i in range(1, CVE_UNSAFE_VERIFY_ATTEMPTS + 1):
+                if not _u_ollama_up:
+                    unsafe_verification_results.append({
+                        "verifier_num": u_i, "strategy": "Ollama unavailable", "tier": "unsafe",
+                        "language": "", "script": "", "output": "", "verdict": "INCONCLUSIVE",
+                    })
+                    continue
+
+                sp = _Spinner(f"  [U{u_i}/{CVE_UNSAFE_VERIFY_ATTEMPTS}] Generating unsafe verifier ...").start()
+                u_gen = _generate_unsafe_verification_script(cve, target, triggering)
+                if not u_gen:
+                    sp.stop(" SKIPPED (LLM parse failure)")
+                    unsafe_verification_results.append({
+                        "verifier_num": u_i, "strategy": "LLM parse failure", "tier": "unsafe",
+                        "language": "", "script": "", "output": "", "verdict": "INCONCLUSIVE",
+                    })
+                    continue
+                sp.stop()
+
+                u_lang   = u_gen["language"]
+                u_strat  = u_gen["strategy"]
+                u_script = u_gen["script"]
+                u_reject_reason = _script_quality_rejection(u_script, u_lang, cve)
+                if u_reject_reason:
+                    print(f"  [U{u_i}] Rejected unsafe verifier: {u_reject_reason}")
+                    unsafe_verification_results.append({
+                        "verifier_num": u_i,
+                        "strategy":    f"{u_strat} [rejected: {u_reject_reason}]",
+                        "tier":        "unsafe",
+                        "language":    u_lang,
+                        "script":      u_script,
+                        "output":      f"[REJECTED] Unsafe verifier was not executed: {u_reject_reason}",
+                        "verdict":     "INCONCLUSIVE",
+                        "rejected":    True,
+                    })
+                    continue
+                u_ext    = ".py" if u_lang == "python" else ".sh"
+                safe_cve = re.sub(r"[^a-zA-Z0-9_-]", "_", cve_id)
+                u_path   = os.path.join(unsafe_dir, f"{safe_cve}_unsafe_verify_{u_i:02d}{u_ext}")
+                with open(u_path, "w", encoding="utf-8") as fh:
+                    fh.write(u_script)
+
+                print(f"  Unsafe verifier strategy: {u_strat}")
+                sp2 = _Spinner(f"  [U{u_i}/{CVE_UNSAFE_VERIFY_ATTEMPTS}] Running unsafe verifier ({u_lang}) ...").start()
+                u_result = await asyncio.get_event_loop().run_in_executor(
+                    None, lambda s=u_script, l=u_lang, d=unsafe_dir: _run_script(s, l, d, timeout=30, tier="unsafe_verifier")
+                )
+                u_output = u_result["output"]
+                if u_result["timed_out"]:
+                    u_output = f"[TIMED OUT]\n{u_output}"
+                elif u_result["error"]:
+                    u_output = f"[ERROR: {u_result['error']}]\n{u_output}"
+                um = re.search(r"VERDICT:\s*(VULNERABLE|NOT_VULNERABLE|INCONCLUSIVE)", u_output)
+                u_verdict = um.group(1) if um else "INCONCLUSIVE"
+                if u_verdict == "VULNERABLE":
+                    unsafe_verify_confirmed += 1
+                    verify_confirmed += 1  # merge into the same threshold
+                sp2.stop(f" {u_verdict}")
+
+                unsafe_verification_results.append({
+                    "verifier_num": u_i,
+                    "strategy":    u_strat,
+                    "tier":        "unsafe",
+                    "language":    u_lang,
+                    "script":      u_script,
+                    "output":      u_output[:600],
+                    "verdict":     u_verdict,
+                })
+
+            verified = verify_confirmed >= CVE_VERIFY_CONFIRM_THRESHOLD
+            if verified and unsafe_verify_confirmed > 0:
+                print(f"  [UNSAFE] CONFIRMED with unsafe assistance "
+                      f"({verify_confirmed} safe+unsafe verifier(s) agree; "
+                      f"{unsafe_verify_confirmed} unsafe)")
+            elif unsafe_verify_confirmed > 0:
+                print(f"  [UNSAFE] Partial confirmation ({unsafe_verify_confirmed} unsafe verifier(s) agree, "
+                      f"total {verify_confirmed} of {CVE_VERIFY_CONFIRM_THRESHOLD} required)")
+            else:
+                print("  [UNSAFE] No additional confirmation from intrusive verifiers")
+
+        # ------------------------------------------------------------------
         # Phase 4: Optional post-positive MSF validation. This only runs after
         # another probe has produced VULNERABLE and only when the operator opted
         # in with --msf-validate. It uses MSF check-only validation, never exploit.
@@ -10944,6 +11361,9 @@ async def run_cve_tests(cve_matches: list, target: str,
             "verify_confirmed":     verify_confirmed,
             "msf_validation":       cve.get("msf_validation") or {},
             "verification_results": verification_results,
+            "unsafe_verification_results": unsafe_verification_results,
+            "unsafe_verify_confirmed":     unsafe_verify_confirmed,
+            "confirmation_used_unsafe":    bool(unsafe_verify_confirmed and verified),
             "inconclusive_reason":  inconclusive_reason,
             "attempts":             attempts,
         })
@@ -11342,23 +11762,21 @@ def _generate_attacker_perspective(cve: dict) -> str:
     this CVE and what could they gain?  Returns plain text or empty on failure.
     """
     prompt = (
-        f"You are a senior penetration tester writing the threat narrative section of a "
-        f"client report.\n\n"
+        f"You are a senior penetration tester writing the threat narrative section of a client report.\n\n"
         f"CVE ID:        {cve.get('cve_id', 'Unknown')}\n"
         f"Description:   {cve.get('summary', '')[:400]}\n"
         f"Affected:      {cve.get('product', '')} {cve.get('version_range', '')}\n"
         f"Service:       {cve.get('service', '')}\n"
         f"Vuln type:     {cve.get('vulnerability_type', '')}\n\n"
-        "In plain text (no markdown, no bullet symbols), write two short paragraphs:\n"
-        "1. How a real attacker would discover and exploit this vulnerability \u2014 initial "
-        "access method, tools or techniques likely used, and what level of skill is required.\n"
-        "2. What an attacker could gain once exploitation succeeds \u2014 data exposed, "
-        "credentials or tokens at risk, potential for lateral movement or privilege "
-        "escalation, and the realistic business impact if this is left unpatched.\n\n"
-        "Be specific to the vulnerability type. Keep each paragraph to 2-4 sentences. "
-        "Plain text only. Write in a natural, varied consulting style. Vary your "
-        "sentence structure and length. Do not begin consecutive sentences with the "
-        "same word or phrase. Begin your answer immediately."
+        "In plain text (no markdown, no bullet symbols), write exactly two paragraphs.\n"
+        "- Each paragraph must be 2-3 sentences, no longer.\n"
+        "- Do not use generic phrases, avoid repetition, and do not speculate beyond the CVE summary.\n"
+        "- Paragraph 1: How an attacker would discover and exploit this vulnerability (initial access, tools/techniques, skill level).\n"
+        "- Paragraph 2: What an attacker could gain if successful (data, credentials, lateral movement, realistic business impact).\n"
+        "- Be specific to the vulnerability type.\n"
+        "- Do not inflate risk or impact.\n"
+        "- Do not begin consecutive sentences with the same word.\n"
+        "- Begin your answer immediately.\n"
     )
     _t0 = time.monotonic()
     _sp = _Spinner(f"[ LLM ]  Generating attacker perspective for {cve.get('cve_id', 'CVE')} ...").start()
@@ -11428,20 +11846,15 @@ def _generate_attacker_perspectives_batch(cves: list) -> dict:
 
         prompt = (
             "/no_think\n"
-            "You are a senior penetration tester writing threat-narrative sections "
-            "for a client report.\n\n"
+            "You are a senior penetration tester writing threat-narrative sections for a client report.\n\n"
             "For EACH CVE below, produce a JSON object with TWO plain-text fields:\n"
-            "  \"discovery_and_exploit\": 2–4 sentences on how an attacker discovers "
-            "and exploits this CVE — initial access method, tools or techniques "
-            "likely used, required skill level.\n"
-            "  \"impact\":                2–4 sentences on what they gain once "
-            "exploitation succeeds — data exposed, credentials at risk, lateral "
-            "movement potential, realistic business consequence if left unpatched.\n\n"
-            "Be specific to each CVE's vulnerability type. Plain text inside JSON "
-            "values — no markdown, no bullet characters.\n\n"
-            "Return ONLY a JSON object keyed by CVE ID — no prose outside the "
-            "object, no markdown fences:\n"
-            "{\"CVE-YYYY-NNNN\": {\"discovery_and_exploit\":\"...\",\"impact\":\"...\"}, ...}\n\n"
+            "  \"discovery_and_exploit\": 2-3 sentences on how an attacker discovers and exploits this CVE (initial access, tools/techniques, skill level).\n"
+            "  \"impact\": 2-3 sentences on what they gain if successful (data, credentials, lateral movement, realistic business consequence).\n"
+            "- Be specific to each CVE's vulnerability type.\n"
+            "- Do not use generic phrases, avoid repetition, and do not speculate beyond the CVE summary.\n"
+            "- Do not inflate risk or impact.\n"
+            "- Plain text inside JSON values — no markdown, no bullet characters.\n"
+            "Return ONLY a JSON object keyed by CVE ID — no prose outside the object, no markdown fences.\n"
             "CVES:\n"
             f"{listing}\n"
         )
@@ -12426,12 +12839,91 @@ async def gather_target_info(target: str, available_tools: dict, airgap: bool = 
 # MAIN ASYNC LOOP
 # ---------------------------------------------------------------------------
 
+
+def _prompt_unsafe_acknowledgment(target: str, session_dir: str, session_id: str) -> bool:
+    """Show the LEGAL_NOTICE_UNSAFE banner and require the operator to type
+    the literal string 'UNSAFE' (all caps, strict equality) before any unsafe
+    verification path is allowed to run.
+
+    Always interactive \u2014 even under --unattended. There is no flag-based
+    bypass. If stdin is not a TTY (piped/redirected), abort: --unsafe must
+    be invoked from a real interactive terminal so a human acknowledged it.
+
+    On success, writes sessions/<id>/unsafe_acknowledgment.json and returns
+    True. On any other input or non-TTY stdin, returns False and the caller
+    must abort the scan with a non-zero exit code.
+    """
+    import hashlib as _hashlib
+    relaxations_summary = (
+        "Verifier-tier sandbox relaxations (exec/eval/shell=True allowed in "
+        "verifier probes only); intrusive MSF auxiliary 'check' modules"
+    )
+    banner = (
+        LEGAL_NOTICE_UNSAFE
+        + f"\nTarget:       {target}"
+        + f"\nSession:      {session_id}"
+        + f"\nRelaxations:  {relaxations_summary}"
+        + "\n\nTo proceed, type UNSAFE (all capitals) and press Enter."
+        + "\nAny other input will abort unsafe verification.\n"
+        + "============================================================\n"
+    )
+    print(banner)
+
+
+    stdin_is_tty = bool(getattr(sys.stdin, "isatty", lambda: False)())
+    webui_env_ack = os.environ.get("NOCTIS_WEBUI_UNSAFE_ACK", "0") == "1"
+    webui_flag_file = os.path.exists(os.path.join(session_dir, "webui_unsafe_ack"))
+
+    if stdin_is_tty:
+        try:
+            response = input("Type UNSAFE to proceed: ").rstrip("\n")
+        except (EOFError, KeyboardInterrupt):
+            print("\n[!] No acknowledgment received. Aborting unsafe verification.")
+            return False
+        if response != "UNSAFE":
+            print("[!] Acknowledgment not received (expected exact token 'UNSAFE'). Aborting.")
+            return False
+        ack_method = "tty"
+    elif webui_env_ack or webui_flag_file:
+        print("[+] Web UI explicit unsafe acknowledgment detected. Proceeding with UNSAFE mode.")
+        ack_method = "webui"
+    else:
+        print("[!] --unsafe requires an interactive terminal at session start (stdin is not a TTY), or explicit web UI acknowledgment.\nIf running from the web UI, ensure the acknowledgment flag is set. Aborting.")
+        return False
+
+    # Record the acknowledgment for the audit trail. The disclaimer hash lets
+    # post-hoc review detect tampering with the source constant.
+    ack_record = {
+        "target":             target,
+        "session_id":         session_id,
+        "operator_input":     "UNSAFE",
+        "timestamp_utc":      datetime.now(timezone.utc).isoformat(),
+        "noctis_version":     VERSION,
+        "disclaimer_sha256":  _hashlib.sha256(banner.encode("utf-8")).hexdigest(),
+        "stdin_is_tty":       stdin_is_tty,
+        "relaxations_enabled": relaxations_summary,
+        "acknowledgment_method": ack_method,
+        "webui_env_ack":      bool(webui_env_ack),
+        "webui_flag_file":    bool(webui_flag_file),
+    }
+    try:
+        ack_path = os.path.join(session_dir, "unsafe_acknowledgment.json")
+        with open(ack_path, "w", encoding="utf-8") as fh:
+            json.dump(ack_record, fh, indent=2)
+        print(f"[+] Unsafe verification accepted. Acknowledgment recorded: {ack_path}\n")
+    except Exception as e:
+        # Refuse to proceed if we cannot persist the audit record.
+        print(f"[!] Could not write unsafe_acknowledgment.json ({e}). Aborting.")
+        return False
+    return True
+
+
 async def main_async():
-    global SAFE_MODE, AIRGAP_MODE, MSF_VALIDATE, CVE_TEST, UNATTENDED, SESSION_FILE
+    global SAFE_MODE, AIRGAP_MODE, MSF_VALIDATE, CVE_TEST, UNATTENDED, UNSAFE_VERIFY, SESSION_FILE
     scan_start = datetime.now()
 
     if len(sys.argv) < 2:
-        print("Usage: python3 noctis.py <target> [profile ...] [--resume] [--session-dir <path>] [--aggressive] [--dns-enum] [--msf-validate] [--cve-test] [--unattended]")
+        print("Usage: python3 noctis.py <target> [profile ...] [--resume] [--session-dir <path>] [--aggressive] [--dns-enum] [--msf-validate] [--cve-test] [--unattended] [--unsafe]")
         print("       Target formats: 192.168.0.1  |  hostname  |  host:port  |  host:80,443,8080")
         print("       python3 noctis.py --report <json_file>")
         print("Profiles (one or more):", ", ".join(PROFILES))
@@ -12474,6 +12966,8 @@ async def main_async():
             CVE_TEST = True
         elif arg == "--unattended":
             UNATTENDED = True
+        elif arg == "--unsafe":
+            UNSAFE_VERIFY = True
         _i += 1
 
     # Ensure Ollama is running before we attempt any LLM calls
@@ -12533,6 +13027,33 @@ async def main_async():
 
     os.makedirs(session_dir, exist_ok=True)
     SESSION_FILE = os.path.join(session_dir, "session.json")
+
+    # ----------------------------------------------------------------------
+    # --unsafe pre-flight + legal-notice acknowledgment.
+    #
+    # Runs BEFORE any scanning, LLM call, or tool dispatch \u2014 the operator
+    # must explicitly accept the legal notice and type the exact token
+    # 'UNSAFE' before unsafe verification primitives may be used.
+    #
+    # Hard requirements:
+    #   1. --unsafe implies --cve-test (otherwise there is no verification
+    #      path to enhance).
+    #   2. --unsafe requires --aggressive (operator has already accepted
+    #      that aggressive testing is in scope for this engagement).
+    #   3. The typed acknowledgment is mandatory even under --unattended;
+    #      there is no flag-based bypass. CI must use `docker run -it ...`.
+    # ----------------------------------------------------------------------
+    if UNSAFE_VERIFY:
+        if not CVE_TEST:
+            print("[!] --unsafe requires --cve-test. Aborting.")
+            sys.exit(2)
+        if SAFE_MODE:
+            print("[!] --unsafe requires --aggressive (acknowledging that "
+                  "active offensive testing is in scope). Aborting.")
+            sys.exit(2)
+        if not _prompt_unsafe_acknowledgment(target, session_dir, session_id):
+            sys.exit(2)
+
     # Activate the scan-scoped LLM response cache (Wave C10). Shared across all
     # cached_ollama_call sites for this session; cleared automatically when the
     # session directory is rotated.
@@ -12547,6 +13068,8 @@ async def main_async():
     print(f"  Profile : {profile['name']}")
     mode_str = "AGGRESSIVE" if not SAFE_MODE else "SAFE (approval required for aggressive tools)"
     print(f"  Mode    : {mode_str}")
+    if UNSAFE_VERIFY:
+        print("  Unsafe  : ENABLED — intrusive verifier tier active (operator acknowledged)")
     if not AIRGAP_MODE:
         print(f"  DNS     : ENABLED — {', '.join(sorted(INTERNET_ONLY_TOOLS))} active")
     else:

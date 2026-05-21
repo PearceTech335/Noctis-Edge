@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  Noctis Edge — Update Script
+#  Noctis Edge v0.11.0 — Update Script
 #  Run: ./update.sh
 #  Updates: apt packages, snap, pip deps, nuclei, Ollama model, CVE database,
 #           CVE knowledge base (submit + pull), Nuclei KB (submit + pull),

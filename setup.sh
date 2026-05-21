@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  Noctis Edge — One-Shot Setup Script
+#  Noctis Edge v0.11.0 — One-Shot Setup Script
 #
 #  Run once on a fresh Kali / Parrot / Ubuntu / Debian-based system after cloning:
 #

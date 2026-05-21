@@ -4,16 +4,28 @@
 
 ## What's New in v0.10.1
 
-- **Scan timeout and service-planning hardening:** HTTP-only tools (`nikto`, `nuclei`, `ffuf`) are now gated to confirmed HTTP/HTTPS services, preventing wasted web scans against SMB, SSH, RPC, and other non-HTTP ports. Tool timeouts are recorded as explicit incomplete coverage instead of being buried in otherwise successful-looking output.
-- **CVE probe quality controls:** CVE replay and generation now reject duplicate scripts, placeholder probes, dummy targets, and protocol-mismatched raw probes before execution. Rejected probes are shown separately as non-evidence, do not inflate `INCONCLUSIVE`, and cannot push a CVE toward `NOT_VULNERABLE`.
-- **`NOT_TESTABLE` CVE verdict:** When every available generated or replayed probe is rejected before execution, Noctis now reports `NOT_TESTABLE` with a manual-review reason instead of treating bad probes as negative evidence.
-- **Safer 3b script generation:** The CVE script prompts no longer teach the model placeholder examples such as `PORT`, `PROBE`, `SIGNATURE`, `X-Version`, or fake version constants. When the supplied CVE detail is insufficient for a protocol-correct check, the model is directed to emit a low-confidence `INCONCLUSIVE` script instead of inventing raw TCP probes.
-- **CVE applicability pruning:** Low-confidence and obvious product-mismatched CVEs are routed to manual review rather than broad active probing, reducing noisy CVE tests on unrelated services.
-- **Report polish:** The floating table of contents now uses a blue style aligned with the report palette while remaining visually distinct during scrolling. CVE testing evidence now shows rejected-probe counts alongside executed verdict counts.
-- **Docker validation:** The `noctis` Docker image was rebuilt from this code and the scanner changes were validated with syntax/lint checks plus targeted smoke tests for rejected-probe accounting.
+
+
+## v0.11.0
+
+### Minor Version Bump
+
+- Strict CVE/product/version validation
+- Robust dash-separated version range support
+- Improved test coverage for matching and normalization
+- Docker build/test fixes
 
 ---
 
+## What's New in v0.10.1
+
+### Patch: Dash-Range Version Support
+
+- Robust support for dash-separated version ranges in CVE matching and validation logic.
+- Improved test coverage for version range parsing and normalization.
+- Minor fixes to Docker build and test scripts.
+
+---
 ## What's New in v0.10.0
 
 - **Single-model runtime:** All default LLM roles now use `qwen2.5-coder:3b-instruct`. Docker launchers, `docker-compose.yml`, `setup.sh`, and `update.sh` no longer pull or configure a separate `REPORT_MODEL`; normal installs need only one ~2 GB model. `MODEL`, `SCRIPT_MODEL`, and `CVE_SCRIPT_MODEL` remain logical roles in code, but by default they resolve to the same physical model.

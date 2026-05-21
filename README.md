@@ -40,6 +40,38 @@ By installing, configuring, or using this software, you agree that you are actin
 
 ---
 
+
+
+## v0.11.0 — Minor Version Bump
+
+**New in this release:**
+- Strict CVE/product/version validation
+- Robust dash-separated version range support
+- Improved test coverage for matching and normalization
+- Docker build/test fixes
+
+See version_history.md for details.
+
+## What's New: CVE Matching, Version Range, and Reporting Logic
+
+**CVE Matching and Version Range Enforcement**
+
+- CVE matching now enforces strict product, vendor, and version correlation. Each CVE match is annotated with a `cve_match_status` (e.g., `matched`, `product_mismatch`, `vendor_mismatch`, `version_not_affected`) and a `version_range_check` field (`affected`, `not_affected`, `unknown_version`, `no_range`).
+- Version range checks are transparent: the detected version, affected range, and match status are shown in the report for every CVE.
+
+**Narrative and Severity Logic**
+
+- Attacker perspectives and remediation advice are concise, realistic, and avoid risk inflation or speculation. Prompts enforce strict sentence and length limits.
+- Severity is never inflated; only evidence-based, context-aware severity is shown.
+
+**UI and Report Output**
+
+- The HTML report displays new badges and fields for CVE match status, version range, and severity.
+- Suppressed and not-affected CVEs are clearly separated in the report UI, with reasons for exclusion visible for auditability.
+- All LLM-generated sections (attacker perspective, remediation, executive summary) are proof-read and validated for accuracy and tone.
+
+---
+
 ## What Gives Noctis the Edge
 
 Most automated scanners report which CVEs *exist* on a system. **Noctis Edge tests whether they're actually exploitable** — and learns from every engagement it runs.

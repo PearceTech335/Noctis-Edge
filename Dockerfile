@@ -1,5 +1,5 @@
 # =============================================================================
-#  Noctis Edge — Dockerfile
+#  Noctis Edge v0.11.0 — Dockerfile
 #  Builds a self-contained image with all scanning tools and the offline CVE
 #  database baked in.  Ollama runs as a separate sidecar container (see
 #  docker-compose.yml).
