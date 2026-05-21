@@ -1,3 +1,19 @@
+  <!-- UNSAFE MODE BANNER (dynamic, only when --unsafe is checked) -->
+  <div id="unsafe-banner" style="display:none; position:fixed; left:0; right:0; bottom:0; background:#c0392b; color:#fff; text-align:center; padding:10px 0; font-weight:bold; font-size:15px; z-index:9999; letter-spacing:1px;">
+    &#9888; UNSAFE MODE ENABLED — Intrusive/exploit checks will run. Ensure you have explicit authorisation!
+  </div>
+// Show/hide UNSAFE MODE banner when --unsafe is checked
+document.addEventListener('DOMContentLoaded', function() {
+  const unsafeCb = document.getElementById('unsafe-flag-cb');
+  const unsafeBanner = document.getElementById('unsafe-banner');
+  if (unsafeCb && unsafeBanner) {
+    function updateBanner() {
+      unsafeBanner.style.display = unsafeCb.checked ? 'block' : 'none';
+    }
+    unsafeCb.addEventListener('change', updateBanner);
+    updateBanner();
+  }
+});
 #!/usr/bin/env python3
 # Copyright (C) 2026 Pearce Technologies Pty Ltd
 # SPDX-License-Identifier: AGPL-3.0-or-later
@@ -1008,10 +1024,6 @@ button:disabled { opacity: .45; cursor: not-allowed; }
       <div id="unsafe-confirm-error" style="color:#f44747; font-size:12px; margin-top:10px; display:none;"></div>
     </div>
   </div>
-  <!-- UNSAFE MODE BANNER -->
-  <div id="unsafe-banner" style="display:none; position:fixed; left:0; right:0; bottom:0; background:#c0392b; color:#fff; text-align:center; padding:10px 0; font-weight:bold; font-size:15px; z-index:9999; letter-spacing:1px;">
-    &#9888; UNSAFE MODE ENABLED — Intrusive/exploit checks will run. Ensure you have explicit authorisation!
-  </div>
   <label for="reply-input">Prompt reply:</label>
   <input id="reply-input" type="text" placeholder="Type y/n or free-text reply and press Enter…" autocomplete="off">
   <button id="btn-send" onclick="sendInput()">Send</button>
@@ -1144,17 +1156,6 @@ function actuallyStartScan() {
   });
 }
 // Show/hide UNSAFE MODE banner when --unsafe is checked
-document.addEventListener('DOMContentLoaded', function() {
-  const unsafeCb = document.getElementById('unsafe-flag-cb');
-  const unsafeBanner = document.getElementById('unsafe-banner');
-  if (unsafeCb && unsafeBanner) {
-    function updateBanner() {
-      unsafeBanner.style.display = unsafeCb.checked ? 'block' : 'none';
-    }
-    unsafeCb.addEventListener('change', updateBanner);
-    updateBanner();
-  }
-});
 /* ── WebSocket connection ─────────────────────────────────────────────── */
 const term    = document.getElementById('terminal');
 const status  = document.getElementById('status-text');
