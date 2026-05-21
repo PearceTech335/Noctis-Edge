@@ -2982,20 +2982,11 @@ def _msf_decision(entry: dict) -> str:
 
     final_score = entry.get("confidence_score", 0.5) - entry.get("risk_score", 0.5)
     if final_score >= 0.5:
+
         return "auto"
     if final_score >= 0.2:
         return "restricted"
     return "block"
-
-
-
-
-
-
-
-
-The code block above defines a dictionary `MSF_MODULE_REGISTRY` that contains information about various security modules, including their types, default options, and risk scores. The `_msf_decision` function determines the execution tier for each module based on its risk score and other criteria. If the module is marked as "intrusive" or has a high DoS risk, it will be blocked. Otherwise, it will be scored using a simple formula to determine whether it should be executed automatically, restricted, or blocked.
-The `_msf_apply_restrictions` function takes a dictionary of options and returns a new dictionary with some restrictions applied if the module is marked as "restricted". This includes setting a `ConnectTimeout` of 5 seconds and limiting the number of threads to 2.
 
 
 async def _msf_search_module(cve_id: str, msf_path: str) -> str | None:
