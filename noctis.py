@@ -12092,6 +12092,8 @@ def generate_cve_remediations(cve_test_results: list, cve_matches: list) -> int:
     Returns the number of LLM failures across all CVE remediation calls.
     """
     _cve_llm_failed = 0
+    # Filter out any cve_matches entries without a valid, non-empty 'cve_id' to prevent KeyError
+    cve_matches = [c for c in cve_matches if c.get("cve_id")]
     cve_meta = {c["cve_id"]: c for c in cve_matches}
 
     vulnerable_verdicts = {"CONFIRMED_VULNERABLE", "PROBABLE_VULNERABLE", "MATCHED_VERSION", "VULNERABLE"}

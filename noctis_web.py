@@ -81,11 +81,12 @@ PROFILE_DESCRIPTIONS = {
 _ANSI_RE = re.compile(r'\x1b(?:\[[0-9;]*[mGKHFABCDJr]|\([AB]|[^[\(])')
 
 FLAGS = [
-    ("--aggressive",   "Disable safe-mode: run gobuster / ffuf / hydra without approval"),
-    ("--dns-enum",     "Enable DNS enumeration tools — requires internet"),
-    ("--msf-validate", "Run safe Metasploit 'check' probes for each matched CVE"),
-    ("--cve-test",     "Ask the LLM to generate & execute probe scripts per CVE"),
-    ("--unattended",   "Auto-approve all prompts — run to completion without user input"),
+  ("--aggressive",   "Disable safe-mode: run gobuster / ffuf / hydra without approval"),
+  ("--dns-enum",     "Enable DNS enumeration tools — requires internet"),
+  ("--msf-validate", "Run safe Metasploit 'check' probes for each matched CVE"),
+  ("--cve-test",     "Ask the LLM to generate & execute probe scripts per CVE"),
+  ("--unsafe",       "\u26a0\ufe0f  Enables intrusive/unsafe verifier and exploit checks. You must have explicit authorisation. Operator confirmation required. Results are flagged as unsafe in reports."),
+  ("--unattended",   "Auto-approve all prompts — run to completion without user input"),
 ]
 
 app  = Flask(__name__)
@@ -252,22 +253,33 @@ def api_start():
 
     cmd = [PYTHON, "-u", NOCTIS, target] + profiles + flags
     if session_dir:
-        # Restrict to paths inside BASE_DIR to prevent path traversal
-        resolved_sd = os.path.realpath(session_dir)
-        if not resolved_sd.startswith(os.path.realpath(BASE_DIR) + os.sep):
-            return jsonify({"ok": False, "error": "session_dir outside project directory"}), 403
-        cmd += ["--session-dir", resolved_sd]
+      # Restrict to paths inside BASE_DIR to prevent path traversal
+      resolved_sd = os.path.realpath(session_dir)
+      if not resolved_sd.startswith(os.path.realpath(BASE_DIR) + os.sep):
+        return jsonify({"ok": False, "error": "session_dir outside project directory"}), 403
+      cmd += ["--session-dir", resolved_sd]
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
 
+    # If --unsafe is present, set NOCTIS_WEBUI_UNSAFE_ACK=1 and create webui_unsafe_ack file in session_dir
+    if "--unsafe" in flags:
+      env["NOCTIS_WEBUI_UNSAFE_ACK"] = "1"
+      if session_dir:
+        try:
+          ack_path = os.path.join(resolved_sd, "webui_unsafe_ack")
+          with open(ack_path, "w") as f:
+            f.write("acknowledged by web UI on scan start\n")
+        except Exception as e:
+          print(f"[!] Failed to create webui_unsafe_ack file: {e}")
+
     proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        stdin=subprocess.PIPE,
-        bufsize=0,
-        cwd=BASE_DIR,
-        env=env,
+      cmd,
+      stdout=subprocess.PIPE,
+      stderr=subprocess.STDOUT,
+      stdin=subprocess.PIPE,
+      bufsize=0,
+      cwd=BASE_DIR,
+      env=env,
     )
     with _lock:
         _process = proc
@@ -942,12 +954,21 @@ button:disabled { opacity: .45; cursor: not-allowed; }
     <legend>Scan Flags</legend>
     <div class="cb-row" id="flags-row">
       {% for flag, tip in flags %}
-      <label>
-        <input type="checkbox" class="flag-cb" value="{{ flag }}">
-        {{ flag }}
-        <span class="tip">{{ tip }}</span>
-      </label>
+        {% if flag != '--unsafe' %}
+        <label>
+          <input type="checkbox" class="flag-cb" value="{{ flag }}">
+          {{ flag }}
+          <span class="tip">{{ tip }}</span>
+        </label>
+        {% endif %}
       {% endfor %}
+      <div style="margin-left:auto;">
+        <label style="font-weight:bold; color:#c0392b;">
+          <input type="checkbox" class="flag-cb" id="unsafe-flag-cb" value="--unsafe">
+          --unsafe
+          <span class="tip" style="color:#c0392b;">Enables intrusive/unsafe verifier and exploit checks. You must have explicit authorisation. Operator confirmation required. Results are flagged as unsafe in reports.</span>
+        </label>
+      </div>
     </div>
   </fieldset>
 
@@ -974,6 +995,23 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 
 <!-- Input row -->
 <div id="inp-row">
+  <!-- UNSAFE CONFIRMATION MODAL -->
+  <div id="unsafe-confirm-modal-overlay" style="display:none; position:fixed; left:0; top:0; right:0; bottom:0; background:rgba(30,30,30,0.85); z-index:10000; align-items:center; justify-content:center;">
+    <div id="unsafe-confirm-modal" style="background:#252526; color:#fff; border-radius:6px; box-shadow:0 2px 16px #000a; padding:32px 32px 24px 32px; max-width:400px; margin:auto; text-align:center;">
+      <h2 style="color:#c0392b; margin-bottom:18px;">UNSAFE MODE CONFIRMATION</h2>
+      <div style="font-size:13px; margin-bottom:18px;">You are about to enable <b>intrusive/exploit</b> checks. This may disrupt or damage the target. You must have explicit written authorisation.<br><br>To proceed, type <b>UNSAFE</b> below and click Confirm.</div>
+      <input id="unsafe-confirm-input" type="text" style="width:100%; padding:8px; font-size:15px; border-radius:3px; border:1px solid #c0392b; margin-bottom:16px; text-align:center;" placeholder="Type UNSAFE to confirm">
+      <div style="display:flex; gap:12px; justify-content:center;">
+        <button id="unsafe-confirm-cancel" style="background:#444; color:#fff; border:none; border-radius:3px; padding:7px 18px; font-size:13px;" onclick="closeUnsafeConfirmModal()">Cancel</button>
+        <button id="unsafe-confirm-ok" style="background:#c0392b; color:#fff; border:none; border-radius:3px; padding:7px 18px; font-size:13px; font-weight:bold;" onclick="confirmUnsafeAndStartScan()">Confirm</button>
+      </div>
+      <div id="unsafe-confirm-error" style="color:#f44747; font-size:12px; margin-top:10px; display:none;"></div>
+    </div>
+  </div>
+  <!-- UNSAFE MODE BANNER -->
+  <div id="unsafe-banner" style="display:none; position:fixed; left:0; right:0; bottom:0; background:#c0392b; color:#fff; text-align:center; padding:10px 0; font-weight:bold; font-size:15px; z-index:9999; letter-spacing:1px;">
+    &#9888; UNSAFE MODE ENABLED — Intrusive/exploit checks will run. Ensure you have explicit authorisation!
+  </div>
   <label for="reply-input">Prompt reply:</label>
   <input id="reply-input" type="text" placeholder="Type y/n or free-text reply and press Enter…" autocomplete="off">
   <button id="btn-send" onclick="sendInput()">Send</button>
@@ -999,6 +1037,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   </div>
 </div>
 
+
 <!-- Report modal -->
 <div id="modal-overlay">
   <div id="modal">
@@ -1014,6 +1053,20 @@ button:disabled { opacity: .45; cursor: not-allowed; }
     <div id="modal-footer">
       <button id="modal-cancel" onclick="closeReportModal()">Cancel</button>
       <button id="modal-ok" onclick="submitReport()">Generate</button>
+      <button id="btn-unsafe-modal" style="display:none; background:#c0392b; color:#fff;" onclick="openUnsafeModal()">Unsafe Verifier Results</button>
+    </div>
+  </div>
+</div>
+
+<!-- Unsafe Verifier modal -->
+<div id="unsafe-modal-overlay">
+  <div id="unsafe-modal">
+    <h2 style="color:#c0392b;">Unsafe Verifier Results</h2>
+    <div id="unsafe-modal-content">
+      <!-- Populated by JS -->
+    </div>
+    <div id="unsafe-modal-footer" style="display:flex; gap:8px; justify-content:flex-end;">
+      <button id="unsafe-modal-cancel" onclick="closeUnsafeModal()">Close</button>
     </div>
   </div>
 </div>
@@ -1037,6 +1090,71 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 </div>
 
 <script>
+// Unsafe confirmation modal logic
+function openUnsafeConfirmModal() {
+  document.getElementById('unsafe-confirm-modal-overlay').style.display = 'flex';
+  document.getElementById('unsafe-confirm-input').value = '';
+  document.getElementById('unsafe-confirm-error').style.display = 'none';
+  document.getElementById('unsafe-confirm-input').focus();
+}
+function closeUnsafeConfirmModal() {
+  document.getElementById('unsafe-confirm-modal-overlay').style.display = 'none';
+}
+function confirmUnsafeAndStartScan() {
+  const val = document.getElementById('unsafe-confirm-input').value.trim();
+  if (val !== 'UNSAFE') {
+    const err = document.getElementById('unsafe-confirm-error');
+    err.textContent = "You must type UNSAFE (all capitals) to proceed.";
+    err.style.display = 'block';
+    document.getElementById('unsafe-confirm-input').focus();
+    return;
+  }
+  closeUnsafeConfirmModal();
+  actuallyStartScan();
+}
+
+// Patch startScan to require confirmation for --unsafe
+const origStartScan = startScan;
+function startScan() {
+  const unsafeCb = document.getElementById('unsafe-flag-cb');
+  if (unsafeCb && unsafeCb.checked) {
+    openUnsafeConfirmModal();
+    return;
+  }
+  actuallyStartScan();
+}
+
+function actuallyStartScan() {
+  const target = document.getElementById('target-input').value.trim();
+  if (!target) { alert('Please enter a target hostname or IP address.'); return; }
+
+  const profileEl = document.querySelector('.profile-rb:checked');
+  const profiles  = profileEl ? [profileEl.value] : ['standard'];
+  const flags     = [...document.querySelectorAll('.flag-cb:checked')].map(cb => cb.value);
+
+  // Always generate a unique session_dir for each scan (timestamp + random)
+  const sessionDir = `sessions/webui_${Date.now()}_${Math.floor(Math.random()*1e6)}`;
+
+  fetch('/api/start', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ target, profiles, flags, session_dir: sessionDir }),
+  }).then(r => r.json()).then(d => {
+    if (!d.ok) { status.textContent = 'Error: ' + d.error; alert(d.error); }
+  });
+}
+// Show/hide UNSAFE MODE banner when --unsafe is checked
+document.addEventListener('DOMContentLoaded', function() {
+  const unsafeCb = document.getElementById('unsafe-flag-cb');
+  const unsafeBanner = document.getElementById('unsafe-banner');
+  if (unsafeCb && unsafeBanner) {
+    function updateBanner() {
+      unsafeBanner.style.display = unsafeCb.checked ? 'block' : 'none';
+    }
+    unsafeCb.addEventListener('change', updateBanner);
+    updateBanner();
+  }
+});
 /* ── WebSocket connection ─────────────────────────────────────────────── */
 const term    = document.getElementById('terminal');
 const status  = document.getElementById('status-text');
@@ -1197,12 +1315,15 @@ function startScan() {
 
   const profileEl = document.querySelector('.profile-rb:checked');
   const profiles  = profileEl ? [profileEl.value] : ['standard'];
-  const flags      = [...document.querySelectorAll('.flag-cb:checked')].map(cb => cb.value);
+  const flags     = [...document.querySelectorAll('.flag-cb:checked')].map(cb => cb.value);
+
+  // Always generate a unique session_dir for each scan (timestamp + random)
+  const sessionDir = `sessions/webui_${Date.now()}_${Math.floor(Math.random()*1e6)}`;
 
   fetch('/api/start', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ target, profiles, flags }),
+    body: JSON.stringify({ target, profiles, flags, session_dir: sessionDir }),
   }).then(r => r.json()).then(d => {
     if (!d.ok) { status.textContent = 'Error: ' + d.error; alert(d.error); }
   });
@@ -1308,7 +1429,12 @@ document.getElementById('resume-modal-overlay').addEventListener('click', e => {
   if (e.target === document.getElementById('resume-modal-overlay')) closeResumeModal();
 });
 
-/* ── Report modal ────────────────────────────────────────────────────── */
+
+// ── Report modal ──────────────────────────────────────────────────────
+let lastReportPath = null;
+let lastUnsafeResults = null;
+let lastUnsafeConfirmation = null;
+
 function openReportModal() {
   if (running) { alert('A scan is already running. Please wait.'); return; }
   document.getElementById('modal-overlay').classList.add('open');
@@ -1323,6 +1449,11 @@ function openReportModal() {
       sel.appendChild(opt);
     });
   });
+  // Hide unsafe button by default
+  document.getElementById('btn-unsafe-modal').style.display = 'none';
+  lastReportPath = null;
+  lastUnsafeResults = null;
+  lastUnsafeConfirmation = null;
 }
 
 function closeReportModal() {
@@ -1334,19 +1465,83 @@ function submitReport() {
   const man  = document.getElementById('report-path').value.trim();
   const path = man || sel;
   if (!path) { alert('Please select or enter a JSON report path.'); return; }
-  closeReportModal();
-  fetch('/api/report', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ json_path: path }),
-  }).then(r => r.json()).then(d => {
-    if (!d.ok) alert('Error: ' + d.error);
+  // Try to load the JSON and check for unsafe verifier results
+  fetch(path).then(r => {
+    if (!r.ok) throw new Error('Could not load report JSON');
+    return r.json();
+  }).then(report => {
+    lastReportPath = path;
+    lastUnsafeResults = report.unsafe_verification_results || null;
+    lastUnsafeConfirmation = report.confirmation_used_unsafe || null;
+    if (lastUnsafeResults && Array.isArray(lastUnsafeResults) && lastUnsafeResults.length > 0) {
+      document.getElementById('btn-unsafe-modal').style.display = '';
+    } else {
+      document.getElementById('btn-unsafe-modal').style.display = 'none';
+    }
+    closeReportModal();
+    // Also trigger the report generation as before
+    fetch('/api/report', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ json_path: path }),
+    }).then(r => r.json()).then(d => {
+      if (!d.ok) alert('Error: ' + d.error);
+    });
+  }).catch(e => {
+    alert('Could not load report JSON: ' + e.message);
+    closeReportModal();
   });
 }
 
 // Close modal on overlay click
 document.getElementById('modal-overlay').addEventListener('click', e => {
   if (e.target === document.getElementById('modal-overlay')) closeReportModal();
+});
+
+// ── Unsafe Verifier modal ─────────────────────────────────────────────
+function openUnsafeModal() {
+  if (!lastUnsafeResults || !Array.isArray(lastUnsafeResults) || lastUnsafeResults.length === 0) {
+    alert('No unsafe verifier results found in this report.');
+    return;
+  }
+  const overlay = document.getElementById('unsafe-modal-overlay');
+  const content = document.getElementById('unsafe-modal-content');
+  content.innerHTML = '';
+  // Disclaimer
+  const disclaimer = document.createElement('div');
+  disclaimer.style = 'color:#c0392b; font-size:12px; margin-bottom:10px;';
+  disclaimer.textContent = 'These results were obtained using operator-acknowledged unsafe actions. You must have authorisation to test these systems. Noctis bears no responsibility for any consequences.';
+  content.appendChild(disclaimer);
+  // Confirmation
+  if (lastUnsafeConfirmation) {
+    const conf = document.createElement('div');
+    conf.style = 'color:#fff; background:#444; padding:6px 10px; border-radius:3px; margin-bottom:10px; font-size:11px;';
+    conf.textContent = 'Operator confirmation: ' + lastUnsafeConfirmation;
+    content.appendChild(conf);
+  }
+  // Results table
+  const table = document.createElement('table');
+  table.style = 'width:100%; border-collapse:collapse; margin-bottom:10px;';
+  const thead = document.createElement('thead');
+  thead.innerHTML = '<tr style="background:#222; color:#fff;"><th style="padding:4px 8px; border-bottom:1px solid #555;">CVE</th><th style="padding:4px 8px; border-bottom:1px solid #555;">Result</th><th style="padding:4px 8px; border-bottom:1px solid #555;">Details</th></tr>';
+  table.appendChild(thead);
+  const tbody = document.createElement('tbody');
+  for (const r of lastUnsafeResults) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td style="padding:4px 8px; border-bottom:1px solid #333;">${r.cve_id || ''}</td><td style="padding:4px 8px; border-bottom:1px solid #333; color:${r.result==="VULNERABLE"?"#f44747":(r.result==="SAFE"?"#4ec9b0":"#fff")}">${r.result || ''}</td><td style="padding:4px 8px; border-bottom:1px solid #333;">${r.details || ''}</td>`;
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  content.appendChild(table);
+  overlay.classList.add('open');
+}
+
+function closeUnsafeModal() {
+  document.getElementById('unsafe-modal-overlay').classList.remove('open');
+}
+
+document.getElementById('unsafe-modal-overlay').addEventListener('click', e => {
+  if (e.target === document.getElementById('unsafe-modal-overlay')) closeUnsafeModal();
 });
 
 /* ── Settings / License modal ────────────────────────────────────────── */
