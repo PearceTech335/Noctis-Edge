@@ -6,7 +6,7 @@
 
 **Security Through Exposure**
 
-Noctis Edge is a Python-based, AI-assisted vulnerability exposure and testing platform built around **local execution, data sovereignty, and operational security**.
+Noctis Edge is a Python-based, Point-In-Time, AI-assisted vulnerability exposure and testing platform built around **local execution, data sovereignty, and operational security**.
 
 Unlike cloud-dependent security platforms, **Noctis Edge runs entirely on your local machine**. All scanning, LLM-assisted analysis, CVE validation, and report generation happen on-device — no target data, credentials, or findings ever leave the host. It supports command-line execution via `noctis.py` and a browser-based Web UI via `noctis_web.py` (served locally at `http://127.0.0.1:8888`), without requiring external SaaS platforms, third-party APIs, or cloud processing.
 
