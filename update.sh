@@ -694,11 +694,55 @@ fi
 ok "Tool manifest sync done"
 
 # =============================================================================
+# 12. Unsafe NSE Scripts pull (subscribers only)
+# =============================================================================
+header "12/12  Unsafe NSE Scripts pull"
+
+UNSAFE_NSE_LOCAL="$SCRIPT_DIR/unsafe_nse_scripts.json"
+
+if [[ -z "$KB_LICENSE_KEY" ]]; then
+    promo "Unsafe NSE scripts pull skipped — KB_LICENSE_KEY not set in noctis.conf"
+    promo "  Subscribe at: https://noctisedge.lemonsqueezy.com to unlock"
+    promo "  intrusive NSE script policies for --unsafe scans."
+else
+    info "Pulling unsafe NSE scripts (license key found) ..."
+    _UNSAFE_NSE_RELAY="https://noctis-kb-relay.pearcetechnologies1.workers.dev"
+    _TMP_UNSAFE_NSE="/tmp/_noctis_unsafe_nse_$$.json"
+    HTTP_CODE=$(curl -sS -w "%{http_code}" -o "$_TMP_UNSAFE_NSE" \
+        --max-time 30 \
+        -X POST "$_UNSAFE_NSE_RELAY/unsafe-nse-scripts" \
+        -H "Content-Type: application/json" \
+        -d "{\"license_key\":\"$KB_LICENSE_KEY\"}" 2>/dev/null)
+    CURL_EXIT=$?
+    if [[ "$CURL_EXIT" != "0" ]]; then
+        err "Unsafe NSE scripts download failed (curl error $CURL_EXIT) — will retry on next update"
+        rm -f "$_TMP_UNSAFE_NSE"
+    elif [[ "$HTTP_CODE" == "200" ]]; then
+        if python3 -c "import json,sys; json.load(open('$_TMP_UNSAFE_NSE'))" 2>/dev/null; then
+            mv "$_TMP_UNSAFE_NSE" "$UNSAFE_NSE_LOCAL"
+            SCRIPT_COUNT=$(python3 -c "import json; d=json.load(open('$UNSAFE_NSE_LOCAL')); print(sum(len(v.get('scripts',[])) for v in d.values()))" 2>/dev/null || echo "?")
+            ok "Unsafe NSE scripts updated ($SCRIPT_COUNT scripts across $(python3 -c "import json; print(len(json.load(open('$UNSAFE_NSE_LOCAL'))))" 2>/dev/null || echo "?") services)"
+        else
+            err "Downloaded unsafe NSE scripts is not valid JSON — keeping existing copy"
+            rm -f "$_TMP_UNSAFE_NSE"
+        fi
+    elif [[ "$HTTP_CODE" == "403" ]]; then
+        err "License key rejected — check your subscription at https://noctisedge.lemonsqueezy.com"
+        rm -f "$_TMP_UNSAFE_NSE"
+    else
+        err "Unsafe NSE scripts download failed (HTTP $HTTP_CODE) — will retry on next update"
+        rm -f "$_TMP_UNSAFE_NSE"
+    fi
+fi
+
+ok "Unsafe NSE scripts sync done"
+
+# =============================================================================
 # Done
 # =============================================================================
 echo ""
 echo "============================================================"
-echo "  All updates complete (11/11 steps)."
+echo "  All updates complete (12/12 steps)."
 echo "  Remember to restart Ollama if it was already running:"
 echo "    sudo systemctl restart ollama"
 echo "============================================================"

@@ -574,6 +574,69 @@ async function handleCommunityNucleiKB(request, env) {
 }
 
 // ---------------------------------------------------------------------------
+// Unsafe NSE Scripts download handler (subscribers only, read-only)
+// ---------------------------------------------------------------------------
+
+async function handleUnsafeNseScripts(request, env) {
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return jsonResp({ error: "Request body must be valid JSON" }, 400);
+  }
+
+  const licenseKey = body?.license_key;
+  if (!licenseKey || typeof licenseKey !== "string" || licenseKey.trim() === "") {
+    return jsonResp({ error: "license_key is required" }, 400);
+  }
+
+  let lsResp;
+  try {
+    lsResp = await fetch("https://api.lemonsqueezy.com/v1/licenses/validate", {
+      method: "POST",
+      headers: {
+        "Accept":       "application/json",
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: `license_key=${encodeURIComponent(licenseKey.trim())}`,
+    });
+  } catch (err) {
+    console.error("[unsafe-nse-scripts] Lemon Squeezy validate network error:", err);
+    return jsonResp({ error: "License validation temporarily unavailable — try again later" }, 503);
+  }
+
+  const lsData = await lsResp.json();
+
+  if (!lsResp.ok || !lsData?.valid || lsData?.license_key?.status !== "active") {
+    return jsonResp({
+      error:   "invalid_key",
+      message: "License key not recognised or inactive. Subscribe at https://noctisedge.lemonsqueezy.com",
+    }, 403);
+  }
+
+  const fileResp = await fetch(
+    "https://api.github.com/repos/PearceTech335/Noctis-Edge-Tool-Manifest-KB/contents/unsafe_nse_scripts.json",
+    {
+      headers: {
+        ...githubHeaders(env.GITHUB_MANIFEST_TOKEN),
+        Accept: "application/vnd.github.v3.raw",
+      },
+    }
+  );
+
+  if (!fileResp.ok) {
+    console.error(`[unsafe-nse-scripts] GitHub fetch failed HTTP ${fileResp.status}`);
+    return jsonResp({ error: "Unsafe NSE scripts temporarily unavailable — try again later" }, 502);
+  }
+
+  const fileText = await fileResp.text();
+  return new Response(fileText, {
+    status:  200,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Tool Manifest download handler (subscribers only, read-only)
 // ---------------------------------------------------------------------------
 
@@ -737,6 +800,10 @@ export default {
 
     if (pathname === "/tool-manifest" && request.method === "POST") {
       return handleToolManifest(request, env);
+    }
+
+    if (pathname === "/unsafe-nse-scripts" && request.method === "POST") {
+      return handleUnsafeNseScripts(request, env);
     }
 
     return jsonResp({ error: "Not found" }, 404);

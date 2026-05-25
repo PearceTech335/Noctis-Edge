@@ -4010,11 +4010,16 @@ def _select_nse_scripts(service_name: str) -> str:
     if not SAFE_MODE:
         selected.extend(_collect_policy_scripts(name, _load_nse_script_policy(AGGRESSIVE_NSE_SCRIPTS_PATH)))
     if UNSAFE_VERIFY:
-        selected.extend(_collect_policy_scripts(
-            name,
-            _load_nse_script_policy(UNSAFE_NSE_SCRIPTS_PATH),
-            allow_unsafe=True,
-        ))
+        _unsafe_nse_policy = _load_nse_script_policy(UNSAFE_NSE_SCRIPTS_PATH)
+        if not _unsafe_nse_policy:
+            print("  [!] unsafe_nse_scripts.json is empty — intrusive NSE scripts require a subscription.")
+            print("      Subscribe at https://noctisedge.lemonsqueezy.com and run ./update.sh to pull them.")
+        else:
+            selected.extend(_collect_policy_scripts(
+                name,
+                _unsafe_nse_policy,
+                allow_unsafe=True,
+            ))
     if selected:
         return _script_csv_from_list(selected)
 
