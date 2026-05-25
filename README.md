@@ -618,7 +618,17 @@ The worker is already deployed at `https://noctis-kb-relay.pearcetechnologies1.w
 
 ## Version History
 
-**Current version: v0.11.2**
+**Current version: v0.11.3**
+
+### v0.11.3 — CVE Probe Quality & Intelligence
+
+- **Adaptive temperature scheduling** — LLM probe generation now operates in two modes depending on the tail of the attempt history. In *explore mode* (no consecutive rejections), temperature ramps up from `0.1` to `0.5` in `0.1` steps with each successfully-run attempt, pushing the model toward progressively more creative strategies rather than repeating the same canonical approach. In *fix mode* (one or more consecutive rejected probes), temperature ramps *down* from `0.5` to `0.1`, tightening the output distribution so the model addresses the specific defect precisely rather than inventing something new. KB-replay and Nuclei attempts are excluded from both counters. The current mode and temperature are shown in the spinner label (e.g. `[T=0.3 explore×3]`).
+- **Phase 1b: KB script correction loop** — After Phase 1 KB replay, a new correction phase hands any KB scripts rejected for a *surface-level* defect (syntax error or placeholder token) back to the LLM with a targeted correction prompt and a fixed low temperature of `0.2`. The probe logic is preserved; only the specific defect is fixed. Corrected scripts pass through the same sanitise → quality-check → duplicate-hash pipeline before execution. Results enter the `attempts` list before Phase 2, so fresh LLM generation sees whether the corrected probe worked and adapts its strategy accordingly. Phase 1b is capped at 2 corrections to leave budget for Phase 2. Corrected attempts are tagged `source="kb_fix"` in the report.
+- **KB replay sanitisation** — KB scripts now pass through `_sanitise_script()` before execution, fixing bare literal newlines in byte/string literals and running a compile check. Scripts that cannot be auto-repaired are rejected with a clear reason instead of causing a `SyntaxError` at runtime.
+- **Rejection feedback loop key fix** — `_generate_cve_test_script` now correctly reads `rejection_reason` (previously looked up the wrong key `reject_reason`), surfacing clean rejection messages to the LLM instead of the noisy `[REJECTED] Probe was not executed: …` fallback string.
+- **Explicit placeholder-token ban in prompts** — When any previous attempt was rejected for containing a placeholder token, the next generation prompt gains a `### PLACEHOLDER TOKENS DETECTED` block that explicitly names the offending tokens and instructs the model to use only concrete values derived from CVE details or protocol behaviour.
+
+---
 
 ### v0.11.2 — Patch Release
 

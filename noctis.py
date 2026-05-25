@@ -10637,6 +10637,77 @@ Reply with ONLY this JSON (no markdown, no code fences):
     return None
 
 
+# Keywords in a KB rejection reason that indicate the defect is surface-level
+# (fixable by the LLM) rather than a logic/protocol problem (not worth retrying).
+_KB_FIXABLE_REJECTION_KEYWORDS = ("syntax error", "placeholder token")
+
+
+def _fix_kb_script(cve: dict, target: str, kb_attempt: dict) -> dict | None:
+    """Ask the LLM to correct a KB probe script that was rejected due to a fixable
+    surface-level defect (syntax error or placeholder token).  The probe logic is
+    preserved; only the specific defect is addressed.
+
+    Returns a parsed {language, strategy, script, ...} dict on success, or None.
+    Uses a low fixed temperature (0.2) — correction is a precision task.
+    """
+    rejection_reason = kb_attempt.get("rejection_reason") or kb_attempt.get("reject_reason") or "(unknown)"
+    rejected_script  = kb_attempt.get("script") or ""
+    strategy         = kb_attempt.get("strategy") or "kb_script"
+    language         = kb_attempt.get("language") or "python"
+
+    prompt = f"""/no_think
+A CVE probe script was rejected before execution due to a fixable defect. Correct it and return the fixed script. Reply with JSON only.
+
+CVE: {cve.get('cve_id', '')} on {target}:{cve.get('service', '')}
+Product: {cve.get('product', '')} — {cve.get('summary', '')[:150]}
+
+REJECTION REASON: {rejection_reason}
+
+REJECTED SCRIPT (fix this — preserve the probe logic exactly):
+{rejected_script}
+
+### CORRECTION RULES
+- Fix ONLY the defect described in REJECTION REASON above. Do not change the probe approach.
+- Use single quotes (') for ALL string literals to avoid breaking the JSON wrapper.
+- Byte literals: write escape sequences (\\x0a, \\r\\n) — NEVER a bare literal newline inside b'...' or b\"...\".
+- Replace any placeholder token (e.g. SIGNATURE, ERROR_SIGNATURE, PROBE, DUMMY, ERROR_MESSAGE) with a concrete value derived from the CVE description or known protocol behaviour.
+- Handle all network and parsing failures gracefully. The script must never crash.
+- Keep the script short and deterministic.
+
+Reply with ONLY this JSON (no markdown, no code fences):
+{{"language": "{language}", "probe_type": "protocol_probe", "strategy": "{strategy} [corrected]", "confidence": 0.5, "script": "<corrected script here>"}}"""
+
+    _t0 = time.monotonic()
+    _sp = _Spinner(f"[ KB-Fix ]  Correcting rejected KB script ...").start()
+    try:
+        for _attempt in range(MAX_LLM_RETRIES):
+            try:
+                resp = requests.post(
+                    OLLAMA_URL,
+                    json={
+                        "model":      CVE_SCRIPT_MODEL,
+                        "prompt":     prompt,
+                        "stream":     False,
+                        "keep_alive": _OLLAMA_KEEP_ALIVE,
+                        "options":    {"num_ctx": 2048, "temperature": 0.2},
+                    },
+                    timeout=OLLAMA_TIMEOUT,
+                )
+                raw = resp.json().get("response", "")
+                obj = _parse_llm_script_response(raw)
+                if obj:
+                    return obj
+            except requests.exceptions.Timeout:
+                break
+            except requests.exceptions.ConnectionError:
+                break
+            except Exception:
+                pass
+    finally:
+        _sp.stop(f" done ({_fmt_dur(time.monotonic() - _t0)})")
+    return None
+
+
 def _generate_verification_script(cve: dict, target: str, triggering_attempt: dict) -> dict | None:
     """
     Generate a verification script that uses a DIFFERENT technique from the triggering attempt
@@ -11548,6 +11619,91 @@ async def run_cve_tests(cve_matches: list, target: str,
             })
             if vulnerable_found:
                 break  # skip remaining KB scripts; proceed to Phase 3
+
+        # ------------------------------------------------------------------
+        # Phase 1b: LLM correction of rejected KB scripts
+        #   When Phase 1 rejects a KB script for a surface-level defect
+        #   (syntax error or placeholder token), the probe logic is sound but
+        #   the stored bytes are broken.  Hand each fixable candidate to the
+        #   LLM with a targeted correction prompt so the logic gets a chance
+        #   to run.  Results enter `attempts` before Phase 2, so the LLM
+        #   generation loop sees real feedback on whether the corrected probe
+        #   worked rather than blindly generating a fresh strategy.
+        #
+        #   Capped at 2 corrections to avoid consuming the entire attempt
+        #   budget and crowding out Phase 2's fresh strategies.
+        # ------------------------------------------------------------------
+        _kb_fixable = [
+            a for a in attempts
+            if a.get("source") == "kb_replay"
+            and a.get("rejected")
+            and any(kw in (a.get("rejection_reason") or "").lower()
+                    for kw in _KB_FIXABLE_REJECTION_KEYWORDS)
+        ]
+        _kb_fix_slots = min(len(_kb_fixable), 2, max(0, attempt_budget - len(attempts)))
+        if _kb_fix_slots > 0 and not vulnerable_found and _ollama_is_up():
+            print(f"  [Phase 1b] Attempting LLM correction of {_kb_fix_slots} rejected KB script(s).")
+            for _fix_candidate in _kb_fixable[:_kb_fix_slots]:
+                if vulnerable_found:
+                    break
+                _fixed = _fix_kb_script(cve, target, _fix_candidate)
+                if _fixed is None:
+                    print(f"  [KB-Fix] LLM could not produce a corrected script — skipping.")
+                    continue
+                _fix_lang     = _fixed.get("language", "python")
+                _fix_strategy = _fixed.get("strategy", "kb_corrected")
+                _fix_script   = _fixed.get("script", "")
+                # Sanitise and quality-check the corrected script before running
+                _fix_sanitised = _sanitise_script({"language": _fix_lang, "strategy": _fix_strategy, "script": _fix_script})
+                if _fix_sanitised is None:
+                    print(f"  [KB-Fix] Corrected script still has syntax errors — skipping.")
+                    _append_rejected_cve_attempt(attempts, "kb_fix", _fix_strategy, _fix_lang,
+                                                 _fix_script, "corrected script still has unfixable syntax errors")
+                    continue
+                _fix_script = _fix_sanitised["script"]
+                _fix_reject = _script_quality_rejection(_fix_script, _fix_lang, cve)
+                if _fix_reject:
+                    print(f"  [KB-Fix] Corrected script failed quality check: {_fix_reject}")
+                    _append_rejected_cve_attempt(attempts, "kb_fix", _fix_strategy, _fix_lang,
+                                                 _fix_script, _fix_reject)
+                    continue
+                _fix_hash = _normalized_script_hash(_fix_script)
+                if _fix_hash in seen_script_hashes:
+                    print(f"  [KB-Fix] Corrected script is a duplicate — skipping.")
+                    continue
+                seen_script_hashes.add(_fix_hash)
+                _fix_attempt_num = len(attempts) + 1
+                _fix_ext         = ".py" if _fix_lang == "python" else ".sh"
+                _fix_safe_cve    = re.sub(r"[^a-zA-Z0-9_-]", "_", cve_id)
+                _fix_path        = os.path.join(cve_tests_dir,
+                                                f"{_fix_safe_cve}_kb_fix_{_fix_attempt_num:02d}{_fix_ext}")
+                with open(_fix_path, "w", encoding="utf-8") as fh:
+                    fh.write(_fix_script)
+                sp_fix = _Spinner(f"  [KB-Fix] Running corrected script ({_fix_lang}) ...").start()
+                _fix_run = await asyncio.get_event_loop().run_in_executor(
+                    None, lambda s=_fix_script, l=_fix_lang: _run_script(s, l, cve_tests_dir, timeout=30)
+                )
+                _fix_output = _fix_run["output"]
+                if _fix_run["timed_out"]:
+                    _fix_output = f"[TIMED OUT]\n{_fix_output}"
+                elif _fix_run["error"]:
+                    _fix_output = f"[ERROR: {_fix_run['error']}]\n{_fix_output}"
+                _fix_m       = re.search(r"VERDICT:\s*(VULNERABLE|NOT_VULNERABLE|INCONCLUSIVE)", _fix_output)
+                _fix_verdict = _fix_m.group(1) if _fix_m else "INCONCLUSIVE"
+                verdict_counts[_fix_verdict] = verdict_counts.get(_fix_verdict, 0) + 1
+                if _fix_verdict == "VULNERABLE":
+                    vulnerable_found = True
+                sp_fix.stop(f" {_fix_verdict}")
+                attempts.append({
+                    "attempt_num": _fix_attempt_num,
+                    "source":      "kb_fix",
+                    "strategy":    _fix_strategy,
+                    "language":    _fix_lang,
+                    "script":      _fix_script,
+                    "script_path": _fix_path,
+                    "output":      _fix_output[:600],
+                    "verdict":     _fix_verdict,
+                })
 
         # ------------------------------------------------------------------
         # Phase 2a: Generate a Nuclei template (HTTP/web CVEs only)
