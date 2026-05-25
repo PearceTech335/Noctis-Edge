@@ -414,19 +414,42 @@ ollama pull qwen2.5-coder:3b-instruct      # planning, scripts, and all report p
 
 ## Community Knowledge Base
 
-`cve_knowledge_base.json`, `nuclei_kb.json`, and `tool_knowledge_base.json` accumulate test results and tool-performance data at the project root. Each entry is identified only by CVE ID, Nuclei template ID, or service fingerprint — **no target-specific information is recorded**. All three files are gitignored and never committed.
+Every Noctis Edge installation learns as it works. Three local knowledge base files accumulate over time:
+
+| File | What it records |
+|------|-----------------|
+| `cve_knowledge_base.json` | CVE-specific probe scripts, verification results, and LLM-generated exploitation intelligence |
+| `nuclei_kb.json` | Nuclei template performance data — which templates find real findings vs. noise |
+| `tool_knowledge_base.json` | Per-tool performance profiles — scan durations, false-positive rates, service-match quality |
+
+Each entry is identified only by CVE ID, Nuclei template ID, or service fingerprint — **no target-specific information is recorded**. All three files are gitignored and never committed to this repository.
 
 Running `./update.sh` submits all three files to the community relay via the Cloudflare Worker (`cloudflare/worker.js`). The worker source is included in this repository for full transparency. Your installation ID (generated once by `setup.sh`, stored in `noctis.conf`) is used only to rate-limit submissions (4 per day) and is never linked to personal data.
 
-### Unlocking the Community Knowledge Base
+### Subscriber Benefits
 
-Subscribers receive access to the aggregated community CVE and tool knowledge bases. Once you have subscribed at [noctisedge.lemonsqueezy.com](https://noctisedge.lemonsqueezy.com):
+A subscription unlocks six community-maintained artifacts that are delivered via `./update.sh` and never distributed in the public repository:
+
+| Artifact | What you get |
+|----------|--------------|
+| **Community CVE KB** | Aggregated `cve_knowledge_base.json` built from submissions across all subscriber installs — pre-populated probe scripts, verified exploitation chains, and CVSS/EPSS enrichment for thousands of CVEs. Free installs start with an empty local KB and build it from scratch. |
+| **Community Nuclei KB** | Aggregated `nuclei_kb.json` — community-curated template performance data identifying which Nuclei templates reliably produce true positives on real infrastructure. Reduces false-positive noise from day one. |
+| **Community Tool KB** | Aggregated `tool_knowledge_base.json` — community-sourced tool performance profiles that tune scan timing, service matching, and tool selection before your first scan. |
+| **Tool Manifest** | `tool_manifest.json` — curated and maintained command-line recipes for every tool Noctis Edge drives (nmap, nikto, nuclei, testssl.sh, sqlmap, and 20+ others). The manifest controls argument presets, timeouts, and service-to-tool routing. Subscribers receive updates as new tools are added or existing recipes are improved. |
+| **Aggressive NSE Scripts** | `aggressive_nse_scripts.json` — a curated second tier of Nmap NSE scripts that go beyond safe enumeration: deeper service fingerprinting, credential exposure checks, misconfiguration probes, and low-risk vulnerability confirmation. Run when `AGGRESSIVE_NSE=True` is set in `noctis.conf`. |
+| **Unsafe NSE Scripts** | `unsafe_nse_scripts.json` — a curated third tier of Nmap NSE scripts covering brute-force attacks, active exploit probes (EternalBlue, Heartbleed, Shellshock, Struts RCE, etc.), DoS vulnerability checks, and backdoor detection across 88 service types. Run only when `UNSAFE_VERIFY=True` is set and explicit scanning authority has been confirmed in the UI. |
+
+> **Summary:** free users contribute to the community and build their own local KB over time. Subscribers receive the aggregated community intelligence from day one, plus the aggressive and unsafe NSE script tiers and the curated tool manifest.
+
+### Unlocking Subscriber Benefits
+
+Once you have subscribed at [noctisedge.lemonsqueezy.com](https://noctisedge.lemonsqueezy.com):
 
 1. Open `noctis.conf` and add your license key:
    ```ini
    KB_LICENSE_KEY=XXXX-XXXX-XXXX-XXXX
    ```
-2. Run `./update.sh` — the community KB is downloaded and additively merged into your local knowledge base.
+2. Run `./update.sh` — all six subscriber artifacts are downloaded and merged into your local installation automatically.
 
 ---
 
