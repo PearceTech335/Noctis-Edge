@@ -11602,6 +11602,7 @@ async def run_cve_tests(cve_matches: list, target: str,
                 print(f"  [KB {kb_idx:02d}] Rejected: unfixable syntax error in stored KB script")
                 _append_rejected_cve_attempt(attempts, "kb_replay", f"[KB] {strategy}", language, script,
                                              "unfixable syntax error in stored KB script")
+                kb_script["rejection_count"] = kb_script.get("rejection_count", 0) + 1
                 continue
             script = _sanitised["script"]
             reject_reason = _script_quality_rejection(script, language, cve)
@@ -11609,6 +11610,7 @@ async def run_cve_tests(cve_matches: list, target: str,
             if reject_reason:
                 print(f"  [KB {kb_idx:02d}] Rejected probe: {reject_reason}")
                 _append_rejected_cve_attempt(attempts, "kb_replay", f"[KB] {strategy}", language, script, reject_reason)
+                kb_script["rejection_count"] = kb_script.get("rejection_count", 0) + 1
                 continue
             if script_hash in seen_script_hashes:
                 print(f"  [KB {kb_idx:02d}] Rejected duplicate probe")
@@ -11659,6 +11661,25 @@ async def run_cve_tests(cve_matches: list, target: str,
             })
             if vulnerable_found:
                 break  # skip remaining KB scripts; proceed to Phase 3
+
+        # KB pruning: remove scripts that have been rejected enough times that
+        # Phase 1b has had a fair chance to correct them but hasn't.
+        # rejection_count is incremented in-place (kb_script is a live reference
+        # into kb_entry["scripts"]) each time a script fails sanitise or quality
+        # checks.  Threshold = 2: first scan → count=1, Phase 1b gets a correction
+        # attempt; second scan still rejects → count=2, script permanently removed
+        # so it stops consuming attempt-budget slots on every future scan.
+        if kb_entry:
+            _kb_scripts_before = len(kb_entry.get("scripts", []))
+            kb_entry["scripts"] = [
+                s for s in kb_entry.get("scripts", [])
+                if s.get("rejection_count", 0) < 2
+            ]
+            _kb_pruned = _kb_scripts_before - len(kb_entry["scripts"])
+            if _kb_pruned > 0:
+                print(f"  [KB] Pruned {_kb_pruned} persistently bad script(s) "
+                      f"from KB entry (rejected 2+ times — Phase 1b could not repair them).")
+                _save_cve_kb(kb)
 
         # ------------------------------------------------------------------
         # Phase 1b: LLM correction of rejected KB scripts
