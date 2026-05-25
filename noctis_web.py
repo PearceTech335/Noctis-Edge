@@ -997,16 +997,34 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 <!-- Input row -->
 <div id="inp-row">
   <!-- UNSAFE CONFIRMATION MODAL -->
-  <div id="unsafe-confirm-modal-overlay" style="display:none; position:fixed; left:0; top:0; right:0; bottom:0; background:rgba(30,30,30,0.85); z-index:10000; align-items:center; justify-content:center;">
-    <div id="unsafe-confirm-modal" style="background:#252526; color:#fff; border-radius:6px; box-shadow:0 2px 16px #000a; padding:32px 32px 24px 32px; max-width:400px; margin:auto; text-align:center;">
-      <h2 style="color:#c0392b; margin-bottom:18px;">UNSAFE MODE CONFIRMATION</h2>
-      <div style="font-size:13px; margin-bottom:18px;">You are about to enable <b>intrusive/exploit</b> checks. This may disrupt or damage the target. You must have explicit written authorisation.<br><br>To proceed, type <b>UNSAFE</b> below and click Confirm.</div>
-      <input id="unsafe-confirm-input" type="text" style="width:100%; padding:8px; font-size:15px; border-radius:3px; border:1px solid #c0392b; margin-bottom:16px; text-align:center;" placeholder="Type UNSAFE to confirm">
-      <div style="display:flex; gap:12px; justify-content:center;">
-        <button id="unsafe-confirm-cancel" style="background:#444; color:#fff; border:none; border-radius:3px; padding:7px 18px; font-size:13px;" onclick="closeUnsafeConfirmModal()">Cancel</button>
-        <button id="unsafe-confirm-ok" style="background:#c0392b; color:#fff; border:none; border-radius:3px; padding:7px 18px; font-size:13px; font-weight:bold;" onclick="confirmUnsafeAndStartScan()">Confirm</button>
+  <div id="unsafe-confirm-modal-overlay" style="display:none; position:fixed; left:0; top:0; right:0; bottom:0; background:rgba(10,10,10,0.92); z-index:10000; align-items:center; justify-content:center;">
+    <div id="unsafe-confirm-modal" style="background:#1e1e1e; color:#e0e0e0; border-radius:6px; box-shadow:0 4px 32px #000d; padding:28px 32px 24px 32px; max-width:620px; width:94vw; margin:auto; display:flex; flex-direction:column; gap:16px; max-height:90vh;">
+      <div style="display:flex; align-items:center; gap:10px; flex-shrink:0;">
+        <span style="font-size:22px;">&#9888;&#65039;</span>
+        <h2 style="color:#c0392b; margin:0; font-size:15px; letter-spacing:.04em;">NOCTIS EDGE &mdash; UNSAFE VERIFICATION MODE</h2>
       </div>
-      <div id="unsafe-confirm-error" style="color:#f44747; font-size:12px; margin-top:10px; display:none;"></div>
+      <div style="overflow-y:auto; flex:1; min-height:0; background:#141414; border:1px solid #3a3a3a; border-radius:4px; padding:14px 16px; font-size:11px; line-height:1.7; font-family:'Consolas','Courier New',monospace; color:#cfd8dc; white-space:pre-wrap;">You have requested --unsafe verification. This mode enables intrusive verification techniques against the specified target, including relaxed sandbox restrictions on LLM-generated probes and the use of Metasploit auxiliary modules flagged as intrusive. These actions may impact the availability, integrity, or stability of the target system.
+
+By proceeding, you represent and warrant that:
+  1. You are the owner of the target system(s), OR you have
+     obtained prior, written, and explicit authorisation from
+     the system owner to perform offensive security testing.
+  2. Your testing is conducted within the scope of that
+     authorisation and complies with all applicable laws,
+     regulations, and contractual obligations in your
+     jurisdiction (including but not limited to the U.S.
+     Computer Fraud and Abuse Act, the UK Computer Misuse
+     Act, and EU Directive 2013/40/EU).
+  3. You accept full and sole responsibility for any direct
+     or indirect consequences of this scan, including but not
+     limited to service disruption, data loss, or third-party
+     impact.
+
+Noctis Edge, its authors, contributors, and distributors provide this software "AS IS", without warranty of any kind, and disclaim all liability for any damage, loss, or legal action arising from its use. Use of --unsafe constitutes acceptance of these terms.</div>
+      <div style="display:flex; gap:12px; flex-shrink:0;">
+        <button style="flex:1; background:#1a1a1a; color:#aaa; border:1px solid #555; border-radius:4px; padding:10px 0; font-size:12px; font-weight:bold; cursor:pointer; letter-spacing:.03em;" onclick="closeUnsafeConfirmModal()">&#10005;&nbsp; DO NOT SCAN</button>
+        <button style="flex:2; background:#c0392b; color:#fff; border:none; border-radius:4px; padding:10px 0; font-size:12px; font-weight:bold; cursor:pointer; letter-spacing:.03em;" onclick="confirmUnsafeAndStartScan()">&#9888;&nbsp; PROCEED &mdash; I HAVE EXPLICIT AUTHORITY TO SCAN THIS TARGET</button>
+      </div>
     </div>
   </div>
   <label for="reply-input">Prompt reply:</label>
@@ -1114,22 +1132,11 @@ document.addEventListener('DOMContentLoaded', function() {
 // Unsafe confirmation modal logic
 function openUnsafeConfirmModal() {
   document.getElementById('unsafe-confirm-modal-overlay').style.display = 'flex';
-  document.getElementById('unsafe-confirm-input').value = '';
-  document.getElementById('unsafe-confirm-error').style.display = 'none';
-  document.getElementById('unsafe-confirm-input').focus();
 }
 function closeUnsafeConfirmModal() {
   document.getElementById('unsafe-confirm-modal-overlay').style.display = 'none';
 }
 function confirmUnsafeAndStartScan() {
-  const val = document.getElementById('unsafe-confirm-input').value.trim();
-  if (val !== 'UNSAFE') {
-    const err = document.getElementById('unsafe-confirm-error');
-    err.textContent = "You must type UNSAFE (all capitals) to proceed.";
-    err.style.display = 'block';
-    document.getElementById('unsafe-confirm-input').focus();
-    return;
-  }
   closeUnsafeConfirmModal();
   actuallyStartScan();
 }
