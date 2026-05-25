@@ -13966,7 +13966,7 @@ async def main_async():
             print("[!] --unsafe requires --cve-test. Aborting.")
             sys.exit(2)
         if SAFE_MODE:
-            print("[!] --unsafe requires --nse-aggressive (acknowledging that ")
+            print("[!] --unsafe requires --nse-aggressive (acknowledging that "
                   "active offensive testing is in scope). Aborting.")
             sys.exit(2)
         if not _prompt_unsafe_acknowledgment(target, session_dir, session_id):
