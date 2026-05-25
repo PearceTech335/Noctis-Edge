@@ -7159,6 +7159,29 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             <summary style="cursor:pointer;color:#78909c;font-size:.9em">View script</summary>
             <pre style="background:#111;color:#b2dfdb;padding:.6em;border-radius:4px;overflow-x:auto;white-space:pre-wrap;font-size:.78em">{{ a.script }}</pre>
           </details>
+          {% if a.verdict == 'VULNERABLE' and _tr.verification_results %}
+          <details style="margin-top:.3em">
+            <summary style="cursor:pointer;color:#78909c;font-size:.9em">View verifications</summary>
+            {% for v in _tr.verification_results %}
+            <div style="margin:.35em 0;padding:.45em .7em;background:#0d1a0d;border-radius:4px;border-left:2px solid {% if v.verdict == 'VULNERABLE' %}#ef9a9a{% elif v.verdict == 'NOT_VULNERABLE' %}#a5d6a7{% else %}#ffcc80{% endif %}">
+              <div style="display:flex;gap:.6em;align-items:center;font-size:.82em;flex-wrap:wrap">
+                <span style="color:#9e9e9e;min-width:1.8em">V{{ v.verifier_num }}</span>
+                <span style="color:#ccc;flex:1">{{ v.strategy[:70] }}</span>
+                <span style="{% if v.verdict == 'VULNERABLE' %}color:#ef9a9a{% elif v.verdict == 'NOT_VULNERABLE' %}color:#a5d6a7{% else %}color:#ffcc80{% endif %}">{{ v.verdict }}</span>
+              </div>
+              {% if v.output %}
+              <pre style="margin:.3em 0 0 0;background:#111;color:#ccc;padding:.4em .5em;border-radius:4px;overflow-x:auto;white-space:pre-wrap;font-size:.77em">{{ v.output }}</pre>
+              {% endif %}
+              {% if v.script %}
+              <details style="margin-top:.3em">
+                <summary style="cursor:pointer;color:#546e7a;font-size:.84em">View verifier script ({{ v.language }})</summary>
+                <pre style="background:#0a0a0a;color:#b2dfdb;padding:.5em;border-radius:4px;overflow-x:auto;white-space:pre-wrap;font-size:.77em">{{ v.script }}</pre>
+              </details>
+              {% endif %}
+            </div>
+            {% endfor %}
+          </details>
+          {% endif %}
         </details>
         {% endfor %}
 
