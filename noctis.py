@@ -6853,11 +6853,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <details open style="margin-bottom:1.2em;border:1px solid #1e4a6e;border-radius:6px;background:#0d1b2a">
   <summary style="cursor:pointer;color:#29b6f6;font-size:.92em;font-weight:600;padding:.65em 1em;user-select:none;display:flex;align-items:center;gap:.6em">
     <span>&#9654;</span>
-    <span>&#128313; {{ _cve_active|length }} CVE match(es) &mdash; ranked by exploit probability</span>
+    <span>&#128313; {{ _cve_active|length }} CVE match(es) &mdash; ranked by vulnerable status &rsaquo; match confidence &rsaquo; exploit probability</span>
   </summary>
   <div style="padding:.5em;margin-bottom:2em">
-  {% for c in _cve_active | sort(attribute='epss_score', reverse=True) %}
-  <details style="margin-bottom:1.5em;border:1px solid #333;border-radius:6px;padding:1em;background:#16213e">
+  {% for c in _cve_active %}
+  {% set _tv_pre = c.cve_test_result.overall_verdict if c.cve_test_result else None %}
+  <details {% if _tv_pre in ('CONFIRMED_VULNERABLE', 'PROBABLE_VULNERABLE') %}open {% endif %}style="margin-bottom:1.5em;border:1px solid #333;border-radius:6px;padding:1em;background:#16213e">
     <summary style="cursor:pointer;font-weight:600;color:#00d4ff;font-size:1.05em;display:flex;align-items:center;flex-wrap:wrap;gap:.5em">
       <span style="flex:1;min-width:180px"><a href="https://nvd.nist.gov/vuln/detail/{{ c.cve_id }}" target="_blank" rel="noopener noreferrer" style="color:#00d4ff;text-decoration:none" title="View on NVD">{{ c.cve_id }}</a> — {{ c.vulnerability_type }} on {{ c.service }}{% if c.product and c.product != 'unknown' %} <span style="color:#78909c;font-size:.85em;font-weight:400">({{ c.product }}{% if c.version_affected and c.version_affected != 'unknown' %} {{ c.version_affected }}{% endif %})</span>{% endif %}</span>
       {% set _tv = c.cve_test_result.overall_verdict if c.cve_test_result else None %}
@@ -7560,6 +7561,22 @@ def generate_html_report(report_data):
         _normalise_cve_report_record(match, suppressed=True)
     for match in report_data.get("rejected_cve_matches", []):
         _normalise_cve_report_record(match)
+
+    # Sort cve_matches for display:
+    #   1. Vulnerable status  — CONFIRMED_VULNERABLE first, then PROBABLE_VULNERABLE,
+    #      then untested/inconclusive, then NOT_VULNERABLE (moved to cleared section anyway)
+    #   2. Match confidence   — higher confidence surfaced earlier within each tier
+    #   3. EPSS score         — exploit probability as final tiebreaker
+    _CVE_VERDICT_RANK = {"CONFIRMED_VULNERABLE": 0, "PROBABLE_VULNERABLE": 1}
+    def _cve_display_sort_key(c):
+        verdict = (c.get("cve_test_result") or {}).get("overall_verdict") or ""
+        return (
+            _CVE_VERDICT_RANK.get(verdict, 2),
+            -float(c.get("match_confidence") or 0.0),
+            -float(c.get("epss_score") or 0.0),
+        )
+    if report_data.get("cve_matches"):
+        report_data["cve_matches"].sort(key=_cve_display_sort_key)
 
     _eff_map = report_data.get("effective_severity_map", {})
     _all_f   = report_data.get("findings", [])
