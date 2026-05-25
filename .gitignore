@@ -39,8 +39,8 @@ CVE/nvd-cvss.csv
 CVE/cwe-data.csv
 CVE/kev-catalog.csv
 
-# Safe NSE script mapping — subscriber-only, never committed
-safe_nse_scripts.json
+# Safe NSE script mapping — free tier, committed to public repo (see below)
+# Aggressive and unsafe NSE mappings — subscriber-only, never committed
 aggressive_nse_scripts.json
 unsafe_nse_scripts.json
 
