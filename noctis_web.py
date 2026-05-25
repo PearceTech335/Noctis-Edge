@@ -81,7 +81,7 @@ PROFILE_DESCRIPTIONS = {
 _ANSI_RE = re.compile(r'\x1b(?:\[[0-9;]*[mGKHFABCDJr]|\([AB]|[^[\(])')
 
 FLAGS = [
-  ("--aggressive",   "Disable safe-mode: run gobuster / ffuf / hydra without approval"),
+  ("--nse-aggressive",   "Disable safe-mode: enables aggressive NSE script tier (gobuster / ffuf / hydra without approval)"),
   ("--dns-enum",     "Enable DNS enumeration tools — requires internet"),
   ("--msf-validate", "Run safe Metasploit 'check' probes for each matched CVE"),
   ("--cve-test",     "Ask the LLM to generate & execute probe scripts per CVE"),

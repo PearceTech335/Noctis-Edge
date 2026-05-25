@@ -174,7 +174,7 @@ After setup:
 ```bash
 docker compose run --rm noctis scan 192.168.0.1
 docker compose run --rm noctis scan 192.168.0.1 web --cve-test
-docker compose run --rm noctis scan 192.168.0.1 --aggressive --msf-validate --cve-test
+docker compose run --rm noctis scan 192.168.0.1 --nse-aggressive --msf-validate --cve-test
 docker compose run --rm noctis scan 192.168.0.1 --resume
 ```
 
@@ -183,7 +183,7 @@ docker compose run --rm noctis scan 192.168.0.1 --resume
 ./noctis.py 192.168.0.1                                         # default web profile
 ./noctis.py 192.168.0.1 web external api                        # multiple profiles merged
 ./noctis.py 192.168.0.1 web --cve-test --dns-enum
-./noctis.py 192.168.0.1 --aggressive --msf-validate --cve-test  # full aggressive run
+./noctis.py 192.168.0.1 --nse-aggressive --msf-validate --cve-test  # full aggressive run
 ./noctis.py 192.168.0.1 --resume                                # resume interrupted scan
 ```
 
@@ -197,7 +197,7 @@ docker compose run --rm noctis scan 192.168.0.1 --resume
 |------|-------------|
 | `<target>` | IP address or hostname to scan (required) |
 | `[profile]` | Assessment profile (default: `web`). Multiple profiles merge their tool lists. |
-| `--aggressive` | Disable safe mode — runs ffuf and hydra without approval prompts |
+| `--nse-aggressive` | Disable safe mode — enables aggressive NSE script tier; runs ffuf and hydra without approval prompts |
 | `--dns-enum` | Enable DNS enumeration tools (amass, dnsenum, dnsrecon) — requires internet access |
 | `--msf-validate` | Non-destructively validate CVE matches using Metasploit safe checks; with `--cve-test`, runs post-positive check-only corroboration |
 | `--cve-test` | Generate and execute LLM-driven probe scripts for each matched CVE |
@@ -361,7 +361,7 @@ Top-of-file constants in `noctis.py` (all overridable via environment variables)
 | `MAX_PARALLEL_ACTIONS` | `4` | — | Max concurrent tools in the Phase 1 parallel wave |
 | `MAX_LLM_RETRIES` | `3` | — | LLM call retries per iteration |
 | `CVE_TEST_ATTEMPTS` | `5` | — | LLM script attempts per CVE in `--cve-test` |
-| `SAFE_MODE` | `True` | — | Require approval for aggressive tools (override with `--aggressive`) |
+| `SAFE_MODE` | `True` | — | Require approval for aggressive tools (override with `--nse-aggressive`) |
 | `UNATTENDED` | `False` | — | Auto-approve all prompts (override with `--unattended`) |
 
 ---

@@ -168,7 +168,7 @@ MAX_VERIFIER_LLM_RETRIES  = 10  # for verifier scripts
 _LLM_CONCURRENCY_SEMAPHORE = threading.Semaphore(int(os.getenv("NOCTIS_LLM_CONCURRENCY", "3")))
 NIKTO_DEFAULT_MAXTIME     = int(os.getenv("NOCTIS_NIKTO_MAXTIME", "90"))
 NIKTO_MAXTIME_CAP         = 300
-SAFE_MODE       = True   # can also be used with --aggressive flag for aggressive scanning an enumeration
+SAFE_MODE       = True   # can also be used with --nse-aggressive flag for aggressive scanning an enumeration
 AIRGAP_MODE     = True   # default on; --dns opts in to internet-dependent DNS enumeration tools
 MSF_VALIDATE    = False  # set via --msf-validate; runs safe MSF checks broadly or post-positive with --cve-test
 CVE_TEST        = False  # set via --cve-test; LLM generates test scripts per matched CVE
@@ -3998,7 +3998,7 @@ def _collect_policy_scripts(name: str, policy: dict, *, allow_unsafe: bool = Fal
 def _select_nse_scripts(service_name: str) -> str:
     """Return NSE scripts for the active risk tier.
 
-    SAFE_MODE uses only safe_nse_scripts.json. --aggressive adds
+    SAFE_MODE uses only safe_nse_scripts.json. --nse-aggressive adds
     aggressive_nse_scripts.json. --unsafe adds unsafe_nse_scripts.json and is
     the only path allowed to include auth, brute, vuln, bypass, or backdoor NSE
     families.
@@ -13619,7 +13619,7 @@ async def main_async():
     scan_start = datetime.now()
 
     if len(sys.argv) < 2:
-        print("Usage: python3 noctis.py <target> [profile ...] [--resume] [--session-dir <path>] [--aggressive] [--dns-enum] [--msf-validate] [--cve-test] [--unattended] [--unsafe]")
+        print("Usage: python3 noctis.py <target> [profile ...] [--resume] [--session-dir <path>] [--nse-aggressive] [--dns-enum] [--msf-validate] [--cve-test] [--unattended] [--unsafe]")
         print("       Target formats: 192.168.0.1  |  hostname  |  host:port  |  host:80,443,8080")
         print("       python3 noctis.py --report <json_file>")
         print("Profiles (one or more):", ", ".join(PROFILES))
@@ -13652,7 +13652,7 @@ async def main_async():
             if _i + 1 < len(_argv):
                 _i += 1
                 resume_session_dir = _argv[_i]
-        elif arg == "--aggressive":
+        elif arg == "--nse-aggressive":
             SAFE_MODE = False
         elif arg == "--dns-enum":
             AIRGAP_MODE = False
@@ -13734,7 +13734,7 @@ async def main_async():
     # Hard requirements:
     #   1. --unsafe implies --cve-test (otherwise there is no verification
     #      path to enhance).
-    #   2. --unsafe requires --aggressive (operator has already accepted
+    #   2. --unsafe requires --nse-aggressive (operator has already accepted
     #      that aggressive testing is in scope for this engagement).
     #   3. The typed acknowledgment is mandatory even under --unattended;
     #      there is no flag-based bypass. CI must use `docker run -it ...`.
@@ -13744,7 +13744,7 @@ async def main_async():
             print("[!] --unsafe requires --cve-test. Aborting.")
             sys.exit(2)
         if SAFE_MODE:
-            print("[!] --unsafe requires --aggressive (acknowledging that "
+            print("[!] --unsafe requires --nse-aggressive (acknowledging that ")
                   "active offensive testing is in scope). Aborting.")
             sys.exit(2)
         if not _prompt_unsafe_acknowledgment(target, session_dir, session_id):

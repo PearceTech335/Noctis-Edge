@@ -125,7 +125,7 @@ done
 # 4. Run a test scan (unattended, no browser needed)
 # ---------------------------------------------------------------------------
 hdr "4/6  Running test scan against localhost"
-info "Flags: --aggressive --cve-test --unattended"
+info "Flags: --nse-aggressive --cve-test --unattended"
 info "Scan output will stream below — this takes a few minutes."
 echo ""
 
@@ -134,7 +134,7 @@ $DC run --rm \
     -e NOCTIS_OLLAMA_URL=http://ollama:11434/api/generate \
     -e NOCTIS_OLLAMA_MODEL="$OLLAMA_MODEL" \
     -e NOCTIS_OLLAMA_SCRIPT_MODEL="$SCRIPT_MODEL" \
-    noctis scan localhost --aggressive --cve-test --unattended \
+    noctis scan localhost --nse-aggressive --cve-test --unattended \
     && SCAN_EXIT=0 || SCAN_EXIT=$?
 
 echo ""
