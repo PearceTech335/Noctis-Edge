@@ -223,6 +223,109 @@ Pass one or more profile names after the target. Tools from all selected profile
 
 ## How It Works
 
+```mermaid
+flowchart TD
+    TARGET(["Target: 192.168.1.1"]) --> S1
+
+    subgraph STARTUP["① Startup"]
+        S1["Ollama health-check and model pull"]
+        S2["Validate tool binaries and print status table"]
+        S1 --> S2
+    end
+
+    S2 --> N1
+
+    subgraph NMAP["② Five-Phase Nmap Discovery"]
+        N1["Phase 1 — Port sweep  -p- --min-rate 2000"]
+        N2["Phase 2 — Service and version  -sV -sC"]
+        N3["Phase 3 — NSE scripts\nsmb-enum-shares · smb-vuln-ms17-010 · smb-security-mode"]
+        N4["Phase 4 — OS fingerprint  -O --osscan-guess"]
+        N5["Phase 5 — Normalise and CVE lookup\nCVE-2017-0144 matched on SMB:445"]
+        N1 --> N2 --> N3 --> N4 --> N5
+    end
+
+    N5 --> SVCS["Discovered Services\nSMB:445  ·  SSH:22  ·  HTTP:80"]
+
+    SVCS --> P1
+
+    subgraph PHASE1["③ Phase 1 — Parallel Planning Wave"]
+        P1["LLM plans one initial action per service simultaneously\nKnown fingerprints use fast-path — no LLM call needed"]
+        P2["All actions execute concurrently via asyncio.gather  MAX=4\ne.g. enum4linux-ng -A 192.168.1.1"]
+        P1 --> P2
+    end
+
+    P2 --> L1
+
+    subgraph PHASE2["④ Phase 2 — Per-Service Probe Loop  example: SMB:445"]
+        L1["LLM selects next action\ne.g. nxc smb 192.168.1.1 --shares"]
+        L2["Tool executes"]
+        L3["Output parsed — findings added to context"]
+        L4{"More useful actions\nand rounds remain?"}
+        L5["Timeout recovery — partial output fed back\nLLM proposes alternative tool — recovery wave runs"]
+        L1 --> L2 --> L3 --> L4
+        L4 -->|"Yes — next round"| L1
+        L4 -->|"Timeout"| L5
+        L5 --> L1
+    end
+
+    L4 -->|"No — exhausted"| E1
+
+    subgraph ENRICH["⑤ Verification and Enrichment"]
+        E1["Re-verify finding — re-request to confirm not a false positive"]
+        E2["Tag vuln_type · CWE ID · compliance controls\nPCI-DSS · SOC2 · ISO 27001 · NIST CSF 2.0"]
+        E3["Risk score = severity x confidence x exposure x tool_confidence"]
+        E1 --> E2 --> E3
+    end
+
+    E3 --> CVE_CHECK{"--cve-test\nenabled?"}
+
+    CVE_CHECK -->|"Yes"| CT1
+    CVE_CHECK -->|"No"| MSF_CHECK
+
+    subgraph CVE_TEST["⑥a  --cve-test  example: CVE-2017-0144"]
+        CT1["LLM generates up to 5 independent probe scripts per CVE\neach using a different technical strategy"]
+        CT2["Scripts run in sandbox with 30 s timeout\nVERDICT: VULNERABLE / NOT_VULNERABLE / INCONCLUSIVE"]
+        CT3{"2+ of 5\nverifiers confirm?"}
+        CT4["CONFIRMED_VULNERABLE"]
+        CT5["PROBABLE_VULNERABLE"]
+        CT6["NOT_VULNERABLE or INCONCLUSIVE"]
+        CT1 --> CT2 --> CT3
+        CT3 -->|"Yes"| CT4
+        CT3 -->|"Partial"| CT5
+        CT3 -->|"No"| CT6
+    end
+
+    CT4 --> MSF_CHECK
+    CT5 --> MSF_CHECK
+    CT6 --> MSF_CHECK
+
+    MSF_CHECK{"--msf-validate\nenabled?"}
+
+    MSF_CHECK -->|"Yes"| M1
+    MSF_CHECK -->|"No"| R1
+
+    subgraph MSF["⑥b  --msf-validate"]
+        M1["msfconsole safe check only — no payload and no exploitation\ne.g. use auxiliary/scanner/smb/smb_ms17_010 ; check"]
+        M2{"Result?"}
+        M3["Confirmed — verdict promoted to CONFIRMED_VULNERABLE"]
+        M4["Inconclusive — recorded alongside existing verdict"]
+        M1 --> M2
+        M2 -->|"Vulnerable"| M3
+        M2 -->|"Not vulnerable or unknown"| M4
+    end
+
+    M3 --> R1
+    M4 --> R1
+
+    subgraph REPORT["⑦ Report Generation"]
+        R1["report_target.json  +  report_target.html"]
+        R2["Executive summary · CVE badges · Compliance chips\nFindings with evidence · Attacker perspective · LLM conclusion"]
+        R1 --> R2
+    end
+
+    R2 --> DONE(["Session saved to sessions/ — resumable with --resume"])
+```
+
 ### 1. Startup Checks
 - Starts `ollama serve` automatically if not running (waits up to 30 s)
 - Pulls configured models if not present locally
