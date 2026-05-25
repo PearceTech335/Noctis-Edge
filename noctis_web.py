@@ -725,10 +725,6 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   scroll-behavior: smooth;
 }
 
-/* When UNSAFE banner is visible, add bottom margin to term-wrap */
-.unsafe-banner-visible {
-  margin-bottom: 64px !important;
-}
 #terminal::-webkit-scrollbar { width: 8px; }
 #terminal::-webkit-scrollbar-track { background: var(--bg); }
 #terminal::-webkit-scrollbar-thumb { background: #444; border-radius: 4px; }
@@ -1025,7 +1021,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 <div id="status-bar"><span id="status-text">Ready</span><span id="version-badge">{{ version }}</span></div>
 
 <!-- UNSAFE MODE WARNING BANNER -->
-<div id="unsafe-banner" style="display:none; position:fixed; left:0; right:0; bottom:0; z-index:9999; background:#c0392b; color:#fff; text-align:center; font-size:20px; font-weight:bold; padding:18px 0; letter-spacing:1px; box-shadow:0 -2px 16px #000a;">
+<div id="unsafe-banner" style="display:none; flex-shrink:0; width:100%; background:#c0392b; color:#fff; text-align:center; font-size:16px; font-weight:bold; padding:12px 0; letter-spacing:1px; box-shadow:0 -2px 16px #000a;">
   &#9888;&#65039; UNSAFE MODE SELECTED - ENSURE YOU HAVE EXPRESS PERMISSION TO SCAN THE TARGET &#9888;&#65039;
 </div>
 
@@ -1104,10 +1100,8 @@ function updateUnsafeBanner() {
   const termWrap = document.getElementById('term-wrap');
   if (unsafeCb && unsafeCb.checked) {
     banner.style.display = 'block';
-    if (termWrap) termWrap.classList.add('unsafe-banner-visible');
   } else {
     banner.style.display = 'none';
-    if (termWrap) termWrap.classList.remove('unsafe-banner-visible');
   }
 }
 document.addEventListener('DOMContentLoaded', function() {
