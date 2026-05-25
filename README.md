@@ -42,42 +42,6 @@ By installing, configuring, or using this software, you agree that you are actin
 
 
 
-## v0.11.2 — Patch Release
-
-**New in this release:**
-
-- **Tool timeout retry-with-feedback** — when a tool times out with no findings, the LLM is now given the tool's selection reason and any partial output and asked to suggest an alternative approach for the same service. A recovery wave executes the suggestion immediately, with one extra round granted per recovery. Previously a timeout simply banned the tool and moved on.
-- **Executive summary retry loop fixed** — the hallucination guard was breaking out of the retry loop even on rejection, so if the first LLM attempt triggered the guard the summary always fell back to the deterministic anchor sentence. Rejections now `continue` to the next attempt instead.
-- **Hallucination guard tightened** — the `\bcritical\b` check was firing on natural-language adjectives like "it is critical to patch these findings", incorrectly rejecting valid summaries. The guard now only fires on explicit severity-label constructions (`critical severity`, `critical finding(s)`, `critical vulnerability/vulnerabilities`).
-- **`_build_conclusion_with_cve` retry loop added** — the post-CVE executive summary rebuild was a single-shot call with no retry. It now retries up to `MAX_LLM_RETRIES` with backoff, using the same hallucination guard as the main scan summary.
-- **NSE script policy system** — the NSE script selection is now driven by three JSON policy files (`safe_nse_scripts.json`, `aggressive_nse_scripts.json`, `unsafe_nse_scripts.json`) instead of a hard-coded in-memory map. Scripts are validated against a denylist (`brute`, `backdoor`, `vuln`, `exploit`, `dos`, etc.); only the `--unsafe` tier may include exploit/auth families.
-- **CVE service rejection reasons** — new `_cve_service_rejection_reason()` function explicitly rejects CVE candidates that clearly don't fit the observed service (e.g. Dropbear CVEs on OpenSSH, Samba CVEs where Samba wasn't fingerprinted, SMB1 CVEs where SMB1 wasn't observed). Rejection reasons are logged for audit.
-- **CVE matching robustness** — `_match_cves_for_service()` now returns a 3-tuple `(active, suppressed, rejected)` with structured reasons. All EPSS/KEV/CVSS lookups handle both `cve["id"]` and `cve["cve_id"]` key variants with safe `.get()` fallbacks throughout.
-- **`CVE_LOW_CONFIDENCE_THRESHOLD` raised** from `0.35 → 0.50` to reduce low-confidence noise.
-- **`.gitignore` hardened** — `*.bak`, `fix_funcs.py`, `_scan_*.log`, `build.log`, `build_full.log`, and `COPILOT_INSTRUCTIONS.md.bak` added to prevent development artefacts reaching the repo.
-
-See [version_history.md](version_history.md) for full details.
-
-## What's New: CVE Matching, Version Range, and Reporting Logic
-
-**CVE Matching and Version Range Enforcement**
-
-- CVE matching now enforces strict product, vendor, and version correlation. Each CVE match is annotated with a `cve_match_status` (e.g., `matched`, `product_mismatch`, `vendor_mismatch`, `version_not_affected`) and a `version_range_check` field (`affected`, `not_affected`, `unknown_version`, `no_range`).
-- Version range checks are transparent: the detected version, affected range, and match status are shown in the report for every CVE.
-
-**Narrative and Severity Logic**
-
-- Attacker perspectives and remediation advice are concise, realistic, and avoid risk inflation or speculation. Prompts enforce strict sentence and length limits.
-- Severity is never inflated; only evidence-based, context-aware severity is shown.
-
-**UI and Report Output**
-
-- The HTML report displays new badges and fields for CVE match status, version range, and severity.
-- Suppressed and not-affected CVEs are clearly separated in the report UI, with reasons for exclusion visible for auditability.
-- All LLM-generated sections (attacker perspective, remediation, executive summary) are proof-read and validated for accuracy and tone.
-
----
-
 ## What Gives Noctis the Edge
 
 Most automated scanners report which CVEs *exist* on a system. **Noctis Edge tests whether they're actually exploitable** — and learns from every engagement it runs.
@@ -553,202 +517,29 @@ The worker is already deployed at `https://noctis-kb-relay.pearcetechnologies1.w
 
 **Current version: v0.11.2**
 
-### What's New in v0.10.1
+### v0.11.2 — Patch Release
 
-- **Scan timeout and service-planning hardening:** HTTP-only tools such as `nikto`, `nuclei`, and `ffuf` are now gated to confirmed HTTP/HTTPS services, preventing wasted web scans against SMB, SSH, RPC, and other non-HTTP ports. Tool timeouts are recorded as explicit incomplete coverage instead of being buried in otherwise successful-looking output.
-- **CVE probe quality controls:** CVE replay and generation now reject duplicate scripts, placeholder probes, dummy targets, and protocol-mismatched raw probes before execution. Rejected probes are shown separately as non-evidence, do not inflate `INCONCLUSIVE`, and cannot push a CVE toward `NOT_VULNERABLE`.
-- **Stronger CVE confirmation ladder:** A vulnerable probe now triggers 5 independent verifier attempts, and `CONFIRMED_VULNERABLE` requires 2 verifier confirmations. One verifier confirmation or multiple vulnerable probe signals now reports `PROBABLE_VULNERABLE` instead of over-promoting single-signal evidence.
-- **Post-positive MSF validation:** When `--msf-validate` is paired with `--cve-test`, Metasploit validation is deferred until after a vulnerable CVE signal and is run as check-only corroboration. A positive MSF check can confirm the CVE; blocked, unsupported, inconclusive, or not-exploitable MSF results are recorded without downgrading existing evidence.
-- **`NOT_TESTABLE` CVE verdict:** When every available generated or replayed probe is rejected before execution, Noctis now reports `NOT_TESTABLE` with a manual-review reason instead of treating bad probes as negative evidence.
-- **Safer 3b script generation:** The CVE script prompts no longer teach the model placeholder examples such as `PORT`, `PROBE`, `SIGNATURE`, `X-Version`, or fake version constants. When the supplied CVE detail is insufficient for a protocol-correct check, the model is directed to emit a low-confidence `INCONCLUSIVE` script instead of inventing raw TCP probes.
-- **CVE applicability pruning:** Low-confidence and obvious product-mismatched CVEs are routed to manual review rather than broad active probing, reducing noisy CVE tests on unrelated services.
-- **Report polish:** The floating table of contents now uses a blue style aligned with the report palette while remaining visually distinct during scrolling. CVE testing evidence now shows rejected-probe counts alongside executed verdict counts.
-- **Docker validation:** The `noctis` Docker image was rebuilt from this code and the scanner changes were validated with syntax/lint checks plus targeted smoke tests for rejected-probe accounting.
-
-### What's New in v0.10.0
-
-- **Single-model runtime:** Docker, setup, and update paths now pull only `qwen2.5-coder:3b-instruct` by default. Planning, script generation, CVE probes, executive summaries, report audit, attacker perspectives, and per-finding descriptions all route through the coder model. `NOCTIS_OLLAMA_CVE_SCRIPT_MODEL` remains an optional expert override, but no second model is required for normal installs.
-- **Report usability for large scans:** HTML reports now include clickable severity summary boxes, a vanilla-JavaScript finding filter bar, service filtering, sorting, and visible-result counts. Reports remain self-contained static HTML.
-- **Cleaner remediation layout:** Finding details now keep remediation in the existing `IMMEDIATE REMEDIATION PATH` and `Long-term Fix` cards, avoiding duplicate action sections while preserving copy-ready operator steps.
-- **Evidence callouts:** Finding evidence and execution output previews now highlight matching lines and substrings so operators can spot the relevant proof faster inside noisy tool output.
-- **Executive summary guardrails:** Summary generation uses warmer prose settings but now validates severity counts, unsupported CVE claims, generic unsupported web-security advice, and markdown/list drift before rendering. If prose fails factual validation, Noctis emits a polished evidence-grounded summary from recorded scan data.
-
-### What's New in v0.9.5
-
-- **FP hardening — banner conflict detection:** `_capture_http_banner()` compares the HTTP `Server:` header against the nmap banner and sets a `banner_conflict` flag when the two disagree. CVE matching in `enrich_cve` suppresses matches that rely solely on the conflicting banner, preventing false positives where a reverse proxy exposes a different product header than the backend actually runs.
-- **FP hardening — OS plausibility check:** `_check_os_guess_plausibility()` validates the nmap OS guess against the full service-stack context discovered in Phase 4. If the guess is an RTOS or embedded OS but the port list contains clear full-OS signals (SSH, HTTP, databases, etc.) the guess is suppressed and replaced with an empty string. The plausibility accuracy floor constant `_OS_PLAUSIBILITY_ACCURACY_FLOOR = 90` means guesses below 90 % accuracy are also discarded.
-- **FP hardening — match confidence scoring:** `_compute_match_confidence()` scores every CVE match 0.0–1.0 using source, version precision, KEV listing, and exploit maturity. NSE-sourced matches start at 0.80 (base 0.50 + `_MC_NSE_SOURCE_BONUS` 0.30); banner-conflict matches are penalised −0.30. Scores flow into `risk_score` via `tool_confidence`, replacing the previous uniform per-tool weight.
-- **FP hardening — CVE verdict tiers:** `--cve-test` verdicts now have four tiers: `CONFIRMED_VULNERABLE` (multiple independent probes unanimously VULNERABLE), `VULNERABLE` (at least one VULNERABLE), `NOT_VULNERABLE`, `INCONCLUSIVE`. The tier is surfaced in both the JSON report and the HTML card.
-- **Bug fix — OS guess leaking into report header:** `gather_target_info()` runs its own `nmap -O` pass and stored the OS guess directly on `target_info`. Phase 4's plausibility suppression only cleared the internal `nmap_meta` dict, leaving the original unreliable guess visible in the report header. Fixed: after `gather_target_info` returns, `main_async` now checks if Phase 4 suppressed the guess (`nmap_meta["phase4_os"]["name"] == "OS guess unreliable"`) and unconditionally clears `target_info.os_guess` and `target_info.os_accuracy`.
-- **Bug fix — LLM conclusion hallucinating vulnerabilities:** the executive summary prompt and `_build_conclusion_with_cve()` prompt both now include a strong grounding constraint: "CRITICAL: Only reference findings, services, CVEs, and issues that appear in the assessment data below. Do not invent, assume, or hallucinate vulnerabilities, CVEs, or issues not explicitly listed. If a CVE list is empty, do not mention CVEs at all." Prevents the report model from drawing on training knowledge about a product version instead of the actual scan results.
-- **Code cleanup — `_run_script()`:** resource-limit constants (`_RLIMIT_CPU_SECONDS`, `_RLIMIT_ADDRESS_BYTES`, `_RLIMIT_FD_COUNT`, `_RLIMIT_FSIZE_BYTES`) and the `_build_rlimit_preexec()` helper extracted to module scope. Function body reduced from ~95 LOC to ~45 LOC.
-- **Code cleanup — `_load_community_nuclei_template()`:** template layout probing extracted from `run_cve_tests` into a dedicated helper with compiled regex constants (`_NUCLEI_TEMPLATE_LAYOUTS`, `_RE_CVE_YEAR`, `_RE_NUCLEI_ID`, `_RE_NUCLEI_PROTO`). Call site reduced from ~40 LOC to 3 LOC.
-
-### What's New in v0.9.4
-
-- **Fix — empty CVE attacker perspectives:** `_generate_attacker_perspective()` now strips `<think>` blocks, retries up to `MAX_LLM_RETRIES`, and applies a stronger no-reasoning directive. The perspective generation loop has been extracted from `_run_cve_test_phase()` (which only ran with `--cve-test`) into a standalone `generate_cve_attacker_perspectives()` function called unconditionally on every scan. `num_predict` set to 500 (sufficient for 2 × 4-sentence paragraphs on qwen3:1.7b without exceeding the 600s timeout).
-- **Fix — report audit returning empty notes:** `_audit_report()` prompt simplified to notes-only, digest trimmed to top-5 findings + top-5 CVEs, `num_predict` raised to 800, `<think>` stripping added, plain-text fallback for non-JSON responses.
-- **Fix — executive summary truncated mid-sentence:** Prose target reduced from 4 × 3-5 sentences to 3 × 2-4 sentences, `num_predict` raised from 600 to 1000, `<think>` stripping added.
-- **Fix — per-finding remediation failing 18/18 on qwen3:1.7b:** Root cause was a model/task mismatch. `_enrich_finding_remediation()` was the only LLM call in the report phase asking a reasoning model (`REPORT_MODEL` = `qwen3:1.7b`) to produce strict nested JSON. Even with `/no_think` the small qwen3 variant frequently emitted `<think>` blocks that consumed most of the `num_predict` budget, leaving truncated JSON that failed to parse. Moved to `SCRIPT_MODEL` (`qwen2.5-coder:3b-instruct`) — the same model used by `_generate_remediation()` for CVE prose (which has never failed). Coder model has no thinking-mode overhead, strong JSON discipline, and is already cached from the planning phase. Removed the `/no_think` directive, `<think>` stripping, and 3x retry loop (all v0.9.4 workarounds for the wrong-model problem). `num_ctx` reduced 2048 → 1024 to match the working CVE function.
-
-For the full history of all releases see [version_history.md](version_history.md).
-- **`update.sh` step 11 — tool manifest pull:** New update step downloads `tool_manifest.json` from the relay endpoint (`/tool-manifest`) for subscribers. Validates JSON before overwriting the local copy. Existing step count updated to 11/11.
-- **Docker bind-mount for `tool_manifest.json`:** `docker-compose.yml` now bind-mounts `./tool_manifest.json:/app/tool_manifest.json`. If the file is absent on the host, Docker creates a directory; `docker-entrypoint.sh` detects and removes the directory without creating a `{}` placeholder, so the scanner starts cleanly with a logged advisory.
-- **New public scripts:** `scripts/build_tool_manifest.py` (Ollama-powered full-manifest generation), `scripts/add_tool_manifest.py` (single-tool CLI helper), `scripts/submit_tool_manifest.py` (operator manifest push to relay).
-
-## What's New in v0.7.7
-
-- **Script model upgraded to `qwen2.5-coder:7b-instruct`:** `SCRIPT_MODEL` and `CVE_SCRIPT_MODEL` default changed from `qwen2.5-coder:3b-instruct` to `qwen2.5-coder:7b-instruct` for improved CVE probe and verification script quality. Peak concurrent RAM during `--cve-test` increases to ~7.7 GB; 16 GB recommended.
-- **Nikto `libjson-perl` fix:** `libjson-perl` added to the Dockerfile `apt-get install` list. Previously missing, causing nikto to print `Required module not found: JSON` at startup, which matched `BROKEN_TOOL_SIGNALS` and disabled nikto for every session without explanation. A post-clone sanity check is now baked into the Dockerfile build so missing Perl modules fail the build immediately.
-- **CVE database race condition fixed:** `docker-entrypoint.sh` now always builds `cve-summary.csv` synchronously if missing (previously built in background `&`, so the scan started before the CSV was ready, producing "no CVEs matched" on every port).
-- **`_load_cve_db()` self-heal:** if `cve-summary.csv` is missing at runtime, `noctis.py` now attempts to rebuild it automatically via `build_cve_db.py`. If the build also fails, it hard-exits with a `[FATAL]` message and exact instructions instead of silently returning an empty DB.
-- **Bug fix — CVE knowledge base never persisted in Docker:** `_save_cve_kb()` was only called once after all CVEs finished testing. Stopping the scan mid-run (container restart, web UI stop, Ctrl-C) discarded all in-memory KB data, leaving `cve_knowledge_base.json` permanently empty. Fixed with two layers: (1) `_save_cve_kb()` is now called after every individual CVE completes inside `run_cve_tests`, so progress is flushed incrementally; (2) `_run_cve_test_phase` now wraps the test loop in `try/finally`, guaranteeing a final flush even on unexpected exits or exceptions.
-
-## What's New in v0.7.6
-
-- **Two-model architecture:** `gemma3:4b` handles planning and report prose; `qwen2.5-coder:3b-instruct` handles CVE and tool scripts. Updated `setup.sh`, `update.sh`, `docker-run.sh`, `docker-compose.yml`.
-- **`nikto_cgi` auto-selected for HTTP/HTTPS in fast-path:** placed before plain `nikto` so all web services receive the exhaustive CGI scan without any LLM request.
-- **Bash permitted in CVE probe scripts:** all three CVE script generation prompts now offer Python 3 or bash; execution layer already supported bash — only the prompts were gating Python-only output.
-- **Bug fix — `nxc_smb`/`nxc_ldap` silently blocked:** both tools were missing from `KNOWN_TOOLS` and `validate_action()`, so every SMB/LDAP action was dropped before execution. Fixed by adding both to `KNOWN_TOOLS` and adding the corresponding `validate_action()` branch.
-- **Bug fix — `nxc_smb`/`nxc_ldap` missing dispatch handlers in `run_tool()`:** added `if tool == "nxc_smb"` and `if tool == "nxc_ldap"` branches with correct `nxc smb`/`nxc ldap` command strings.
-- **Bug fix — `nxc` first-time-use race condition:** two parallel Phase 1 `nxc_smb` actions crashed when both tried to create `~/.nxc/` simultaneously. Fixed by running `nxc --version` at startup pre-flight to pre-create the directory.
-- **Bug fix — `OLLAMA_TIMEOUT` increased 180 → 360 s:** after a long Phase 1 parallel wave, `gemma3:4b` could be evicted from RAM on 8 GB machines; 360 s provides a safe buffer for cold reloads (overridable via `NOCTIS_OLLAMA_TIMEOUT`).
-- **Runtime & ETA status line at every major scan phase:** CLI and Web UI print current time, elapsed time, and estimated completion at nmap discovery, Phase 1, each iteration, MSF validation, report save, and CVE test boundaries.
-- **HTML report — "Scan Findings" heading:** the Findings section heading was renamed from "Findings" to make clear these are tool-based scanner results, not NSE-specific output.
-- **HTML report — CVE Matches sorted by EPSS:** CVEs now appear highest exploit probability first instead of by CVSS score.
-- **Community KB pipeline fixes:** `SVC_KEY_RE` broadened to accept all valid service-fingerprint strings (was rejecting `http`, `werkzeug/http`, etc.); `timed_out_count` field name corrected (was `timeout_count` — caused zero tool KB slots ever published).
-- **Bug fix — `update.sh` did not rebuild Docker image after source pull:** added Docker detection to `update.sh`; if Docker is present, the script now runs `docker compose build` + `docker compose up -d --no-deps` after the git reset.
-- **Bug fix — Docker KB persistence:** `os.replace()` fails with `EXDEV` across Docker bind-mount boundaries, silently discarding all CVE/tool KB data on container restart. Fixed with `shutil.copy2()` + `os.unlink()` fallback; `docker-entrypoint.sh` now bootstraps missing KB files as `{}` at startup.
+- **Tool timeout retry-with-feedback** — timed-out tools now feed their selection reason and partial output back to the LLM, which suggests an alternative. A recovery wave runs immediately with one extra probe round granted per recovery.
+- **Executive summary retry loop fixed** — guard rejections now `continue` instead of `break`; `_build_conclusion_with_cve` gained a full `MAX_LLM_RETRIES` loop with backoff.
+- **Hallucination guard narrowed** — `\bcritical\b` tightened to explicit severity-label patterns (`critical severity`, `critical finding(s)`, `critical vulnerability/vulnerabilities`).
+- **NSE script policy system** — selection now driven by `safe/aggressive/unsafe_nse_scripts.json` policy files with denylist validation instead of a hard-coded map.
+- **CVE rejection reasons** — `_cve_service_rejection_reason()` rejects product-mismatched CVE candidates with logged reasons; `_match_cves_for_service()` returns a 3-tuple `(active, suppressed, rejected)`.
+- **`CVE_LOW_CONFIDENCE_THRESHOLD` raised** `0.35 → 0.50`.
+- **Web UI** UNSAFE banner rebuilt with inline JS `style.display` control.
+- **`.gitignore` hardened** — `*.bak`, `fix_funcs.py`, `_scan_*.log`, `build*.log` added.
 
 ---
 
-## What's New in v0.7.5
+### v0.11.0 — CVE Matching, Version Range, and Reporting
 
-- **CVE test pipeline reverted to sequential execution:** `asyncio.gather` was removed; scripts now run in sequence so each new generation sees the previous attempt's output and verdict before the next script is created.
-- **Stronger strategy-pivot enforcement:** each CVE test prompt now includes a `BANNED STRATEGIES` block listing every previous failed attempt's strategy; `temperature` raised 0 → 0.4; `num_ctx` raised 2048 → 4096.
-- **Neutral example JSON in CVE script prompt:** the previous example showed `if 'version' in r.text`, anchoring small models to banner-check probes. Replaced with a socket-based skeleton that suggests no specific strategy.
-- **`CVE_SCRIPT_MODEL` constant added:** new constant (env var `NOCTIS_OLLAMA_CVE_SCRIPT_MODEL`) lets operators dedicate a larger model to CVE probe generation without affecting planning or verification models.
-- **Report conclusion rebuilt after `--cve-test`:** the conclusion is now regenerated deterministically once CVE testing finishes — `CONFIRMED_VULNERABLE` promotes posture to `critical`; `VULNERABLE` promotes to at least `high`.
-- **Conclusion wording fix:** when scanner finds zero findings but CVEs are confirmed exploitable, the conclusion now leads with *"identified no scanner findings but CVE testing revealed N CVE(s) confirmed exploitable"* instead of producing a contradictory sentence.
-- **`IMMEDIATE REMEDIATION PATH` green bar:** renamed from `THE FIX`; now shows LLM-generated 3-step actionable guidance specific to the CVE, product, and port — no generic "apply vendor patch" advice.
-- **Attacker Gain & Lateral Movement Potential section:** new amber-bordered block inside every CVE match card with a confirmed or likely-vulnerable verdict, surfacing the LLM-generated `attacker_perspective` text without requiring the reader to scroll to test results.
+- CVE matching enforces strict product, vendor, and version correlation. Each match carries a `cve_match_status` and `version_range_check` annotation visible in the report.
+- Attacker perspectives and remediation advice enforce strict sentence and length limits to avoid risk inflation.
+- HTML report displays CVE match status, version range, and severity badges. Suppressed and not-affected CVEs are separated with visible reasons.
+- All LLM-generated sections (attacker perspective, remediation, executive summary) validated for accuracy and tone before render.
 
 ---
 
-## What's New in v0.7.4
-
-- **CVE IDs hyperlinked to NVD:** every CVE ID in the report links directly to `https://nvd.nist.gov/vuln/detail/<CVE-ID>`.
-- **Real CVSS v3.1/v4.0 from offline NVD database:** authoritative scores sourced from local NVD data instead of derived estimates; score header labelled `v3.1` or `v4.0`; both shown where available.
-- **EPSS exploitation probability badge:** amber `EPSS X.X%` badge on every CVE card with exact probability and percentile rank (sourced from FIRST.org).
-- **"The Fix" green one-liner:** prominent green `THE FIX` block at the top of every expanded CVE card showing the short-term tactical workaround before any technical detail.
-- **CWE IDs hyperlinked to MITRE:** CWE identifiers link to `https://cwe.mitre.org/data/definitions/<N>.html`.
-- **OT warning banner + Type column:** orange banner when OT/ICS services are detected; new `Type` column shows `OT` (orange badge) or `IT` with protocol tooltip.
-- **EPSS offline database:** `build_epss_db.py` downloads daily FIRST.org EPSS scores (~330k CVEs) to `CVE/epss-scores.csv`; 3-day fallback for early-UTC runs.
-- **NVD CVSS offline database:** `build_nvd_cvss.py` incrementally downloads NVD JSON 2.0 feeds (2002–current, ~348k CVEs) to `CVE/nvd-cvss.csv`; only changed years re-downloaded on update.
-- **NIST CSF 2.0 compliance mappings:** all 17 vulnerability types now map to NIST CSF 2.0 functions and control identifiers; CSF 2.0 chips appear in the Compliance Impact section.
-- **`ot` assessment profile:** classifies services using 15 OT/ICS protocol ports and 20 vendor/product keywords; OT services annotated with `asset_type`, `ot_protocol`, and `ot_standard` in session JSON.
-- **Docker improvements:** EPSS scores pre-fetched at image build time; `CVE` bind mount added to `docker-compose.yml`; entrypoint checks EPSS staleness and missing NVD CVSS on startup.
-
----
-
-## What's New in v0.7.3
-
-- **Three-role model split:** dedicated `REPORT_MODEL` (default `qwen2.5:3b`) for report conclusion, attacker perspective, and remediation prose; `MODEL`/`SCRIPT_MODEL` remain `qwen2.5-coder:3b-instruct`. Override via `NOCTIS_OLLAMA_REPORT_MODEL`.
-- **Deterministic conclusion anchor:** the first sentence of the conclusion is built from real finding counts, not asked of the LLM — eliminates hallucinations where the model described 15 high-severity findings as "few vulnerabilities".
-- **Polar.sh → Lemon Squeezy migration:** license validation for the community KB subscription moved to Lemon Squeezy.
-
----
-
-## What's New in v0.7.2
-
-- **Collapsible report sections:** Findings and CVE Matches sections collapse to header-only by default with a styled expand control.
-- **Attacker perspective narrative in CVE test cards:** LLM-generated threat context (attacker gain, lateral movement potential) added above remediation inside each CVE test result card.
-- **CVE test scripts parallelised:** Phase 2 probe scripts run concurrently via `asyncio.gather`, cutting worst-case CVE test wall-clock time by ~60%.
-
----
-
-## What's New in v0.7.1
-
-- **Automatic Ollama startup + model pull:** `noctis.py` starts `ollama serve` automatically if not running (waits up to 30 s) and pulls the configured model if not present locally.
-- **Line-buffered stdout when piped:** `sys.stdout.reconfigure(line_buffering=True)` at startup ensures every log line appears immediately under `tee` or pipe.
-- **Single-model architecture:** `phi4-mini:3.8b` removed; `qwen2.5-coder:3b-instruct` handles all LLM tasks (planning, scripting, reports).
-- **Deterministic fast-path tool selector:** `_FAST_PATH` table maps well-known service fingerprints (SMB, RDP, SSH, FTP, HTTP, MySQL, MSSQL, DNS, LDAP, VMware, etc.) to tools without any LLM call.
-- **Model keep-alive:** `keep_alive="1h"` sent with every Ollama request and passed as `OLLAMA_KEEP_ALIVE` to `ollama serve` — eliminates cold-load penalty between scan phases.
-- **Inference options tightened:** `num_ctx` capped at 1024; `temperature: 0`; `format: json` grammar-constrained decoding on all planning and CVE calls.
-- **Model warm-start:** `_warmup_models()` fires a tiny prompt at each model during the nmap discovery phase so the first real LLM call is warm.
-- **INCONCLUSIVE reason surfaced in reports:** HTML report shows an amber ⚠ "Why INCONCLUSIVE?" callout per CVE row; JSON gains `inconclusive_reason` field; existing session JSONs upgraded on `--report` re-render.
-
----
-
-## What's New in v0.7.0
-
-- **Five-phase nmap discovery pipeline:** replaces the single fast-port-scan with: (1) full port list (`-p-`), (2) service/version enumeration (`-sV -sC`), (3) targeted NSE scripts per service, (4) OS detection (`-O`), (5) normalisation and merge.
-- **NSE results injected into LLM context:** full NSE output summary included in every planning prompt for both Phase 1 and the sequential loop.
-- **Nmap NSE Script Results table in HTML report:** lists each port and the NSE scripts executed against it when Phase 3 produced output.
-- **`nmap_discovery` key in JSON report:** captures `open_ports`, `os_detected`, and `nse_summary` (port → script IDs executed).
-
----
-
-## What's New in v0.6.8
-
-- **Docker Ollama health check:** replaced `curl` with a pure-bash TCP probe (`</dev/tcp/localhost/11434`) — the official Ollama image does not include `curl`.
-- **Ollama `start_period` increased 20 s → 45 s:** gives the Ollama server process enough time to initialise before health checks begin.
-- **Docker env vars corrected:** `docker-compose.yml` now uses `NOCTIS_OLLAMA_MODEL` and `NOCTIS_OLLAMA_SCRIPT_MODEL` (was `NOCTIS_REPORT_MODEL`, which `noctis.py` does not recognise).
-- **Disk space pre-flight checks:** `docker-run.sh` requires 8 GB free; `docker-test.sh` requires 2 GB free — exits with a clear message instead of failing mid-build.
-- **`exec -T` flag added** to all `docker compose exec` calls in `docker-run.sh` and `docker-test.sh` — required for non-interactive script/CI execution.
-- **Dockerfile Go cache cleanup:** `rm -rf /root/go/pkg/mod /root/go/pkg/cache /root/.cache/go-build` after `go install` steps — removes ~1 GB of intermediate build cache from the final image.
-- **`.dockerignore` expanded:** `CVE/cve/` (~200 MB raw NVD JSON) excluded from Docker build context.
-- **`docker-test.sh` model variable rename:** `REPORT_MODEL` → `SCRIPT_MODEL`, mapped to `NOCTIS_OLLAMA_SCRIPT_MODEL`.
-
----
-
-## What's New in v0.6.7
-
-- **`ffuf` scoped to HTTP/HTTPS only:** removed from the IPP/CUPS service branch — IPP on port 631 returned no directory listings and wasted ~5 minutes per port.
-- **Tiered KB script selection with per-script success ranking:** scripts track `runs`, `vulnerable_count`, `not_vulnerable_count`, `inconclusive_count`; `VULNERABLE` weighted 3×, `NOT_VULNERABLE` 1×, `INCONCLUSIVE` 0×. When a CVE has > 20 KB scripts: top-10 by rank + 5 random mid-tier + 5 random low-tier selected for each run.
-- **Community confirmation bonus:** `+0.5` score per confirmation beyond the minimum-2 required for community KB inclusion — scripts validated by more users rank above untested local scripts.
-- **Tool Knowledge Base community pipeline:** `submit_tool_kb.py`, `merge_tool_kb.py`, Cloudflare Worker routes `/submit-tool` + `/community-tool-kb`, and `update.sh` step 9/9 added.
-
----
-
-## What's New in v0.6.6
-
-- **Split-model architecture:** `qwen2.5-coder:3b-instruct` (code-specialist, ~2 GB) added for CVE script generation; `phi4-mini:3.8b` retained for planning, iteration decisions, report prose, and remediation guidance.
-- **`SCRIPT_MODEL` constant added:** controls the script-generation model; overridable via `NOCTIS_OLLAMA_SCRIPT_MODEL` env var.
-- **Three CVE script generation sites switched to `SCRIPT_MODEL`:** `_generate_known_exploit_script`, `_generate_cve_test_script`, `_generate_verification_script`.
-- **Models run sequentially:** no concurrent model loading — no additional RAM overhead over single-model architecture.
-- **Fixes false-positive CVE verdicts:** broken Python syntax in LLM-generated probe scripts (logic fall-through, missing imports, wrong protocol) caused false positives; `qwen2.5-coder` produces significantly fewer broken scripts.
-- **`setup.sh` and `update.sh` pull both models automatically:** ~2 GB additional storage.
-
----
-
-## What's New in v0.6.5
-
-- **Single-model architecture:** `llama3.2:3b` removed; `phi4-mini:3.8b` handles all LLM tasks — tool planning, CVE script generation, report conclusion, and remediation guidance.
-- **`REPORT_MODEL` / `NOCTIS_REPORT_MODEL` removed:** `MODEL` constant now used for all tasks, simplifying configuration.
-- **phi4-mini v1 prompt improvements — `PYTHON RULES` block:** explicit Python syntax rules in all three CVE script prompts prevent broken-Python / non-stdlib import failures.
-- **`FORBIDDEN` import list:** eliminates `bs4`/`lxml` failures caused by unavailable libraries.
-- **Single-quote rule:** stops escaped double-quotes from breaking JSON output.
-- **Concrete working script example in JSON reply format:** model adapts existing syntax rather than inventing new patterns.
-- **`CONTRAST RULE — MANDATORY` in verification prompt:** enforces an independent technical approach for the verification script.
-- **`ALREADY RUN` moved to top of iteration prompt:** exploits primacy bias to prevent the model from repeating failed tool invocations.
-- **Numbered rules + general-tool fallback in iteration prompt:** provides a structured decision hierarchy.
-- **Single `BLACKLIST` in parallel-scan prompt:** merges `used_actions` and `broken_tools` into one block.
-- **Collapsible CVE test result cards in HTML report:** each CVE card collapses to header-only by default; click to expand attempts, verification, and remediation.
-
----
-
-## What's New in v0.6.4
-
-- **Scan engine switched to `phi4-mini:3.8b`:** 2.5 GB model with 128K context window and native function calling; ~60–90 s/call on CPU vs ~3–5 min for the previous 7b model.
-- **4-strategy LLM response parser added:** handles the four common response formats from the model.
-- **`nikto_cgi` tool added:** runs `nikto -C all` for exhaustive CGI directory scanning.
-- **Port-qualified service keys and best-tool-per-service rankings:** service keys now include port number; tools ranked by expected finding quality per service type.
-- **Fixed `ffuf -retries` flag and Phase 1 URL construction.**
-- **`maxtime` exposed in ffuf descriptions.**
-- **CVE test verdicts shown in console summary.**
-- **Version displayed in CLI banner and Web UI.**
-- **Dedicated short-term/long-term remediation and Steps to Reproduce sections added to HTML report.**
+For the complete release history see [version_history.md](version_history.md).
 
 ---
 
