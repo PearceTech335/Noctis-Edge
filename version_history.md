@@ -4,6 +4,12 @@
 
 ## v0.11.2 — Patch Release
 
+### Ollama concurrency cap
+- `threading.Semaphore(3)` (`_LLM_CONCURRENCY_SEMAPHORE`) added at module level. Acquired inside `query_llm_for_service` and `query_llm_for_timeout_fallback` around their `requests.post` calls.
+- Without the cap, a scan with 21 services dispatches 21 `run_in_executor` LLM calls simultaneously. Ollama processes them serially; the last call waits ≈ 20 × 90 s ≈ 30 min before inference begins — well past `OLLAMA_TIMEOUT=600`.
+- Capped at 3 so the worst-case Ollama wait per call stays under ~5 min regardless of scan size.
+- Overridable at runtime via `NOCTIS_LLM_CONCURRENCY` environment variable.
+
 ### Tool timeout retry-with-feedback
 - When a tool times out with no findings, the LLM is now given the tool's original selection reason plus any partial output captured during the run, and asked to suggest an alternative approach for the same service.
 - A concurrent recovery wave executes the suggested alternative immediately. One extra probe round is granted per recovery so the scan doesn't short-circuit after a timeout.

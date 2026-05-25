@@ -519,6 +519,7 @@ The worker is already deployed at `https://noctis-kb-relay.pearcetechnologies1.w
 
 ### v0.11.2 — Patch Release
 
+- **Ollama concurrency cap** — `threading.Semaphore(3)` (overridable via `NOCTIS_LLM_CONCURRENCY`) limits concurrent Ollama planning calls to 3. Previously, scans with many services (e.g. 21) flooded Ollama's request queue, causing the last-queued calls to exceed the 600 s read timeout before inference had even started.
 - **Tool timeout retry-with-feedback** — timed-out tools now feed their selection reason and partial output back to the LLM, which suggests an alternative. A recovery wave runs immediately with one extra probe round granted per recovery.
 - **Executive summary retry loop fixed** — guard rejections now `continue` instead of `break`; `_build_conclusion_with_cve` gained a full `MAX_LLM_RETRIES` loop with backoff.
 - **Hallucination guard narrowed** — `\bcritical\b` tightened to explicit severity-label patterns (`critical severity`, `critical finding(s)`, `critical vulnerability/vulnerabilities`).

@@ -162,6 +162,10 @@ EXTRA_ROUNDS_PER_FINDING  = 2   # extension rounds granted per uninvestigated fi
 MAX_EXTRA_ROUNDS          = 4   # per-service cap on auto-granted extra rounds
 MAX_LLM_RETRIES           = 3  # default for probes
 MAX_VERIFIER_LLM_RETRIES  = 10  # for verifier scripts
+# Cap concurrent Ollama calls from run_in_executor batches (e.g. 21-service parallel
+# planning waves).  Without this cap every service fires simultaneously and the last
+# requests in Ollama's queue time out before inference even begins.
+_LLM_CONCURRENCY_SEMAPHORE = threading.Semaphore(int(os.getenv("NOCTIS_LLM_CONCURRENCY", "3")))
 NIKTO_DEFAULT_MAXTIME     = int(os.getenv("NOCTIS_NIKTO_MAXTIME", "90"))
 NIKTO_MAXTIME_CAP         = 300
 SAFE_MODE       = True   # can also be used with --aggressive flag for aggressive scanning an enumeration
@@ -5605,18 +5609,19 @@ or
     try:
         for attempt in range(MAX_LLM_RETRIES):
             try:
-                response = requests.post(
-                    OLLAMA_URL,
-                    json={
-                        "model":      MODEL,
-                        "prompt":     prompt,
-                        "stream":     False,
-                        "format":     "json",
-                        "keep_alive": _OLLAMA_KEEP_ALIVE,
-                        "options":    _OLLAMA_PLAN_OPTIONS,
-                    },
-                    timeout=OLLAMA_TIMEOUT,
-                )
+                with _LLM_CONCURRENCY_SEMAPHORE:
+                    response = requests.post(
+                        OLLAMA_URL,
+                        json={
+                            "model":      MODEL,
+                            "prompt":     prompt,
+                            "stream":     False,
+                            "format":     "json",
+                            "keep_alive": _OLLAMA_KEEP_ALIVE,
+                            "options":    _OLLAMA_PLAN_OPTIONS,
+                        },
+                        timeout=OLLAMA_TIMEOUT,
+                    )
                 payload = response.json()
                 if "error" in payload or "response" not in payload:
                     continue
@@ -5761,18 +5766,19 @@ Or if no useful alternative:
     try:
         for attempt in range(MAX_LLM_RETRIES):
             try:
-                response = requests.post(
-                    OLLAMA_URL,
-                    json={
-                        "model":      MODEL,
-                        "prompt":     prompt,
-                        "stream":     False,
-                        "format":     "json",
-                        "keep_alive": _OLLAMA_KEEP_ALIVE,
-                        "options":    _OLLAMA_PLAN_OPTIONS,
-                    },
-                    timeout=OLLAMA_TIMEOUT,
-                )
+                with _LLM_CONCURRENCY_SEMAPHORE:
+                    response = requests.post(
+                        OLLAMA_URL,
+                        json={
+                            "model":      MODEL,
+                            "prompt":     prompt,
+                            "stream":     False,
+                            "format":     "json",
+                            "keep_alive": _OLLAMA_KEEP_ALIVE,
+                            "options":    _OLLAMA_PLAN_OPTIONS,
+                        },
+                        timeout=OLLAMA_TIMEOUT,
+                    )
                 payload = response.json()
                 if "error" in payload or "response" not in payload:
                     continue
