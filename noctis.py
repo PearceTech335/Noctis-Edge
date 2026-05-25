@@ -12,7 +12,7 @@ EPSS exploit-probability scoring, NVD CVSS offline database,
 NIST CSF 2.0 compliance mapping, and OT/ICS asset classification.
 """
 
-VERSION = "v0.11.2"
+VERSION = "v0.11.3"
 
 import os
 import asyncio
@@ -10549,10 +10549,47 @@ For SMB CVEs, do not send arbitrary raw text over TCP; use protocol-correct evid
 Reply with ONLY this JSON (no markdown, no code fences):
 {{"language": "python", "probe_type": "protocol_fingerprint", "strategy": "No safe target-specific validation path is available from the supplied CVE details", "confidence": 0.0, "script": "print('VERDICT: INCONCLUSIVE')"}}"""
 
+    # ── Adaptive Temperature Scheduling ─────────────────────────────────────
+    # Two modes are distinguished by inspecting the tail of previous_attempts.
+    # Only LLM-generated attempts (source == "llm_generated") count; KB-replay
+    # and Nuclei entries are excluded — they don't reflect LLM creativity.
+    #
+    # EXPLORE mode  (last LLM attempt was not a rejection, or no LLM attempts yet)
+    #   Temperature ramps UP: 0.1 → 0.2 → … → 0.5 (capped).
+    #   The first call is conservative and deterministic; each successfully-run
+    #   probe unlocks a little more creativity so subsequent attempts diverge
+    #   from strategies that returned INCONCLUSIVE or SAFE.
+    #
+    # FIX mode  (one or more consecutive LLM rejections at the tail)
+    #   Temperature ramps DOWN: 0.5 → 0.4 → … → 0.1 (floored).
+    #   A rejection means the script had a concrete quality defect (syntax error,
+    #   placeholder token, protocol mismatch).  Precision beats creativity here;
+    #   tightening the distribution pushes the model toward faithful reproduction
+    #   of the instruction rather than inventive reinterpretation.
+    _llm_ran_count = sum(
+        1 for _pa in previous_attempts
+        if _pa.get("source") == "llm_generated" and not _pa.get("rejected")
+    )
+    _consec_rejections = 0
+    for _pa in reversed(previous_attempts):
+        if _pa.get("source") == "llm_generated" and _pa.get("rejected"):
+            _consec_rejections += 1
+        else:
+            break  # streak broken
+    if _consec_rejections > 0:
+        # Fix mode: tighten focus so the model addresses the rejection precisely
+        _gen_temperature = round(max(0.1, 0.5 - (_consec_rejections - 1) * 0.1), 1)
+        _temp_mode = f"fix×{_consec_rejections}"
+    else:
+        # Explore mode: escalate diversity with each successfully-run attempt
+        _gen_temperature = round(min(0.5, 0.1 + _llm_ran_count * 0.1), 1)
+        _temp_mode = f"explore×{_llm_ran_count + 1}"
+
     _t0        = time.monotonic()
     _timed_out  = False
     _parse_fail_raw = ""
-    _sp = _Spinner(f"[ LLM ]  Generating test script for {cve.get('cve_id', 'CVE')} ...").start()
+    _sp = _Spinner(f"[ LLM ]  Generating test script for {cve.get('cve_id', 'CVE')} "
+                   f"[T={_gen_temperature} {_temp_mode}] ...").start()
     try:
         for attempt in range(MAX_LLM_RETRIES):
             try:
@@ -10563,7 +10600,7 @@ Reply with ONLY this JSON (no markdown, no code fences):
                         "prompt":     prompt,
                         "stream":     False,
                         "keep_alive": _OLLAMA_KEEP_ALIVE,
-                        "options":    {"num_ctx": 2048, "temperature": 0.4},
+                        "options":    {"num_ctx": 2048, "temperature": _gen_temperature},
                     },
                     timeout=OLLAMA_TIMEOUT,
                 )
