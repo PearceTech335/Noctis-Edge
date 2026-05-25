@@ -39,8 +39,25 @@ CVE/nvd-cvss.csv
 CVE/cwe-data.csv
 CVE/kev-catalog.csv
 
+# Safe NSE script mapping — subscriber-only, never committed
+safe_nse_scripts.json
+aggressive_nse_scripts.json
+unsafe_nse_scripts.json
+
 # Development / quarantine scratch area — not for distribution
 quarantine/
+
+# Backup files created by editors and ad-hoc scripts
+*.bak
+fix_funcs.py
+
+# Scan log and build log artefacts — generated during development/testing
+_scan_*.log
+build.log
+build_full.log
+
+# Copilot instruction backup files
+COPILOT_INSTRUCTIONS.md.bak
 
 
 # Scan session data (runtime output — not source code)

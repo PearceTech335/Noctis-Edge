@@ -1,19 +1,3 @@
-  <!-- UNSAFE MODE BANNER (dynamic, only when --unsafe is checked) -->
-  <div id="unsafe-banner" style="display:none; position:fixed; left:0; right:0; bottom:0; background:#c0392b; color:#fff; text-align:center; padding:10px 0; font-weight:bold; font-size:15px; z-index:9999; letter-spacing:1px;">
-    &#9888; UNSAFE MODE ENABLED — Intrusive/exploit checks will run. Ensure you have explicit authorisation!
-  </div>
-// Show/hide UNSAFE MODE banner when --unsafe is checked
-document.addEventListener('DOMContentLoaded', function() {
-  const unsafeCb = document.getElementById('unsafe-flag-cb');
-  const unsafeBanner = document.getElementById('unsafe-banner');
-  if (unsafeCb && unsafeBanner) {
-    function updateBanner() {
-      unsafeBanner.style.display = unsafeCb.checked ? 'block' : 'none';
-    }
-    unsafeCb.addEventListener('change', updateBanner);
-    updateBanner();
-  }
-});
 #!/usr/bin/env python3
 # Copyright (C) 2026 Pearce Technologies Pty Ltd
 # SPDX-License-Identifier: AGPL-3.0-or-later
@@ -740,6 +724,11 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   line-height: 1.55;
   scroll-behavior: smooth;
 }
+
+/* When UNSAFE banner is visible, add bottom margin to term-wrap */
+.unsafe-banner-visible {
+  margin-bottom: 64px !important;
+}
 #terminal::-webkit-scrollbar { width: 8px; }
 #terminal::-webkit-scrollbar-track { background: var(--bg); }
 #terminal::-webkit-scrollbar-thumb { background: #444; border-radius: 4px; }
@@ -1031,8 +1020,14 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   <button id="btn-n" onclick="quickReply('n')">N</button>
 </div>
 
+
 <!-- Status bar -->
 <div id="status-bar"><span id="status-text">Ready</span><span id="version-badge">{{ version }}</span></div>
+
+<!-- UNSAFE MODE WARNING BANNER -->
+<div id="unsafe-banner" style="display:none; position:fixed; left:0; right:0; bottom:0; z-index:9999; background:#c0392b; color:#fff; text-align:center; font-size:20px; font-weight:bold; padding:18px 0; letter-spacing:1px; box-shadow:0 -2px 16px #000a;">
+  &#9888;&#65039; UNSAFE MODE SELECTED - ENSURE YOU HAVE EXPRESS PERMISSION TO SCAN THE TARGET &#9888;&#65039;
+</div>
 
 <!-- Resume modal -->
 <div id="resume-modal-overlay">
@@ -1070,9 +1065,9 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   </div>
 </div>
 
-<!-- Unsafe Verifier modal -->
-<div id="unsafe-modal-overlay">
-  <div id="unsafe-modal">
+<!-- Unsafe Verifier modal (hidden by default) -->
+<div id="unsafe-modal-overlay" style="display:none; position:fixed; left:0; top:0; right:0; bottom:0; background:rgba(30,30,30,0.85); z-index:10000; align-items:center; justify-content:center;">
+  <div id="unsafe-modal" style="background:#252526; color:#fff; border-radius:6px; box-shadow:0 2px 16px #000a; padding:32px 32px 24px 32px; max-width:600px; margin:auto; text-align:left;">
     <h2 style="color:#c0392b;">Unsafe Verifier Results</h2>
     <div id="unsafe-modal-content">
       <!-- Populated by JS -->
@@ -1102,6 +1097,26 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 </div>
 
 <script>
+// Show UNSAFE MODE banner if unsafe flag is checked and adjust terminal area
+function updateUnsafeBanner() {
+  const unsafeCb = document.getElementById('unsafe-flag-cb');
+  const banner = document.getElementById('unsafe-banner');
+  const termWrap = document.getElementById('term-wrap');
+  if (unsafeCb && unsafeCb.checked) {
+    banner.style.display = 'block';
+    if (termWrap) termWrap.classList.add('unsafe-banner-visible');
+  } else {
+    banner.style.display = 'none';
+    if (termWrap) termWrap.classList.remove('unsafe-banner-visible');
+  }
+}
+document.addEventListener('DOMContentLoaded', function() {
+  const unsafeCb = document.getElementById('unsafe-flag-cb');
+  if (unsafeCb) {
+    unsafeCb.addEventListener('change', updateUnsafeBanner);
+    updateUnsafeBanner();
+  }
+});
 // Unsafe confirmation modal logic
 function openUnsafeConfirmModal() {
   document.getElementById('unsafe-confirm-modal-overlay').style.display = 'flex';
@@ -1534,11 +1549,11 @@ function openUnsafeModal() {
   }
   table.appendChild(tbody);
   content.appendChild(table);
-  overlay.classList.add('open');
+  overlay.style.display = 'flex';
 }
 
 function closeUnsafeModal() {
-  document.getElementById('unsafe-modal-overlay').classList.remove('open');
+  document.getElementById('unsafe-modal-overlay').style.display = 'none';
 }
 
 document.getElementById('unsafe-modal-overlay').addEventListener('click', e => {

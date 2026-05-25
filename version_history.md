@@ -2,11 +2,43 @@
 
 ---
 
-## What's New in v0.10.1
+## v0.11.2 — Patch Release
 
+### Tool timeout retry-with-feedback
+- When a tool times out with no findings, the LLM is now given the tool's original selection reason plus any partial output captured during the run, and asked to suggest an alternative approach for the same service.
+- A concurrent recovery wave executes the suggested alternative immediately. One extra probe round is granted per recovery so the scan doesn't short-circuit after a timeout.
+- Previously, a timeout simply banned the tool for the remainder of the service's probe rounds and moved on with no follow-up.
 
+### Executive summary retry loop fixes (3 bugs)
+- **`break` placement bug:** The hallucination guard `break` was executing even on rejection (placed outside the `else` block), so if the first LLM attempt triggered the guard the loop always terminated early. Rejections now `continue` to the next attempt.
+- **Hallucination guard over-breadth:** `\bcritical\b` was firing on natural-language constructions such as "it is critical to patch", incorrectly rejecting valid summaries. Guard now only fires on explicit severity-label patterns: `critical severity`, `critical finding(s)`, `critical vulnerability/vulnerabilities`, `critical issue(s)`, `critical risk`, `critical-severity`.
+- **`_build_conclusion_with_cve` single-shot:** The post-CVE executive summary rebuild had zero retry logic. It now loops up to `MAX_LLM_RETRIES` with 2-second backoff between attempts, applying the same hallucination guard.
 
-## v0.11.0
+### NSE script policy system
+- NSE script selection is now driven by three JSON policy files: `safe_nse_scripts.json`, `aggressive_nse_scripts.json`, `unsafe_nse_scripts.json`.
+- Scripts are validated against a denylist of unsafe script families (`brute`, `backdoor`, `vuln`, `exploit`, `dos`, `ftp-data`, `http-form-brute`, `http-brute`, `smtp-brute`, `ssh-brute`, `rdp-brute`, `smb-brute`). Only the `unsafe` tier may include exploit/auth families.
+- Added `_load_nse_script_policy()`, `_filter_nse_scripts_by_tier()`, `_collect_policy_scripts()`, `_script_csv_from_list()` helpers. `get_nse_scripts_for_service()` now delegates entirely to the policy files.
+
+### CVE matching improvements
+- **`_cve_service_rejection_reason()`** — new function that explicitly rejects CVE candidates that clearly don't match the observed service (Dropbear CVEs on OpenSSH, Samba CVEs where Samba wasn't fingerprinted, SMB1 CVEs where SMB1 wasn't observed, Linksys firmware CVEs on generic SMB). Rejection reasons are logged for audit.
+- **`_match_cves_for_service()`** returns a 3-tuple `(active, suppressed, rejected)` with structured reasons. `test_cve_matching.py` updated to align.
+- **`CVE_LOW_CONFIDENCE_THRESHOLD`** raised `0.35 → 0.50` to reduce low-confidence noise.
+- **CVE dict key robustness** — all `cve["id"]` accesses replaced with `cve.get("id", cve.get("cve_id", ""))` throughout to handle both key naming conventions without `KeyError`.
+
+### Web UI (noctis_web.py)
+- Title updated to `Noctis Edge - DangerMouse`.
+- UNSAFE MODE banner rebuilt with inline `display:none` + JavaScript `style.display` control (replacing a CSS `.open` class that wasn't always toggling correctly).
+- Unsafe modal overlay gets explicit inline styles for reliable cross-browser display.
+- Terminal area gains `.unsafe-banner-visible` margin class when the UNSAFE banner is shown.
+
+### `.gitignore` additions
+- `*.bak`, `fix_funcs.py`, `_scan_*.log`, `build.log`, `build_full.log`, `COPILOT_INSTRUCTIONS.md.bak` added to prevent development artefacts reaching the repository.
+
+### Constant additions
+- `MAX_VERIFIER_LLM_RETRIES = 10` added as a separate constant (was previously sharing `MAX_LLM_RETRIES`).
+- `_TOOL_PURPOSES` dict added — maps tool names to investigation purpose strings used as context in timeout recovery LLM calls.
+
+---
 
 ### Minor Version Bump
 

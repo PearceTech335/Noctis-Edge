@@ -33,10 +33,8 @@ class TestCVEMatching(unittest.TestCase):
         self.assertEqual(result["cve_match_status"], "product_mismatch")
 
     def test_vendor_mismatch(self):
-        # Use a product string that normalizes to a different vendor
-        cve = {"product": "nginx", "vendor": "nginx", "affected_range": "1.20.0-1.22.0", "id": "CVE-2022-1234", "summary": "nginx 1.20.0 to 1.22.0", "severity": "HIGH"}
-        # 'dropbear' normalizes to vendor 'matt johnston', so this will mismatch with CVE vendor 'nginx'
-        service = make_service("dropbear", None, "2022.83")
+        cve = {"product": "nginx", "vendor": "apache", "affected_range": "1.20.0-1.22.0", "id": "CVE-2022-1234", "summary": "nginx 1.20.0 to 1.22.0", "severity": "HIGH"}
+        service = make_service("nginx", None, "1.21.0")
         result = enrich_cve(cve, service)
         self.assertEqual(result["cve_match_status"], "vendor_mismatch")
 

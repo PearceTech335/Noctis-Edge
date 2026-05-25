@@ -42,15 +42,21 @@ By installing, configuring, or using this software, you agree that you are actin
 
 
 
-## v0.11.0 — Minor Version Bump
+## v0.11.2 — Patch Release
 
 **New in this release:**
-- Strict CVE/product/version validation
-- Robust dash-separated version range support
-- Improved test coverage for matching and normalization
-- Docker build/test fixes
 
-See version_history.md for details.
+- **Tool timeout retry-with-feedback** — when a tool times out with no findings, the LLM is now given the tool's selection reason and any partial output and asked to suggest an alternative approach for the same service. A recovery wave executes the suggestion immediately, with one extra round granted per recovery. Previously a timeout simply banned the tool and moved on.
+- **Executive summary retry loop fixed** — the hallucination guard was breaking out of the retry loop even on rejection, so if the first LLM attempt triggered the guard the summary always fell back to the deterministic anchor sentence. Rejections now `continue` to the next attempt instead.
+- **Hallucination guard tightened** — the `\bcritical\b` check was firing on natural-language adjectives like "it is critical to patch these findings", incorrectly rejecting valid summaries. The guard now only fires on explicit severity-label constructions (`critical severity`, `critical finding(s)`, `critical vulnerability/vulnerabilities`).
+- **`_build_conclusion_with_cve` retry loop added** — the post-CVE executive summary rebuild was a single-shot call with no retry. It now retries up to `MAX_LLM_RETRIES` with backoff, using the same hallucination guard as the main scan summary.
+- **NSE script policy system** — the NSE script selection is now driven by three JSON policy files (`safe_nse_scripts.json`, `aggressive_nse_scripts.json`, `unsafe_nse_scripts.json`) instead of a hard-coded in-memory map. Scripts are validated against a denylist (`brute`, `backdoor`, `vuln`, `exploit`, `dos`, etc.); only the `--unsafe` tier may include exploit/auth families.
+- **CVE service rejection reasons** — new `_cve_service_rejection_reason()` function explicitly rejects CVE candidates that clearly don't fit the observed service (e.g. Dropbear CVEs on OpenSSH, Samba CVEs where Samba wasn't fingerprinted, SMB1 CVEs where SMB1 wasn't observed). Rejection reasons are logged for audit.
+- **CVE matching robustness** — `_match_cves_for_service()` now returns a 3-tuple `(active, suppressed, rejected)` with structured reasons. All EPSS/KEV/CVSS lookups handle both `cve["id"]` and `cve["cve_id"]` key variants with safe `.get()` fallbacks throughout.
+- **`CVE_LOW_CONFIDENCE_THRESHOLD` raised** from `0.35 → 0.50` to reduce low-confidence noise.
+- **`.gitignore` hardened** — `*.bak`, `fix_funcs.py`, `_scan_*.log`, `build.log`, `build_full.log`, and `COPILOT_INSTRUCTIONS.md.bak` added to prevent development artefacts reaching the repo.
+
+See [version_history.md](version_history.md) for full details.
 
 ## What's New: CVE Matching, Version Range, and Reporting Logic
 
@@ -79,6 +85,8 @@ Most automated scanners report which CVEs *exist* on a system. **Noctis Edge tes
 The `--cve-test` flag instructs the local LLM to generate safe, targeted probe scripts for each matched CVE. Scripts run on-device with a strict timeout and print a clear `VULNERABLE` / `NOT_VULNERABLE` / `INCONCLUSIVE` verdict. Results accumulate in `cve_knowledge_base.json` — on subsequent runs against the same CVE, proven scripts are replayed first, giving faster, higher-confidence results without any LLM call.
 
 Noctis keeps active validation evidence-gated: HTTP-only tools such as Nikto, Nuclei, and ffuf are reserved for confirmed HTTP/HTTPS services, tool timeouts are recorded as explicit incomplete coverage, and low-confidence or product-mismatched CVEs are routed to manual review instead of generating broad active probes. CVE probe scripts are deduplicated and screened for placeholders, dummy targets, and protocol-mismatched raw probes before execution; rejected probes are reported separately and are not counted as negative evidence.
+
+**Beyond CVEs — system hardening recommendations:** Noctis is not only a CVE scanner. Every scan automatically identifies insecure configurations, weak cryptographic settings, and policy gaps that represent real risk even without a named CVE. SSH services are audited for weak key-exchange algorithms, deprecated MACs, and password-authentication exposure. Web services are checked for missing security headers, unsafe HTTP methods, directory listing, exposed version banners, and misconfigured cookies. SMB and LDAP services are inspected for signing enforcement, anonymous access, and legacy protocol support. Each finding is tagged with its `vuln_type` (e.g. `WeakCipher`, `MissingHeader`, `Misconfiguration`), a `cwe_id` (e.g. CWE-326, CWE-16), and compliance control mappings (PCI-DSS, SOC2, ISO 27001, NIST CSF 2.0). The LLM then generates targeted short-term and long-term remediation advice for every finding — not generic hardening checklists, but advice anchored to the specific product, version, and configuration observed during the scan.
 
 Running `./update.sh` submits your local CVE and Tooling knowledge bases to the community repository via Cloudflare relay — **no target data, credentials, or environment variables ever leave your machine**. Submissions are anonymised (CVE ID or service fingerprint only). Community-contributed scripts are vetted before inclusion. Pulling the aggregated community KB requires a [Noctis Edge Intelligence subscription](https://noctisedge.lemonsqueezy.com).
 
@@ -543,7 +551,7 @@ The worker is already deployed at `https://noctis-kb-relay.pearcetechnologies1.w
 
 ## Version History
 
-**Current version: v0.10.1**
+**Current version: v0.11.2**
 
 ### What's New in v0.10.1
 
