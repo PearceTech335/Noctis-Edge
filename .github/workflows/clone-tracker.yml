@@ -1,0 +1,17 @@
+name: Track Repository Clones
+
+on:
+  schedule:
+    - cron: '0 0 * * *' # Runs every day at midnight
+  workflow_dispatch: # Allows you to run it manually anytime
+
+jobs:
+  track-clones:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Fetch and Store Traffic Data
+        uses: svenstaro/upload-release-action@v2
+       
