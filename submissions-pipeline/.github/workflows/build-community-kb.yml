@@ -45,10 +45,17 @@ jobs:
           git push
 
       # -----------------------------------------------------------------
-      # Build community_kb.json
+      # Build sharded community CVE KB (CVE_KB/ + manifest.json)
       # -----------------------------------------------------------------
-      - name: Build community_kb.json
-        run: python3 scripts/build_community_kb.py community_kb.json
+      - name: Build sharded community CVE KB
+        env:
+          ADMIN_USER_ID: ${{ secrets.ADMIN_USER_ID }}
+        run: |
+          if [ -n "$ADMIN_USER_ID" ]; then
+            python3 scripts/build_community_kb.py CVE_KB --trust-admin "$ADMIN_USER_ID"
+          else
+            python3 scripts/build_community_kb.py CVE_KB
+          fi
 
       # -----------------------------------------------------------------
       # Push to Noctis-Edge-KB (private repo)
@@ -60,13 +67,15 @@ jobs:
             https://x-access-token:${{ secrets.KB_PUSH_TOKEN }}@github.com/PearceTech335/Noctis-Edge-KB.git \
             /tmp/noctis-edge-kb
 
-      - name: Copy and push community_kb.json
+      - name: Copy and push sharded CVE_KB
         run: |
-          cp community_kb.json /tmp/noctis-edge-kb/community_kb.json
+          rm -rf /tmp/noctis-edge-kb/CVE_KB
+          mkdir -p /tmp/noctis-edge-kb/CVE_KB
+          cp -R CVE_KB/. /tmp/noctis-edge-kb/CVE_KB/
           cd /tmp/noctis-edge-kb
           git config user.email "actions@github.com"
           git config user.name  "GitHub Actions"
-          git add community_kb.json
-          git diff --cached --quiet && echo "No changes to community KB" && exit 0
-          git commit -m "rebuild: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git add CVE_KB
+          git diff --cached --quiet && echo "No changes to sharded community KB" && exit 0
+          git commit -m "rebuild shards: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
           git push

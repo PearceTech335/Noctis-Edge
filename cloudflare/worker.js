@@ -39,7 +39,7 @@ const GITHUB_TOOL_OWNER    = "PearceTech335";
 const GITHUB_TOOL_REPO     = "Noctis-Edge-Tool-Submissions";
 const GITHUB_TOOL_API_BASE = `https://api.github.com/repos/${GITHUB_TOOL_OWNER}/${GITHUB_TOOL_REPO}/contents`;
 
-const MAX_KB_BYTES      = 10 * 1024 * 1024;  // 10 MB hard limit
+const MAX_KB_BYTES      = 25 * 1024 * 1024;  // 25 MB hard limit (hotfix for larger shard-merged submissions)
 const MAX_TOOL_KB_BYTES =  1 * 1024 * 1024;  //  1 MB — tool KB is small (no scripts)
 const MAX_DAILY_SUBS = 4;                  // max submissions per UUID per 24 h
 const RATE_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -266,6 +266,23 @@ async function handleSubmit(request, env) {
 
 // CVE-2017-1, CVE-2018-5000, CVE-2023-30000 — no path components allowed
 const SHARD_NAME_RE = /^CVE-\d{4}-\d+$/;
+const LEGACY_SHARD_NAME = "CVE-0000-1"; // synthetic shard token for legacy single-file fallback
+
+async function _fetchKbJsonFromGithub(path, token) {
+  const resp = await fetch(
+    `https://api.github.com/repos/PearceTech335/Noctis-Edge-KB/contents/${path}`,
+    {
+      headers: {
+        ...githubHeaders(token),
+        Accept: "application/vnd.github.v3.raw",
+      },
+    }
+  );
+  if (!resp.ok) {
+    return { ok: false, status: resp.status, text: "" };
+  }
+  return { ok: true, status: resp.status, text: await resp.text() };
+}
 
 async function handleCommunityKB(request, env) {
   // ── Parse body ────────────────────────────────────────────────────────────
@@ -315,27 +332,62 @@ async function handleCommunityKB(request, env) {
   //   2. Loop and pull each named shard → write to local CVE_KB/
   const shardName = body?.shard ?? null;
 
-  let kbPath;
+  let kbPath = "";
   if (shardName === null) {
-    kbPath = "CVE_KB/manifest.json";
+    // Primary (new): sharded manifest
+    const manifestResp = await _fetchKbJsonFromGithub("CVE_KB/manifest.json", env.GITHUB_KB_TOKEN);
+    if (manifestResp.ok) {
+      return new Response(manifestResp.text, {
+        status:  200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    // Compatibility fallback (legacy): synthesize a one-shard manifest backed
+    // by community_kb.json so existing deployments can still pull updates.
+    if (manifestResp.status === 404) {
+      const legacyResp = await _fetchKbJsonFromGithub("community_kb.json", env.GITHUB_KB_TOKEN);
+      if (!legacyResp.ok) {
+        if (legacyResp.status === 404) {
+          return jsonResp({ error: "Community KB manifest not yet available — check back after the next build" }, 404);
+        }
+        console.error(`[community-kb] GitHub fetch failed HTTP ${legacyResp.status} for community_kb.json`);
+        return jsonResp({ error: "Community KB temporarily unavailable — try again later" }, 502);
+      }
+
+      let legacyObj = {};
+      try {
+        legacyObj = JSON.parse(legacyResp.text);
+      } catch {
+        legacyObj = {};
+      }
+      const cveCount = Object.keys(legacyObj).filter(k => CVE_KEY_RE.test(k)).length;
+      const syntheticManifest = {
+        built_at: legacyObj?.built_at || new Date().toISOString(),
+        stats: {
+          ...(typeof legacyObj?.stats === "object" && legacyObj?.stats ? legacyObj.stats : {}),
+          legacy_mode: true,
+        },
+        shards: [{ name: LEGACY_SHARD_NAME, cve_count: cveCount }],
+        legacy_mode: true,
+      };
+      return jsonResp(syntheticManifest, 200);
+    }
+
+    console.error(`[community-kb] GitHub fetch failed HTTP ${manifestResp.status} for CVE_KB/manifest.json`);
+    return jsonResp({ error: "Community KB temporarily unavailable — try again later" }, 502);
   } else {
     // Validate strictly — prevents path traversal (no slashes, dots, etc.)
     if (typeof shardName !== "string" || !SHARD_NAME_RE.test(shardName)) {
       return jsonResp({ error: "Invalid shard name — expected format: CVE-YYYY-N" }, 400);
     }
-    kbPath = `CVE_KB/${shardName}.json`;
+    kbPath = shardName === LEGACY_SHARD_NAME
+      ? "community_kb.json"
+      : `CVE_KB/${shardName}.json`;
   }
 
   // ── Fetch file from private GitHub KB repo ────────────────────────────────
-  const kbResp = await fetch(
-    `https://api.github.com/repos/PearceTech335/Noctis-Edge-KB/contents/${kbPath}`,
-    {
-      headers: {
-        ...githubHeaders(env.GITHUB_KB_TOKEN),
-        Accept: "application/vnd.github.v3.raw",
-      },
-    }
-  );
+  const kbResp = await _fetchKbJsonFromGithub(kbPath, env.GITHUB_KB_TOKEN);
 
   if (kbResp.status === 404) {
     const label = shardName ? `Shard ${shardName}` : "Community KB manifest";
@@ -347,8 +399,7 @@ async function handleCommunityKB(request, env) {
     return jsonResp({ error: "Community KB temporarily unavailable — try again later" }, 502);
   }
 
-  const kbText = await kbResp.text();
-  return new Response(kbText, {
+  return new Response(kbResp.text, {
     status:  200,
     headers: { "Content-Type": "application/json" },
   });
