@@ -218,7 +218,7 @@ async function handleSubmit(request, env) {
   const kbBytes    = new TextEncoder().encode(kbStr).length;
   if (kbBytes > MAX_KB_BYTES) {
     return jsonResp({
-      error: `KB payload exceeds 10 MB limit (${(kbBytes / 1_048_576).toFixed(1)} MB received)`,
+      error: `KB payload exceeds ${(MAX_KB_BYTES / 1_048_576).toFixed(0)} MB limit (${(kbBytes / 1_048_576).toFixed(1)} MB received)`,
     }, 413);
   }
 
