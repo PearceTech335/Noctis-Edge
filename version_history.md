@@ -2,6 +2,27 @@
 
 ---
 
+## v0.11.4 — Adaptive NSE Reliability + Community Merge Patch
+
+### Adaptive NSE debug and retry controls
+- NSE debug decisions now retain structured decision history and raw previews for better incident diagnosis.
+- Retry behavior is bounded and safer: family-aware retry caps are applied and no-op adjustment loops are short-circuited.
+- Default adjustment retry handling now supports deeper but controlled retries for difficult services.
+
+### NSE script reliability learning
+- Added per-script reliability scoring and ranking for `nmap_nse` script execution.
+- Added failure taxonomy tracking (`tax_*` counters, including debug-request patterns) to improve future script selection and throttling.
+- Added script-family retry policy controls to prevent runaway retries while still allowing targeted persistence.
+
+### Tool KB community merge improvements
+- `scripts/merge_tool_kb.py` now performs confidence-weighted merges for existing `nmap_nse` slots instead of skipping existing local slots.
+- Core counters and taxonomy counters are blended proportionally to local confidence; derived rates are recomputed after merge.
+
+### Reporting polish
+- Removed duplicate attacker perspective presentation from testing evidence flow while preserving exploitation-details narrative.
+
+---
+
 ## v0.11.2 — Patch Release
 
 ### Ollama concurrency cap

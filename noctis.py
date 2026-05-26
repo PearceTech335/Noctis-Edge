@@ -12,7 +12,7 @@ EPSS exploit-probability scoring, NVD CVSS offline database,
 NIST CSF 2.0 compliance mapping, and OT/ICS asset classification.
 """
 
-VERSION = "v0.11.3"
+VERSION = "v0.11.4"
 
 import os
 import asyncio
@@ -24,10 +24,13 @@ import json
 # Set BASE_DIR after imports to comply with style rules
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
+# --- KB directory (all subscriber/operator knowledge base assets live here) ---
+KB_DIR = os.path.join(BASE_DIR, "Noctis-Edge-KB")
+
 # --- Tiered NSE script mappings (operator/subscriber-maintained) ---
-SAFE_NSE_SCRIPTS_PATH       = os.path.join(BASE_DIR, "safe_nse_scripts.json")
-AGGRESSIVE_NSE_SCRIPTS_PATH = os.path.join(BASE_DIR, "aggressive_nse_scripts.json")
-UNSAFE_NSE_SCRIPTS_PATH     = os.path.join(BASE_DIR, "unsafe_nse_scripts.json")
+SAFE_NSE_SCRIPTS_PATH       = os.path.join(KB_DIR, "safe_nse_scripts.json")
+AGGRESSIVE_NSE_SCRIPTS_PATH = os.path.join(KB_DIR, "aggressive_nse_scripts.json")
+UNSAFE_NSE_SCRIPTS_PATH     = os.path.join(KB_DIR, "unsafe_nse_scripts.json")
 _NSE_SCRIPT_POLICY_CACHE = {}
 
 def _load_nse_script_policy(path: str) -> dict:
@@ -81,7 +84,7 @@ import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 if __name__ == "__main__":
     _BOOTSTRAP_BASE = os.path.dirname(os.path.abspath(__file__))
@@ -215,11 +218,11 @@ and disclaim all liability for any damage, loss, or legal
 action arising from its use. Use of --unsafe constitutes
 acceptance of these terms.
 """
-CVE_KB_DIR           = os.path.join(BASE_DIR, "CVE_KB")
+CVE_KB_DIR           = os.path.join(KB_DIR, "CVE_KB")
 KB_SHARD_SIZE        = 5_000   # max CVE sequence numbers per shard file
 NUCLEI_KB_PATH       = os.path.join(BASE_DIR, "nuclei_kb.json")
-TOOL_KB_PATH         = os.path.join(BASE_DIR, "tool_knowledge_base.json")
-TOOL_MANIFEST_PATH   = os.path.join(BASE_DIR, "tool_manifest.json")
+TOOL_KB_PATH         = os.path.join(KB_DIR, "tool_knowledge_base.json")
+TOOL_MANIFEST_PATH   = os.path.join(KB_DIR, "tool_manifest.json")
 _TOOL_MANIFEST: "dict | None" = None  # lazy-loaded on first call to _load_tool_manifest()
 
 # ----------------------------------------------------------------------------
@@ -761,6 +764,8 @@ class Finding:
     llm_remediation_short: str = ""  # LLM-generated immediate workaround (set during report generation for Unknown vuln_type)
     llm_remediation_long:  str = ""  # LLM-generated permanent fix (set during report generation for Unknown vuln_type)
     llm_remediation_failed: bool = False  # True when LLM remediation enrichment failed (parse/network/empty)
+    evidence_chain:        list = field(default_factory=list)   # [{step, tool, method, result, timestamp}]
+    confidence_breakdown:  dict = field(default_factory=dict)   # {base_tool_confidence, detection_method_modifier, epss_component, final_score, label}
 
     def to_dict(self):
         return dataclasses.asdict(self)
@@ -1003,6 +1008,23 @@ def calculate_risk_score(finding, internet_exposed=True, epss_score: float = 0.0
     base  = sev_w * finding.confidence * exposure * tool_conf * det_mod
     # EPSS component: probability of exploitation in the wild (0-1) weighted at 30%
     score = (base * 0.70) + (epss_score * 0.30)
+    # Populate confidence_breakdown on the finding for HTML diagnostics
+    _cb_label = (
+        "Validated"          if finding.confidence >= 0.95 else
+        "Strong Fingerprint" if finding.confidence >= 0.75 else
+        "Banner / Heuristic" if finding.confidence >= 0.40 else
+        "Weak Inference"
+    )
+    try:
+        finding.confidence_breakdown = {
+            "base_tool_confidence":      round(tool_conf, 3),
+            "detection_method_modifier": round(det_mod, 3),
+            "epss_component":            round(epss_score * 0.30, 3),
+            "final_score":               round(score, 3),
+            "label":                     _cb_label,
+        }
+    except AttributeError:
+        pass
     return round(score, 3)
 
 
@@ -1022,8 +1044,8 @@ def _cap_severity(raw: str, cap: str) -> str:
     return _SEV_LEVELS[min(raw_i, cap_i)]
 
 
-def _effective_severity_rules(f) -> str | None:
-    """Apply deterministic rules. Return effective severity string or None (= needs LLM).
+def _effective_severity_rules(f) -> tuple | None:
+    """Apply deterministic rules. Return (severity, reason) tuple or None (= needs LLM).
 
     None means the finding is ambiguous and should be sent to the LLM batch.
     """
@@ -1031,21 +1053,23 @@ def _effective_severity_rules(f) -> str | None:
 
     # Hard keep — authoritative evidence
     if f.verification_status == "confirmed":
-        return sev
+        return sev, "verification_status=confirmed"
     if getattr(f, "detection_method", "") == "exploit_confirmed":
-        return sev
+        return sev, "detection_method=exploit_confirmed"
     # High-confidence non-nikto tools — trust their severity
     if (
         f.confidence >= 0.85
         and f.tool in ("curl", "nmap", "ssh-audit", "rdpscan", "mysql", "mssql")
     ):
-        return sev
+        return sev, f"high_confidence_tool ({f.tool}, conf={f.confidence:.2f})"
 
     # Banner / heuristic tools — hard cap at medium
     if getattr(f, "detection_method", "") == "banner_analysis":
-        return _cap_severity(sev, "medium")
+        capped = _cap_severity(sev, "medium")
+        return capped, f"banner_analysis_cap (raw={sev}→{capped})"
     if f.tool == "nikto":
-        return _cap_severity(sev, "medium")
+        capped = _cap_severity(sev, "medium")
+        return capped, f"nikto_medium_cap (raw={sev}→{capped})"
 
     # Nuclei unverified high/critical → ambiguous, send to LLM
     if f.tool == "nuclei" and not f.verified and sev in ("high", "critical"):
@@ -1055,7 +1079,7 @@ def _effective_severity_rules(f) -> str | None:
     if f.confidence < 0.50 and sev in ("high", "critical"):
         return None
 
-    return sev
+    return sev, f"default_keep (tool={f.tool}, conf={f.confidence:.2f})"
 
 
 # Conservative sign-off pattern — only matches actual closings, not body prose.
@@ -1198,17 +1222,18 @@ def _apply_cve_uplift_to_counts(report: dict) -> None:
         )
 
 
-def _llm_recalibrate_severities(findings: list) -> dict:
+def _llm_recalibrate_severities(findings: list) -> tuple:
     """Batch LLM re-rating for ambiguous findings (temperature=0, structured JSON).
 
     Uses MODEL (qwen2.5-coder:3b-instruct) — same as tool-selection calls.
-    Returns {finding_id: effective_severity_string}.
+    Returns ({finding_id: effective_severity_string}, {finding_id: reason_string}).
     Falls back to conservative cap (medium) on any error or timeout.
     """
     if not findings:
-        return {}
+        return {}, {}
 
     fallback = {f.finding_id: _cap_severity(f.severity, "medium") for f in findings}
+    fallback_reasons = {f.finding_id: "llm_fallback_medium_cap" for f in findings}
 
     items = [
         {
@@ -1254,19 +1279,23 @@ def _llm_recalibrate_severities(findings: list) -> dict:
         raw = re.sub(r'^```[^\n]*\n?', '', raw).rstrip('`').strip()
         parsed = json.loads(raw)
         result = {}
+        result_reasons = {}
         for item in parsed:
             fid = item.get("id", "")
             sev = item.get("effective_severity", "").lower()
+            reason = item.get("reason", "llm_recalibrated")
             if fid and sev in _SEV_LEVELS:
                 result[fid] = sev
+                result_reasons[fid] = f"llm: {reason}"
         # Back-fill any missing IDs with conservative fallback
         for f in findings:
             if f.finding_id not in result:
                 result[f.finding_id] = fallback[f.finding_id]
-        return result
+                result_reasons[f.finding_id] = "llm_fallback_medium_cap"
+        return result, result_reasons
     except Exception as e:
         print(f"[!] Severity recalibration LLM error: {e} — using conservative fallback")
-        return fallback
+        return fallback, fallback_reasons
 
 
 def auto_tag(finding):
@@ -2630,24 +2659,34 @@ _RE_SEMVER_PREFIX       = re.compile(r"^\d+\.\d+(\.\d+)?")
 
 
 def _compute_match_confidence(service: dict, version: str, kev_listed: bool,
-                              exploit_maturity: str) -> float:
-    """Return a [0, 1] confidence that the CVE applies to this host."""
+                              exploit_maturity: str) -> tuple:
+    """Return (score, factors_dict) where score is [0, 1] confidence the CVE applies."""
     mc = _MC_BASE
+    factors = {"base": _MC_BASE}
     if (service.get("banner_source") or "").lower() in _MC_NSE_SOURCES:
         mc += _MC_NSE_SOURCE_BONUS
+        factors["nse_source"] = _MC_NSE_SOURCE_BONUS
     if service.get("body_fingerprint_match"):
         mc += _MC_BODY_FP_BONUS
+        factors["body_fingerprint"] = _MC_BODY_FP_BONUS
     if service.get("banner_conflict"):
         mc += _MC_BANNER_CONFLICT
+        factors["banner_conflict"] = _MC_BANNER_CONFLICT
     if service.get("version_unknown") or not version:
         mc += _MC_NO_VERSION
+        factors["no_version"] = _MC_NO_VERSION
     elif _RE_SEMVER_PREFIX.match(version):
         mc += _MC_EXACT_VERSION_BONUS
+        factors["exact_version"] = _MC_EXACT_VERSION_BONUS
     if kev_listed:
         mc += _MC_KEV_BONUS
+        factors["kev_listed"] = _MC_KEV_BONUS
     if exploit_maturity in _MC_PUBLIC_MATURITIES:
         mc += _MC_PUBLIC_EXPLOIT
-    return max(0.0, min(1.0, mc))
+        factors["public_exploit"] = _MC_PUBLIC_EXPLOIT
+    score = max(0.0, min(1.0, mc))
+    factors["final"] = round(score, 3)
+    return score, factors
 
 
 
@@ -2795,7 +2834,7 @@ def enrich_cve(cve: dict, service: dict, log_near_miss=None) -> dict:
     cwe_db   = _load_cwe_db()
     cwe_info = cwe_db.get(resolved_cwe, {})
 
-    match_confidence = _compute_match_confidence(
+    match_confidence, _confidence_factors = _compute_match_confidence(
         service     = service,
         version     = detected_version,
         kev_listed  = kev_listed,
@@ -2848,6 +2887,7 @@ def enrich_cve(cve: dict, service: dict, log_near_miss=None) -> dict:
         "version_status":        version_status,
         "potential":             version_status == "potential",
         "description":           cve.get("description") or "",
+        "_confidence_factors":   _confidence_factors,
     }
 
     return out
@@ -3792,6 +3832,24 @@ def _nmap_run(args: list, timeout: int = 120) -> str:
         return ""
 
 
+def _nmap_run_capture(args: list[str], timeout: int = 120) -> tuple[str, str, int]:
+    """Execute nmap and return (stdout, stderr, returncode)."""
+    try:
+        result = subprocess.run(
+            ["nmap"] + args,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        return result.stdout or "", result.stderr or "", int(result.returncode)
+    except subprocess.TimeoutExpired as e:
+        out = e.stdout if isinstance(e.stdout, str) else ""
+        err = e.stderr if isinstance(e.stderr, str) else ""
+        return out, err, 124
+    except Exception as e:
+        return "", str(e), 1
+
+
 def _parse_nmap_xml(xml_data: str) -> list:
     """Parse nmap XML output into a list of service dicts."""
     services = []
@@ -3857,6 +3915,315 @@ def _nmap_extract_script_output(xml_data: str, batch_ports: list | None = None) 
     except ET.ParseError:
         pass
     return results
+
+
+_NSE_DEBUG_HINT_RE = re.compile(r"script execution failed\s*\(use -d to debug\)", re.IGNORECASE)
+_NSE_DEBUG_MAX_TRACE_CHARS = 6000
+_NSE_DEBUG_LLM_TIMEOUT = 90
+_NSE_DEBUG_MAX_ADJUST_RETRIES = max(0, min(3, int(os.getenv("NOCTIS_NSE_DEBUG_MAX_ADJUST_RETRIES", "2"))))
+_NSE_KB_TOOL_KEY = "nmap_nse"
+_NSE_MIN_RUNS_FOR_THROTTLE = 5
+_NSE_SCRIPT_FAMILY_RETRY_CAPS = {
+    "ms-sql-": 2,
+    "smb-": 2,
+    "ldap-": 2,
+    "http-": 1,
+    "ssl-": 1,
+    "smtp-": 1,
+    "ftp-": 1,
+}
+
+
+def _sanitize_nse_debug_text(text: str, max_chars: int = _NSE_DEBUG_MAX_TRACE_CHARS) -> str:
+    """Redact obvious credential/token fields and cap payload size before LLM use."""
+    if not text:
+        return ""
+    cleaned = text
+    cleaned = re.sub(
+        r"(?i)(password|passwd|token|api[_-]?key|secret)\s*[:=]\s*[^\s,;]+",
+        r"\1=<redacted>",
+        cleaned,
+    )
+    cleaned = re.sub(r"([a-z]+://[^\s:/@]+:)[^\s@]+(@)", r"\1<redacted>\2", cleaned, flags=re.IGNORECASE)
+    return cleaned[:max_chars]
+
+
+def _nse_debug_candidates(nse_results: dict[str, dict[str, str]]) -> list[dict[str, str]]:
+    """Return scripts whose output explicitly requests Nmap debug mode (-d)."""
+    candidates: list[dict[str, str]] = []
+    for port, scripts_out in nse_results.items():
+        for sid, output in scripts_out.items():
+            if isinstance(output, str) and _NSE_DEBUG_HINT_RE.search(output):
+                candidates.append({"port": str(port), "script_id": str(sid), "output": output[:300]})
+    return candidates
+
+
+def _strip_markdown_fences(raw: str) -> str:
+    text = (raw or "").strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z0-9_-]*\n?", "", text)
+        text = re.sub(r"\n?```$", "", text.strip())
+    return text.strip()
+
+
+def _extract_json_object(raw: str) -> dict[str, Any] | None:
+    text = _strip_markdown_fences(raw)
+    if not text:
+        return None
+    try:
+        obj = json.loads(text)
+        return obj if isinstance(obj, dict) else None
+    except Exception:
+        pass
+    m = re.search(r"\{[\s\S]*\}", text)
+    if not m:
+        return None
+    try:
+        obj = json.loads(m.group(0))
+        return obj if isinstance(obj, dict) else None
+    except Exception:
+        return None
+
+
+def _set_nmap_arg(args: list[str], flag: str, value: str) -> list[str]:
+    """Replace or insert a simple '--flag value' pair before the target arg."""
+    out: list[str] = []
+    i = 0
+    while i < len(args):
+        if args[i] == flag and i + 1 < len(args):
+            i += 2
+            continue
+        out.append(args[i])
+        i += 1
+    insert_at = max(0, len(out) - 1)
+    out[insert_at:insert_at] = [flag, value]
+    return out
+
+
+def _nse_llm_debug_decision(
+    target: str,
+    scripts_csv: str,
+    ports: list[str],
+    candidates: list[dict[str, str]],
+    debug_trace: str,
+) -> dict[str, Any]:
+    """Ask the LLM whether to adjust NSE parameters once or back off."""
+    prompt = (
+        "You are deciding how to handle NSE script failures in a safe scanner. "
+        "Some scripts returned: 'Script execution failed (use -d to debug)'. "
+        "Choose ONE action: adjust or back_off. "
+        "If adjust, propose conservative nmap tuning for ONE final retry only. "
+        "Never suggest credentials, brute force, or intrusive behavior. "
+        "Return ONLY JSON object with keys: action, reason, adjustments. "
+        "adjustments may contain: script_timeout_seconds (20-90), "
+        "version_intensity (1-5), timing (T2/T3/T4), max_retries (0-2).\n"
+        f"target={target}\n"
+        f"ports={','.join(ports)}\n"
+        f"scripts={scripts_csv[:500]}\n"
+        f"failed_scripts={json.dumps(candidates, separators=(',', ':'))}\n"
+        f"debug_trace={json.dumps(_sanitize_nse_debug_text(debug_trace), separators=(',', ':'))}\n"
+        "JSON:"
+    )
+    raw = _cached_ollama_call(
+        MODEL,
+        prompt,
+        options=_OLLAMA_PLAN_OPTIONS,
+        keep_alive=_OLLAMA_KEEP_ALIVE,
+        timeout=_NSE_DEBUG_LLM_TIMEOUT,
+        scope="nocache",
+    )
+    raw_preview = _sanitize_nse_debug_text(raw, max_chars=500)
+    obj = _extract_json_object(raw)
+    if not obj:
+        low = (raw or "").lower()
+        if "back_off" in low or "back off" in low:
+            return {
+                "action": "back_off",
+                "reason": "llm_text_fallback_back_off",
+                "adjustments": {},
+                "raw_preview": raw_preview,
+            }
+        if "\"action\"" in low and "adjust" in low:
+            return {
+                "action": "adjust",
+                "reason": "llm_text_fallback_adjust",
+                "adjustments": {},
+                "raw_preview": raw_preview,
+            }
+        return {
+            "action": "back_off",
+            "reason": "llm_parse_failed",
+            "adjustments": {},
+            "raw_preview": raw_preview,
+        }
+
+    action = str(obj.get("action", "")).strip().lower()
+    if action not in ("adjust", "back_off"):
+        action = "back_off"
+    reason = str(obj.get("reason", "")).strip()[:220] or "llm_no_reason"
+
+    raw_adj = obj.get("adjustments") if isinstance(obj.get("adjustments"), dict) else {}
+    adj: dict[str, Any] = {}
+    if "script_timeout_seconds" in raw_adj:
+        try:
+            adj["script_timeout_seconds"] = max(20, min(90, int(raw_adj.get("script_timeout_seconds"))))
+        except Exception:
+            pass
+    if "version_intensity" in raw_adj:
+        try:
+            adj["version_intensity"] = max(1, min(5, int(raw_adj.get("version_intensity"))))
+        except Exception:
+            pass
+    if "max_retries" in raw_adj:
+        try:
+            adj["max_retries"] = max(0, min(2, int(raw_adj.get("max_retries"))))
+        except Exception:
+            pass
+    if "timing" in raw_adj:
+        timing = str(raw_adj.get("timing", "")).strip().upper()
+        if timing in ("T2", "T3", "T4"):
+            adj["timing"] = timing
+
+    return {"action": action, "reason": reason, "adjustments": adj, "raw_preview": raw_preview}
+
+
+def _build_adjusted_nse_args(base_args: list[str], adjustments: dict[str, Any]) -> list[str]:
+    """Apply allowlisted, bounded nmap tuning knobs to an NSE command."""
+    cmd = list(base_args)
+    if "script_timeout_seconds" in adjustments:
+        cmd = _set_nmap_arg(cmd, "--script-timeout", f"{int(adjustments['script_timeout_seconds'])}s")
+    if "version_intensity" in adjustments:
+        cmd = _set_nmap_arg(cmd, "--version-intensity", str(int(adjustments["version_intensity"])))
+    if "max_retries" in adjustments:
+        cmd = _set_nmap_arg(cmd, "--max-retries", str(int(adjustments["max_retries"])))
+    if "timing" in adjustments:
+        timing = str(adjustments["timing"])
+        replaced = False
+        for i, token in enumerate(cmd):
+            if re.fullmatch(r"-T[0-5]", token):
+                cmd[i] = f"-{timing}"
+                replaced = True
+                break
+        if not replaced:
+            insert_at = max(0, len(cmd) - 1)
+            cmd[insert_at:insert_at] = [f"-{timing}"]
+    return cmd
+
+
+def _nse_failure_taxonomy(output: str, debug_trace: str = "") -> str:
+    """Classify NSE failure mode so retries can follow deterministic policies."""
+    text = f"{output or ''}\n{debug_trace or ''}".lower()
+    if not text.strip():
+        return "no_output"
+    if "use -d to debug" in text:
+        return "debug_requested"
+    if "timed out" in text or "timeout" in text:
+        return "timeout"
+    if any(tok in text for tok in ("login failed", "access denied", "authentication", "auth required")):
+        return "auth_required"
+    if any(tok in text for tok in ("connection refused", "no route", "network is unreachable", "connection reset")):
+        return "network_unreachable"
+    if any(tok in text for tok in ("tls", "ssl", "handshake", "certificate")):
+        return "tls_transport_mismatch"
+    if "script execution failed" in text or "error:" in text:
+        return "script_runtime_error"
+    return "ok"
+
+
+def _nse_retry_cap_for_candidates(candidates: list[dict[str, str]]) -> int:
+    """Return family-aware retry cap for this candidate set."""
+    if not candidates:
+        return _NSE_DEBUG_MAX_ADJUST_RETRIES
+    caps = [1]
+    for cand in candidates:
+        sid = str(cand.get("script_id", "")).lower()
+        for prefix, cap in _NSE_SCRIPT_FAMILY_RETRY_CAPS.items():
+            if sid.startswith(prefix):
+                caps.append(cap)
+                break
+    return max(1, min(_NSE_DEBUG_MAX_ADJUST_RETRIES, max(caps)))
+
+
+def _nse_rank_and_throttle_scripts(script_csv: str, service_labels: list[str], tool_kb: dict | None) -> tuple[str, dict[str, Any]]:
+    """Rank scripts by historical reliability and throttle persistently weak ones."""
+    scripts = [s.strip() for s in str(script_csv or "").split(",") if s.strip()]
+    if not scripts or not isinstance(tool_kb, dict):
+        return script_csv, {"ranked": scripts, "throttled": []}
+
+    kb_slots = tool_kb.get(_NSE_KB_TOOL_KEY, {}) if isinstance(tool_kb.get(_NSE_KB_TOOL_KEY, {}), dict) else {}
+    ranked: list[tuple[float, str, int]] = []
+    throttled: list[dict[str, Any]] = []
+
+    for sid in scripts:
+        runs = 0
+        fy = 0
+        tf = 0
+        broken = 0
+        timed_out = 0
+        for svc in service_labels:
+            slot = kb_slots.get(f"{svc}/{sid}")
+            if not isinstance(slot, dict):
+                continue
+            runs += int(slot.get("runs", 0) or 0)
+            fy += int(slot.get("findings_yielded", 0) or 0)
+            tf += int(slot.get("total_findings", 0) or 0)
+            broken += int(slot.get("broken_count", 0) or 0)
+            timed_out += int(slot.get("timed_out_count", 0) or 0)
+
+        if runs > 0:
+            success_rate = fy / runs
+            avg_findings = tf / runs
+            unstable_rate = (broken + timed_out) / runs
+        else:
+            success_rate = 0.35
+            avg_findings = 0.10
+            unstable_rate = 0.0
+
+        score = (0.70 * success_rate) + (0.20 * min(1.0, avg_findings / 2.0)) - (0.10 * unstable_rate)
+        if runs >= _NSE_MIN_RUNS_FOR_THROTTLE and success_rate < 0.08 and unstable_rate >= 0.50:
+            throttled.append({
+                "script_id": sid,
+                "runs": runs,
+                "success_rate": round(success_rate, 3),
+                "unstable_rate": round(unstable_rate, 3),
+                "reason": "low_reliability_auto_throttle",
+            })
+            continue
+        ranked.append((score, sid, runs))
+
+    if not ranked and throttled:
+        keep_sid = max(throttled, key=lambda x: (x.get("success_rate", 0.0), x.get("runs", 0))).get("script_id")
+        ranked = [(0.0, str(keep_sid), 0)]
+        throttled = [t for t in throttled if t.get("script_id") != keep_sid]
+
+    ranked_scripts = [sid for _, sid, _ in sorted(ranked, key=lambda x: (-x[0], x[1]))]
+    return ",".join(ranked_scripts), {"ranked": ranked_scripts, "throttled": throttled}
+
+
+def _record_nse_script_outcome(tool_kb: dict | None, service_name: str, script_id: str, output: str, taxonomy: str) -> None:
+    """Persist per-script reliability metrics in Tool KB for local + community ranking."""
+    if not isinstance(tool_kb, dict):
+        return
+    svc = (service_name or "unknown").strip().lower() or "unknown"
+    sid = (script_id or "unknown").strip().lower() or "unknown"
+    slot_key = f"{svc}/{sid}"
+    out = str(output or "")
+    broken = ("error:" in out.lower()) or (taxonomy in {"script_runtime_error", "tls_transport_mismatch"})
+    timed_out = taxonomy == "timeout"
+    finding = 1 if (out.strip() and "error:" not in out.lower()) else 0
+
+    _record_tool_outcome(
+        tool_kb,
+        _NSE_KB_TOOL_KEY,
+        slot_key,
+        findings_count=finding,
+        broken=broken,
+        timed_out=timed_out,
+    )
+    slot = tool_kb.get(_NSE_KB_TOOL_KEY, {}).get(slot_key, {})
+    if isinstance(slot, dict):
+        tax_key = f"tax_{taxonomy}"
+        slot[tax_key] = int(slot.get(tax_key, 0) or 0) + 1
 
 
 _NSE_SCRIPT_MAP = {
@@ -4079,7 +4446,7 @@ def _check_os_guess_plausibility(os_info: dict, services: list) -> None:
     os_info["suppressed_reason"] = reason
 
 
-def run_nmap_discovery(target: str, pinned_ports: str | None = None) -> tuple:
+def run_nmap_discovery(target: str, pinned_ports: str | None = None, tool_kb: dict | None = None) -> tuple:
     """Five-phase nmap discovery pipeline.
 
     Parameters
@@ -4109,6 +4476,7 @@ def run_nmap_discovery(target: str, pinned_ports: str | None = None) -> tuple:
         "phase1_raw": "",
         "phase2_raw": "",
         "phase3_scripts": {},
+        "phase3_debug": {},
         "phase4_os": {},
         "open_ports": [],
     }
@@ -4223,27 +4591,155 @@ def run_nmap_discovery(target: str, pinned_ports: str | None = None) -> tuple:
     # ------------------------------------------------------------------ #
     print("[+] Nmap Phase 3 — Targeted NSE script execution")
     # Group ports by service family to batch NSE calls
-    script_groups: dict = {}  # scripts_csv -> [port, ...]
+    script_groups: dict = {}  # scripts_csv -> {ports:[...], service_labels:set(...)}
     for svc in p1_services:
         scripts = _select_nse_scripts(svc.get("name", ""))
         if scripts:
-            script_groups.setdefault(scripts, []).append(svc["port"])
+            grp = script_groups.setdefault(scripts, {"ports": [], "service_labels": set()})
+            grp["ports"].append(svc["port"])
+            grp["service_labels"].add((svc.get("name", "unknown") or "unknown").lower())
+
+    service_by_port = {
+        str(svc.get("port", "")): (svc.get("name", "unknown") or "unknown").lower()
+        for svc in p1_services
+    }
 
     nse_results: dict = {}  # port -> {script_id: output}
-    for scripts, ports in script_groups.items():
+    for scripts, grp in script_groups.items():
+        ports = grp.get("ports", [])
+        service_labels = sorted(grp.get("service_labels", set()))
+        scripts_effective, rank_meta = _nse_rank_and_throttle_scripts(scripts, service_labels, tool_kb)
+        if not scripts_effective:
+            print(f"[!] Phase 3: all candidate NSE scripts auto-throttled for ports {','.join(ports)} — skipping batch")
+            continue
+
         batch_ports = ",".join(ports)
-        batch_xml = _nmap_run([
+        base_args = [
             "-Pn", "-sT", "-sV", "--version-intensity", "2", "-T4",
             "-p", batch_ports,
-            "--script", scripts,
+            "--script", scripts_effective,
             "--script-timeout", "30s",
             "-oX", "-",
             target,
-        ], timeout=180)
+        ]
+        batch_xml = _nmap_run(base_args, timeout=180)
         if batch_xml:
             batch_results = _nmap_extract_script_output(batch_xml, batch_ports=ports)
             for port, scripts_out in batch_results.items():
                 nse_results.setdefault(port, {}).update(scripts_out)
+                for sid, out in scripts_out.items():
+                    tax = _nse_failure_taxonomy(str(out), "")
+                    _record_nse_script_outcome(tool_kb, service_by_port.get(str(port), "unknown"), sid, str(out), tax)
+
+            # If scripts explicitly request nmap debug mode, run bounded
+            # diagnostic retries and let the LLM decide adjust vs back-off.
+            debug_candidates = _nse_debug_candidates(batch_results)
+            if debug_candidates:
+                family_retry_cap = _nse_retry_cap_for_candidates(debug_candidates)
+                max_adjust_retries = min(_NSE_DEBUG_MAX_ADJUST_RETRIES, family_retry_cap)
+                print(
+                    f"[!] NSE scripts requested debug mode on ports {batch_ports} "
+                    f"— running up to {max_adjust_retries} adjustment retry/retries"
+                )
+
+                current_args = list(base_args)
+                current_candidates = list(debug_candidates)
+                decision_history: list[dict[str, Any]] = []
+                retries_executed = 0
+                last_diag_rc = 0
+                final_retry_executed = False
+
+                while current_candidates:
+                    diag_args = list(current_args)
+                    diag_insert_at = max(0, len(diag_args) - 1)
+                    diag_args[diag_insert_at:diag_insert_at] = ["-d1", "--script-trace"]
+
+                    diag_xml, diag_stderr, diag_rc = _nmap_run_capture(diag_args, timeout=240)
+                    last_diag_rc = int(diag_rc)
+                    diag_results = _nmap_extract_script_output(diag_xml, batch_ports=ports) if diag_xml else {}
+                    for port, scripts_out in diag_results.items():
+                        nse_results.setdefault(port, {}).update(scripts_out)
+                        for sid, out in scripts_out.items():
+                            tax = _nse_failure_taxonomy(str(out), diag_stderr)
+                            _record_nse_script_outcome(tool_kb, service_by_port.get(str(port), "unknown"), sid, str(out), tax)
+
+                    llm_decision = _nse_llm_debug_decision(
+                        target=target,
+                        scripts_csv=scripts_effective,
+                        ports=ports,
+                        candidates=current_candidates,
+                        debug_trace=diag_stderr,
+                    )
+                    decision_history.append({
+                        "decision": llm_decision,
+                        "candidates": current_candidates,
+                    })
+
+                    if llm_decision.get("reason") == "llm_parse_failed":
+                        _pv = (llm_decision.get("raw_preview") or "")[:220]
+                        print(f"[!] NSE debug decision parse failure on ports {batch_ports}; raw preview: {_pv}")
+
+                    if llm_decision.get("action") != "adjust":
+                        print(
+                            "[!] NSE debug decision: back_off "
+                            f"for ports {batch_ports} ({llm_decision.get('reason', 'no_reason')})"
+                        )
+                        break
+
+                    if retries_executed >= max_adjust_retries:
+                        print(
+                            f"[!] NSE debug decision requested additional retries for ports {batch_ports}, "
+                            f"but max adjustment retries ({max_adjust_retries}) reached"
+                        )
+                        break
+
+                    adjustments = llm_decision.get("adjustments", {}) or {}
+                    if not adjustments:
+                        print(
+                            f"[!] NSE debug decision requested adjust but provided no adjustments for ports {batch_ports} "
+                            "— backing off"
+                        )
+                        break
+
+                    adjusted_args = _build_adjusted_nse_args(current_args, adjustments)
+                    if adjusted_args == current_args:
+                        print(
+                            f"[!] NSE debug adjust produced no command changes for ports {batch_ports} "
+                            "— backing off"
+                        )
+                        break
+
+                    adjusted_xml = _nmap_run(adjusted_args, timeout=210)
+                    retries_executed += 1
+                    final_retry_executed = True
+                    current_args = adjusted_args
+
+                    adjusted_results = _nmap_extract_script_output(adjusted_xml, batch_ports=ports) if adjusted_xml else {}
+                    for port, scripts_out in adjusted_results.items():
+                        nse_results.setdefault(port, {}).update(scripts_out)
+                        for sid, out in scripts_out.items():
+                            tax = _nse_failure_taxonomy(str(out), "")
+                            _record_nse_script_outcome(tool_kb, service_by_port.get(str(port), "unknown"), sid, str(out), tax)
+
+                    current_candidates = _nse_debug_candidates(adjusted_results)
+
+                last_decision = decision_history[-1]["decision"] if decision_history else {
+                    "action": "back_off",
+                    "reason": "no_decision",
+                    "adjustments": {},
+                }
+                nmap_meta["phase3_debug"][batch_ports] = {
+                    "debug_candidates": debug_candidates,
+                    "diagnostic_returncode": last_diag_rc,
+                    "decision": last_decision,
+                    "decision_history": decision_history,
+                    "adjustment_retries_executed": retries_executed,
+                    "max_adjustment_retries": max_adjust_retries,
+                    "family_adjustment_retry_cap": family_retry_cap,
+                    "llm_raw_preview": last_decision.get("raw_preview", ""),
+                    "final_retry_executed": final_retry_executed,
+                    "script_ranking": rank_meta,
+                }
 
     nmap_meta["phase3_scripts"] = nse_results
 
@@ -6597,6 +7093,39 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   </table>
   </div>
 </details>
+
+{% if nmap_discovery.nse_debug %}
+<details style="margin-bottom:1em;border:1px solid #4a3b00;border-radius:6px;background:#1f1a00">
+    <summary style="cursor:pointer;color:#ffca28;font-size:.9em;font-weight:600;padding:.6em 1em;user-select:none;display:flex;align-items:center;gap:.6em">
+        <span>&#9654;</span>
+        <span>{{ nmap_discovery.nse_debug | length }} NSE debug decision batch(es) &mdash; click to expand</span>
+    </summary>
+    <div style="padding:.65em 1em .8em;color:#d7ccc8;font-size:.85em">
+        {% for batch_ports, dbg in nmap_discovery.nse_debug.items() %}
+        <div style="margin-bottom:.65em;padding:.55em .75em;background:#2a2300;border-left:3px solid #ffb300;border-radius:0 4px 4px 0">
+            <div style="display:flex;flex-wrap:wrap;gap:.8em;align-items:center">
+                <strong style="color:#ffe082">Ports:</strong>
+                <span style="font-family:monospace;color:#ffecb3">{{ batch_ports }}</span>
+                <span style="color:#b0bec5">Decision:</span>
+                <span style="color:{% if dbg.decision.action == 'adjust' %}#a5d6a7{% else %}#ef9a9a{% endif %};font-weight:600">{{ dbg.decision.action }}</span>
+                <span style="color:#9e9e9e">(final retry: {{ 'yes' if dbg.final_retry_executed else 'no' }})</span>
+            </div>
+            {% if dbg.decision.reason %}
+            <div style="margin-top:.3em;color:#ffe0b2">Reason: {{ dbg.decision.reason }}</div>
+            {% endif %}
+            {% if dbg.debug_candidates %}
+            <div style="margin-top:.35em;color:#b0bec5">
+                Triggered scripts:
+                {% for cand in dbg.debug_candidates %}
+                    <span style="display:inline-block;margin-right:.6em;font-family:monospace;color:#c5e1a5">{{ cand.port }}:{{ cand.script_id }}</span>
+                {% endfor %}
+            </div>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+</details>
+{% endif %}
 {% endif %}
 
 {% if remediation_llm_failed %}<div style="background:#1a1000;border:1px solid #ff6d00;border-radius:6px;padding:8px 14px;margin:0 0 10px 0;font-size:.85em"><strong style="color:#ff9800">&#9888; Remediation Advice Incomplete</strong><span style="color:#ffe0b2;margin-left:.5em">LLM timed out for {{ remediation_llm_failed }} finding(s) &mdash; static fallback advice is shown for those items.</span></div>{% endif %}
@@ -6687,8 +7216,30 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                     {% if f.verifier_tool %}<div><span style="color:#78909c">Verifier:</span> {{ f.verifier_tool }}</div>{% endif %}
                     <div><span style="color:#78909c">Manual Review:</span> {{ 'Yes' if f.manual_review else 'No' }}</div>
                     <div><span style="color:#78909c">Confidence:</span> {{ "%.0f%%"|format(f.confidence * 100) }}</div>
+                    {% set _sev_basis = _eff_sev_reason.get(f.finding_id, '') %}
+                    {% if _sev_basis %}<div><span style="color:#78909c">Severity basis:</span> {{ _sev_basis }}</div>{% endif %}
                 </div>
             </div>
+      {% if f.confidence_breakdown %}
+      <details style="margin-bottom:.8em">
+        <summary style="cursor:pointer;color:#90caf9;font-size:.85em;user-select:none">&#9654; Confidence Factors</summary>
+        <div style="margin-top:.5em;background:#0d1b2a;border:1px solid #1e3a5f;border-radius:6px;padding:.7em .9em;font-size:.83em">
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(175px,1fr));gap:.4em .9em;color:#b0bec5">
+            <div><span style="color:#78909c">Tool confidence:</span> {{ f.confidence_breakdown.base_tool_confidence }}</div>
+            <div><span style="color:#78909c">Detection modifier:</span> {{ f.confidence_breakdown.detection_method_modifier }}</div>
+            <div><span style="color:#78909c">EPSS contribution:</span> {{ f.confidence_breakdown.epss_component }}</div>
+            <div><span style="color:#78909c">Risk score:</span> {{ f.confidence_breakdown.final_score }}</div>
+            <div><span style="color:#78909c">Signal quality:</span>
+              {% set _cb_label = f.confidence_breakdown.label %}
+              {% if _cb_label == 'Validated' %}<span style="color:#2ed573">{{ _cb_label }}</span>
+              {% elif _cb_label == 'Strong Fingerprint' %}<span style="color:#69f0ae">{{ _cb_label }}</span>
+              {% elif _cb_label == 'Banner / Heuristic' %}<span style="color:#ffa502">{{ _cb_label }}</span>
+              {% else %}<span style="color:#90a4ae">{{ _cb_label }}</span>{% endif %}
+            </div>
+          </div>
+        </div>
+      </details>
+      {% endif %}
       <div style="margin-bottom:.8em">
         <strong style="color:#00d4ff;display:block;margin-bottom:.3em">Evidence</strong>
                 <div class="ev">{{ f.evidence[:800] | evidence_callouts(f.title ~ ' ' ~ (f.vuln_type or '') ~ ' ' ~ f.service) | safe }}</div>
@@ -6889,6 +7440,19 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     </summary>
     
     <div style="margin-top:1em;padding-top:1em;border-top:1px solid #333">
+      {% if c._confidence_factors %}
+      <details style="margin-bottom:.8em">
+        <summary style="cursor:pointer;color:#90caf9;font-size:.83em;user-select:none">&#9654; Match Confidence Factors</summary>
+        <div style="margin-top:.4em;background:#0d1b2a;border:1px solid #1e3a5f;border-radius:6px;padding:.6em .9em;font-size:.82em;color:#b0bec5">
+          <div style="display:flex;flex-wrap:wrap;gap:.3em .9em">
+            {% for k, v in c._confidence_factors.items() %}{% if k != 'final' %}{% if v > 0 %}<span title="{{ k }}">+{{ v }} <span style="color:#78909c">{{ k|replace('_',' ') }}</span></span>
+            {% elif v < 0 %}<span style="color:#ef5350" title="{{ k }}">{{ v }} <span>{{ k|replace('_',' ') }}</span></span>
+            {% else %}<span style="color:#78909c">{{ k|replace('_',' ') }}: {{ v }}</span>{% endif %}{% endif %}{% endfor %}
+            <span style="color:#aaa;margin-left:.5em">&#x2192; final: <strong>{{ c._confidence_factors.final }}</strong></span>
+          </div>
+        </div>
+      </details>
+      {% endif %}
 
       {# ── Verification Status Banner ────────────────────────────────────── #}
       {% set _tv = c.cve_test_result.overall_verdict if c.cve_test_result else None %}
@@ -7160,10 +7724,15 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             {{ a.verdict }} &mdash; {{ a.strategy[:80] }} ({{ a.language }})
           </summary>
           <pre style="background:#1a1a1a;color:#ccc;padding:.6em;border-radius:4px;overflow-x:auto;white-space:pre-wrap;font-size:.8em">{{ a.output }}</pre>
+          {% if a.verdict == 'NOT_VULNERABLE' %}
+          <div style="margin-top:.4em;font-size:.84em;color:#80cbc4;font-weight:600">Probe script:</div>
+          <pre style="background:#111;color:#b2dfdb;padding:.6em;border-radius:4px;overflow-x:auto;white-space:pre-wrap;font-size:.78em">{{ a.script }}</pre>
+          {% else %}
           <details style="margin-top:.3em">
             <summary style="cursor:pointer;color:#78909c;font-size:.9em">View script</summary>
             <pre style="background:#111;color:#b2dfdb;padding:.6em;border-radius:4px;overflow-x:auto;white-space:pre-wrap;font-size:.78em">{{ a.script }}</pre>
           </details>
+          {% endif %}
           {% if a.verdict == 'VULNERABLE' and _tr.verification_results %}
           <details style="margin-top:.3em">
             <summary style="cursor:pointer;color:#78909c;font-size:.9em">View verifications</summary>
@@ -7190,12 +7759,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         </details>
         {% endfor %}
 
-        {% if _tr.attacker_perspective %}
-        <div style="background:#1a0a00;border-left:3px solid #ff6d00;padding:.6em .9em;margin-top:.5em;border-radius:0 4px 4px 0;font-size:.86em">
-          <strong style="color:#ff9800">&#9760; Attacker Perspective</strong>
-          <div style="color:#ffe0b2;margin-top:.35em;white-space:pre-wrap;line-height:1.55">{{ _tr.attacker_perspective }}</div>
-        </div>
-        {% endif %}
         {% if _tr.remediation %}
         <div style="background:#0d2137;border-left:3px solid #29b6f6;padding:.6em .9em;margin-top:.5em;border-radius:0 4px 4px 0;font-size:.86em">
           <strong style="color:#29b6f6">&#128295; Suggested Remediation</strong>
@@ -7606,7 +8169,8 @@ def generate_html_report(report_data):
     if report_data.get("cve_matches"):
         report_data["cve_matches"].sort(key=_cve_display_sort_key)
 
-    _eff_map = report_data.get("effective_severity_map", {})
+    _eff_map        = report_data.get("effective_severity_map", {})
+    _eff_reason_map = report_data.get("effective_severity_reason_map", {})
     _all_f   = report_data.get("findings", [])
     _active_findings    = [f for f in _all_f
                            if _eff_map.get(f["finding_id"], f.get("severity", "info")).lower()
@@ -7630,6 +8194,7 @@ def generate_html_report(report_data):
         # Calibrated severity map: finding_id → effective severity string
         # Falls back to the raw Finding.severity when id not present (e.g. re-rendered old reports)
         _eff_sev=_eff_map,
+        _eff_sev_reason=_eff_reason_map,
         logo_svg=_LOGO_SVG,
         _tool_labels=_TOOL_LABELS,
         _confirmed_ids=[f["finding_id"] for f in report_data.get("confirmed_findings", [])],
@@ -7696,6 +8261,7 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
     # ── Calibrated severity (report-layer only — Finding.severity unchanged) ─
     # Step 1: deterministic rules — clear-cut cases resolved immediately
     _rules_map: dict = {}
+    _rules_reason_map: dict = {}
     _ambiguous: list = []
     for f in all_findings:
         result = _effective_severity_rules(f)
@@ -7704,22 +8270,26 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
         if result is None:
             _ambiguous.append(f)
         else:
-            _rules_map[f.finding_id] = result
+            _rules_map[f.finding_id] = result[0]
+            _rules_reason_map[f.finding_id] = result[1]
     # Step 2: batch LLM re-rating for ambiguous findings (structured JSON, no prose)
     _llm_map: dict = {}
+    _llm_reason_map: dict = {}
     if _ambiguous:
         _sp2 = _Spinner(f"[ LLM ]  Calibrating severity for {len(_ambiguous)} ambiguous finding(s) ...").start()
         _t_cal = time.monotonic()
         try:
-            _llm_map = _llm_recalibrate_severities(_ambiguous)
+            _llm_map, _llm_reason_map = _llm_recalibrate_severities(_ambiguous)
         finally:
             _sp2.stop(f" done ({_fmt_dur(time.monotonic() - _t_cal)})")
     # Merge: LLM result takes precedence for ambiguous findings
     _eff_sev_map: dict = {**_rules_map, **_llm_map}
+    _eff_sev_reason_map: dict = {**_rules_reason_map, **_llm_reason_map}
     # Ensure every finding has an entry (should not happen, but safe fallback)
     for f in all_findings:
         if f.finding_id not in _eff_sev_map:
             _eff_sev_map[f.finding_id] = _cap_severity(f.severity, "medium")
+            _eff_sev_reason_map[f.finding_id] = "safe_fallback_medium_cap"
         # Store the effective severity for UI/reporting
         f.effective_severity = _eff_sev_map[f.finding_id]
         # If severity is capped/downgraded due to inconclusive/manual review, add a badge/callout
@@ -7924,7 +8494,7 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
                           "keep_alive": _OLLAMA_KEEP_ALIVE,
                           # Warmer prose settings for executive writing; factual
                           # correctness is enforced by the prompt and guard checks.
-                          "options":    {"num_ctx": 3072, "temperature": 0.55,
+                          "options":    {"num_ctx": 3072, "temperature": 0.40,
                                          "top_p": 0.88, "num_predict": 550},
                           "prompt": (
                               "Write exactly 3 paragraphs for a client "
@@ -7940,6 +8510,10 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
                               "For this report, high findings mean the tone should be clear and measured, not reassuring.\n"
                               "Do not mention WAFs, SQL injection, XSS, ransomware, or generic breach scenarios unless those exact issues appear in the data. "
                               "Keep remediation language tied to the listed findings: HTTP methods, missing headers, directory listing, exposed paths, and banner disclosure.\n"
+                              "PROHIBITED WORDS: Do not use the words: ransomware, nation-state, APT, catastrophic, "
+                              "devastating, total compromise, imminent breach.\n"
+                              "EVIDENCE CONSTRAINT: Every specific claim you make MUST be traceable to an entry in the "
+                              "assessment data below. If you cannot cite an exact finding, omit the claim.\n"
                               "CRITICAL: Only reference findings, services, and issues "
                               "that appear in the assessment data below. Do not invent, "
                               "assume, or hallucinate vulnerabilities, CVEs, or issues "
@@ -8104,6 +8678,7 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
             for r in timed_out_scan_records
         ],
         "effective_severity_map": _eff_sev_map,
+        "effective_severity_reason_map": _eff_sev_reason_map,
         "theoretical_severity_map": {f.finding_id: f.theoretical_severity for f in all_findings},
     }
 
@@ -8665,6 +9240,8 @@ def _tool_kb_summary(tool_kb: dict) -> str:
 
     for tool in sorted(tool_kb.keys()):
         if tool.startswith("_"):
+            continue
+        if tool == _NSE_KB_TOOL_KEY:
             continue
         svcs = tool_kb[tool]
         if not isinstance(svcs, dict):
@@ -11385,6 +11962,7 @@ async def run_cve_tests(cve_matches: list, target: str,
     cve_test_results = []
     total_cves    = len(cve_matches)
     scan_start    = time.monotonic()
+    _kb_pruned_total = 0   # cumulative pruned scripts across all CVEs this run
 
     for cve_idx, cve in enumerate(cve_matches, 1):
         cve_start = time.monotonic()
@@ -11455,6 +12033,7 @@ async def run_cve_tests(cve_matches: list, target: str,
             attempts.append({
                 "attempt_num": 1,
                 "source":      "msf_confirmed",
+                "detection_method": "exploit_confirmed",
                 "strategy":    f"[MSF] {msf_hint.get('module', 'unknown module')} check confirmed vulnerable",
                 "language":    "msf",
                 "script":      "",
@@ -11525,6 +12104,7 @@ async def run_cve_tests(cve_matches: list, target: str,
                     attempts.append({
                         "attempt_num": len(attempts) + 1,
                         "source":      "known_exploit",
+                        "detection_method": "exploit_confirmed",
                         "strategy":    f"[Known] {strategy}",
                         "language":    language,
                         "script":      script,
@@ -11569,6 +12149,7 @@ async def run_cve_tests(cve_matches: list, target: str,
                 attempts.append({
                     "attempt_num": _attempt_n,
                     "source":      "nuclei_kb_replay",
+                    "detection_method": "template_match",
                     "strategy":    f"[Nuclei KB] {_tmpl_entry.get('matchers_summary', _nid)}",
                     "language":    "nuclei",
                     "script":      _tmpl_entry.get("yaml_content", "")[:200],
@@ -11657,6 +12238,7 @@ async def run_cve_tests(cve_matches: list, target: str,
             attempts.append({
                 "attempt_num": attempt_num,
                 "source":      "kb_replay",
+                "detection_method": "service_probe",
                 "strategy":    f"[KB] {strategy}",
                 "language":    language,
                 "script":      script,
@@ -11682,8 +12264,9 @@ async def run_cve_tests(cve_matches: list, target: str,
             ]
             _kb_pruned = _kb_scripts_before - len(kb_entry["scripts"])
             if _kb_pruned > 0:
-                print(f"  [KB] Pruned {_kb_pruned} persistently bad script(s) "
-                      f"from KB entry (rejected 2+ times — Phase 1b could not repair them).")
+                _kb_pruned_total += _kb_pruned
+                print(f"  [!] KB pruned {_kb_pruned} script(s) for {cve_id} "
+                      f"(rejected 2+ times, Phase 1b could not repair — permanently removed)")
                 _save_cve_kb(kb)
 
         # ------------------------------------------------------------------
@@ -11763,6 +12346,7 @@ async def run_cve_tests(cve_matches: list, target: str,
                 attempts.append({
                     "attempt_num": _fix_attempt_num,
                     "source":      "kb_fix",
+                    "detection_method": "service_probe",
                     "strategy":    _fix_strategy,
                     "language":    _fix_lang,
                     "script":      _fix_script,
@@ -11825,6 +12409,7 @@ async def run_cve_tests(cve_matches: list, target: str,
                 attempts.append({
                     "attempt_num": _attempt_n,
                     "source":      "nuclei_generated",
+                    "detection_method": "template_match",
                     "strategy":    f"[Nuclei] {_gen_tmpl.get('matchers_summary', _gen_tid)}",
                     "language":    "nuclei",
                     "script":      _gen_tmpl.get("yaml_content", "")[:200],
@@ -12337,6 +12922,10 @@ async def run_cve_tests(cve_matches: list, target: str,
                 print(f"[CVE-TEST] Stopped by operator after {cve_idx} CVE(s).")
                 break
 
+    if _kb_pruned_total > 0:
+        print(f"[!] KB maintenance: {_kb_pruned_total} probe script(s) permanently pruned across "
+              f"this run (persistently rejected — run 'noctis.py --cve-test' again on the same "
+              f"target to trigger fresh LLM script generation for affected CVEs)")
     return cve_test_results, kb
 
 
@@ -12361,18 +12950,21 @@ def _enrich_hc_finding(f) -> None:
     if sev in ("low", "medium"):
         risk_brief = (
             "1. Security risk — describe ONLY the direct technical risk of this "
-            "specific weakness (e.g. clickjacking, UI redressing, session leakage, "
-            "MIME-sniffing, banner fingerprinting, partial information disclosure). "
-            "Explain in concrete terms what an attacker would do with this gap. "
+            "specific weakness, based solely on the Evidence observation below. "
+            "Explain in concrete terms what an attacker would do with this specific gap. "
             "Do NOT mention reputational damage, financial loss, regulatory "
             "penalties, system compromise, lateral movement, or boardroom-level "
-            "consequences — those are inappropriate for a {sev} hardening item."
+            "consequences — those are inappropriate for a {sev} hardening item. "
+            "Do NOT use the words: ransomware, nation-state, APT, catastrophic, "
+            "devastating, total compromise, or imminent breach."
         ).format(sev=sev)
     else:
         risk_brief = (
-            "1. Security risk — how an attacker would discover and exploit this "
-            "weakness, what access or data they could gain, and the realistic "
-            "business impact at this severity tier."
+            "1. Security risk — what this specific evidence demonstrates: how an attacker "
+            "would exploit this weakness, what access or data they could gain, and the realistic "
+            "business impact at this severity tier. Base ONLY on the Evidence observation below. "
+            "Do NOT use the words: ransomware, nation-state, APT, catastrophic, "
+            "devastating, total compromise, or imminent breach."
         )
 
     prompt = (
@@ -12380,8 +12972,10 @@ def _enrich_hc_finding(f) -> None:
         f"Severity tier: {sev or 'unknown'}\n"
         f"Service:  {f.service} on port {port}\n"
         f"Finding:  {f.title}  ({f.severity.upper()})\n"
-        f"Evidence: {(f.evidence or '')[:300]}\n\n"
-        "Write two short paragraphs in plain text (no markdown, no bullet points, no headers):\n"
+        f"Evidence observation: {(f.evidence or '')[:300]}\n\n"
+        "Write two short paragraphs in plain text (no markdown, no bullet points, no headers).\n"
+        "EVIDENCE CONSTRAINT: Base ONLY on the evidence observation above. "
+        "Do not describe risks not implied by this specific evidence.\n"
         f"{risk_brief}\n"
         "2. Remediation — one specific immediate action (e.g. change a config setting, "
         "disable a service, enforce a policy) and one permanent architectural recommendation.\n\n"
@@ -12463,13 +13057,16 @@ def _enrich_hc_findings_batch(findings: list) -> None:
             "findings for a client report.\n\n"
             "For EACH finding below, produce one JSON object with two plain-text "
             "fields:\n"
-            "  \"risk\":        2–3 sentences on how an attacker exploits this and "
-            "the realistic impact at the stated severity. For low/medium severity, "
-            "describe ONLY the direct technical risk — no reputational damage, "
-            "financial loss, regulatory penalty, or boardroom language. For "
-            "high/critical, include realistic business impact.\n"
+            "  \"risk\":        2–3 sentences describing what this specific evidence demonstrates "
+            "and how an attacker exploits this at the stated severity. "
+            "Base ONLY on the evidence observation in the listing — do not describe risks not "
+            "implied by the evidence. For low/medium severity, describe ONLY the direct "
+            "technical risk — no reputational damage, financial loss, regulatory penalty, or "
+            "boardroom language. For high/critical, include realistic business impact.\n"
             "  \"remediation\": 2–3 sentences with one immediate action AND one "
-            "permanent architectural recommendation.\n\n"
+            "permanent architectural recommendation.\n"
+            "PROHIBITED WORDS: Do not use: ransomware, nation-state, APT, catastrophic, "
+            "devastating, total compromise, imminent breach.\n\n"
             "Return ONLY a JSON array — no markdown, no prose outside the array, "
             "no code fences. One object per finding, in the SAME ORDER as the "
             "listing below, with field \"i\" set to the listing index:\n"
@@ -12714,18 +13311,24 @@ def _generate_attacker_perspective(cve: dict) -> str:
     prompt = (
         f"You are a senior penetration tester writing the threat narrative section of a client report.\n\n"
         f"CVE ID:        {cve.get('cve_id', 'Unknown')}\n"
-        f"Description:   {cve.get('summary', '')[:400]}\n"
+        f"Evidence basis: {(cve.get('summary', '') or '')[:300]}\n"
         f"Affected:      {cve.get('product', '')} {cve.get('version_range', '')}\n"
         f"Service:       {cve.get('service', '')}\n"
         f"Vuln type:     {cve.get('vulnerability_type', '')}\n\n"
         "In plain text (no markdown, no bullet symbols), write exactly two paragraphs.\n"
         "Each paragraph must be 2-3 sentences, no longer.\n"
         "Do not label the paragraphs. Never write 'Paragraph 1:' or 'Paragraph 2:'.\n"
-        "Do not use generic phrases, avoid repetition, and do not speculate beyond the CVE summary.\n"
-        "The first paragraph should describe how an attacker would discover and exploit this vulnerability (initial access, tools/techniques, skill level).\n"
-        "The second paragraph should explain what an attacker could gain if successful (data, credentials, lateral movement, realistic business impact).\n"
-        "Be specific to the vulnerability type.\n"
-        "Do not inflate risk or impact.\n"
+        "EVIDENCE CONSTRAINT: Only describe what the Evidence basis above explicitly states. "
+        "Use past tense for exploitation steps described in the CVE summary. "
+        "Do not invent tool names, lateral movement paths, or CVSS vectors not listed. "
+        "If the Evidence basis does not mention lateral movement, do NOT write about lateral movement.\n"
+        "PROHIBITED WORDS: Do not use the words ransomware, nation-state, APT, catastrophic, "
+        "devastating, total compromise, or imminent breach.\n"
+        "The first paragraph should describe how an attacker would discover and exploit this vulnerability "
+        "(initial access, tools/techniques, skill level) — based only on what the CVE summary describes.\n"
+        "The second paragraph should explain what an attacker could gain if successful "
+        "(data, credentials, realistic business consequence directly implied by the vulnerability type).\n"
+        "Be specific to the vulnerability type. Do not inflate risk or impact.\n"
         "Do not begin consecutive sentences with the same word.\n"
         "Begin your answer immediately.\n"
     )
@@ -12737,7 +13340,7 @@ def _generate_attacker_perspective(cve: dict) -> str:
         text = _cached_ollama_call(
             model=SCRIPT_MODEL,
             prompt=prompt,
-            options={"num_ctx": 2048, "temperature": 0.7, "top_p": 0.9, "num_predict": 500},
+            options={"num_ctx": 2048, "temperature": 0.7, "top_p": 0.9, "num_predict": 350},
             keep_alive=_OLLAMA_KEEP_ALIVE,
         )
         if text:
@@ -12749,7 +13352,7 @@ def _generate_attacker_perspective(cve: dict) -> str:
             text = _cached_ollama_call(
                 model=SCRIPT_MODEL,
                 prompt=prompt,
-                options={"num_ctx": 2048, "temperature": 0.7, "top_p": 0.9, "num_predict": 500},
+                options={"num_ctx": 2048, "temperature": 0.7, "top_p": 0.9, "num_predict": 350},
                 keep_alive=_OLLAMA_KEEP_ALIVE,
             )
             if text:
@@ -12799,10 +13402,16 @@ def _generate_attacker_perspectives_batch(cves: list) -> dict:
             "/no_think\n"
             "You are a senior penetration tester writing threat-narrative sections for a client report.\n\n"
             "For EACH CVE below, produce a JSON object with TWO plain-text fields:\n"
-            "  \"discovery_and_exploit\": 2-3 sentences on how an attacker discovers and exploits this CVE (initial access, tools/techniques, skill level).\n"
-            "  \"impact\": 2-3 sentences on what they gain if successful (data, credentials, lateral movement, realistic business consequence).\n"
+            "  \"discovery_and_exploit\": 2-3 sentences on how an attacker discovers and exploits this CVE "
+            "(initial access, tools/techniques, skill level) — based ONLY on what the CVE summary states.\n"
+            "  \"impact\": 2-3 sentences on what they gain if successful (data, credentials, realistic business "
+            "consequence directly implied by the vulnerability type).\n"
+            "EVIDENCE CONSTRAINT: Only describe what the CVE summary explicitly states. Use past tense for "
+            "confirmed exploitation behaviours. Do not invent tool names, lateral movement paths, or CVSS vectors "
+            "not listed. If the summary does not mention lateral movement, do NOT write about it.\n"
+            "PROHIBITED WORDS: Do not use: ransomware, nation-state, APT, catastrophic, devastating, "
+            "total compromise, imminent breach.\n"
             "- Be specific to each CVE's vulnerability type.\n"
-            "- Do not use generic phrases, avoid repetition, and do not speculate beyond the CVE summary.\n"
             "- Do not inflate risk or impact.\n"
             "- Plain text inside JSON values — no markdown, no bullet characters.\n"
             "- Do not label paragraphs or include text such as 'Paragraph 1:' or 'Paragraph 2:'.\n"
@@ -12811,11 +13420,10 @@ def _generate_attacker_perspectives_batch(cves: list) -> dict:
             f"{listing}\n"
         )
 
-        # ~500 output tokens per CVE (two 2-4 sentence paragraphs + JSON).
-        # Budget is generous to cover reasoning-token overhead from local
-        # models — reasoning tokens count against num_predict and a low cap
+        # ~350 output tokens per CVE (two 2-3 sentence paragraphs + JSON).
+        # Budget covers reasoning-token overhead from local models; a low cap
         # truncates the JSON object before all CVEs are written.
-        _num_predict = min(500 * len(chunk) + 600, 3500)
+        _num_predict = min(350 * len(chunk) + 600, 3000)
         _label = (
             f"[ LLM ]  Generating attacker perspectives batch "
             f"{chunk_idx // _CVE_PERSPECTIVE_BATCH_SIZE + 1} "
@@ -13254,6 +13862,8 @@ def _rewrite_truncated_conclusion(report: dict, prior_conclusion: str,
         "- Paragraph 3: remediation urgency — days vs weeks, systemic gaps.\n"
         "- End paragraph 3 with a complete sentence ending in a full stop.\n"
         "- No bullet points, headings, markdown, sign-offs, or follow-up questions.\n"
+        "- Do not use the words: ransomware, nation-state, APT, catastrophic, "
+        "devastating, total compromise, or imminent breach.\n"
         "- The numbers in the digest below are authoritative — do not invent or "
         "contradict them.\n\n"
         f"DATA DIGEST:\n{digest}"
@@ -14088,10 +14698,11 @@ async def main_async():
     # ---------------------------------------------------------------------------
     # Nmap 5-Phase Discovery
     # ---------------------------------------------------------------------------
+    tool_kb = _load_tool_kb()
     print(f"\n{'=' * 52}")
     print("  Nmap Discovery — 5 Phases")
     print(f"{'=' * 52}")
-    services, nmap_meta = run_nmap_discovery(target, pinned_ports=pinned_ports)
+    services, nmap_meta = run_nmap_discovery(target, pinned_ports=pinned_ports, tool_kb=tool_kb)
     _print_scan_eta("Nmap discovery done", scan_start)
 
     if not services:
@@ -14154,7 +14765,6 @@ async def main_async():
         "nse_context":  "\n".join(nse_context_lines) if nse_context_lines else "",
     }
 
-    tool_kb = _load_tool_kb()
     kb_text = _tool_kb_summary(tool_kb)
     if kb_text:
         context["tool_kb_text"] = kb_text
@@ -14465,6 +15075,7 @@ async def main_async():
             for port, scripts in nmap_meta.get("phase3_scripts", {}).items()
             if scripts
         },
+        "nse_debug": nmap_meta.get("phase3_debug", {}),
     }
 
     json_path = os.path.join(session_dir, f"report_{safe_tgt}.json")

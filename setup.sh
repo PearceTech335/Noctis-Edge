@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  Noctis Edge v0.11.0 — One-Shot Setup Script
+#  Noctis Edge v0.11.4 — One-Shot Setup Script
 #
 #  Run once on a fresh Kali / Parrot / Ubuntu / Debian-based system after cloning:
 #
@@ -635,7 +635,11 @@ info "KB submission runs automatically on ./update.sh — no token required"
 # =============================================================================
 # Tool Manifest
 # =============================================================================
-MANIFEST_FILE="$SCRIPT_DIR/tool_manifest.json"
+MANIFEST_FILE="$SCRIPT_DIR/Noctis-Edge-KB/tool_manifest.json"
+if [[ ! -d "$SCRIPT_DIR/Noctis-Edge-KB" ]]; then
+    mkdir -p "$SCRIPT_DIR/Noctis-Edge-KB"
+    ok "Noctis-Edge-KB directory created"
+fi
 if [[ ! -f "$MANIFEST_FILE" ]]; then
     info "Creating empty tool_manifest.json ..."
     echo '{}' > "$MANIFEST_FILE"
@@ -674,7 +678,7 @@ fi
 # =============================================================================
 # Ensure runtime KB files exist for bare (non-Docker) installs
 # =============================================================================
-TOOL_KB_FILE="$SCRIPT_DIR/tool_knowledge_base.json"
+TOOL_KB_FILE="$SCRIPT_DIR/Noctis-Edge-KB/tool_knowledge_base.json"
 if [[ ! -f "$TOOL_KB_FILE" ]]; then
     echo '{}' > "$TOOL_KB_FILE"
     ok "tool_knowledge_base.json created"

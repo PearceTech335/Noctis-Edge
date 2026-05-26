@@ -14,6 +14,15 @@ This architecture makes Noctis Edge particularly suited for regulated environmen
 
 ---
 
+## What's New in v0.11.4
+
+- Adaptive NSE debug retries are now more deterministic and auditable: debug decision history is recorded, retries are bounded with family-aware caps, and no-op adjustment loops are blocked.
+- NSE script quality now improves over time with per-script reliability scoring, failure taxonomy counters (for example `tax_debug_requested`), and script ranking/throttling based on local outcomes.
+- Community merge behavior for `nmap_nse` was upgraded from add-only to confidence-weighted blending for existing slots, so community script reliability can improve local routing faster.
+- Report UX cleanup: duplicate attacker perspective content was removed from the testing evidence flow; attacker perspective remains in exploitation details.
+
+---
+
 ## Legal Disclaimer
 
 Noctis-Edge is a defensive security and exposure validation platform intended exclusively for authorized security assessment, research, asset discovery, vulnerability validation, and compliance testing activities.
@@ -53,6 +62,8 @@ Noctis keeps active validation evidence-gated: HTTP-only tools such as Nikto, Nu
 **Beyond CVEs — system hardening recommendations:** Noctis is not only a CVE scanner. Every scan automatically identifies insecure configurations, weak cryptographic settings, and policy gaps that represent real risk even without a named CVE. SSH services are audited for weak key-exchange algorithms, deprecated MACs, and password-authentication exposure. Web services are checked for missing security headers, unsafe HTTP methods, directory listing, exposed version banners, and misconfigured cookies. SMB and LDAP services are inspected for signing enforcement, anonymous access, and legacy protocol support. Each finding is tagged with its `vuln_type` (e.g. `WeakCipher`, `MissingHeader`, `Misconfiguration`), a `cwe_id` (e.g. CWE-326, CWE-16), and compliance control mappings (PCI-DSS, SOC2, ISO 27001, NIST CSF 2.0). The LLM then generates targeted short-term and long-term remediation advice for every finding — not generic hardening checklists, but advice anchored to the specific product, version, and configuration observed during the scan.
 
 Running `./update.sh` submits your local CVE and Tooling knowledge bases to the community repository via Cloudflare relay — **no target data, credentials, or environment variables ever leave your machine**. Submissions are anonymised (CVE ID or service fingerprint only). Community-contributed scripts are vetted before inclusion. Pulling the aggregated community KB requires a [Noctis Edge Intelligence subscription](https://noctisedge.lemonsqueezy.com).
+
+Community submission is available to all installs. Paid gating applies to community pulls (CVE/Nuclei/Tool KB), Tool Manifest pull, and Unsafe NSE policy pull.
 
 Alongside CVE probes, `tooling_knowledge_base.json` accumulates tool-performance data — which invocations produced real findings versus noise against specific service fingerprints. The LLM uses this history as context on each new engagement, progressively improving tool selection and script quality over time.
 
@@ -538,7 +549,14 @@ The worker is already deployed at `https://noctis-kb-relay.pearcetechnologies1.w
 
 ## Version History
 
-**Current version: v0.11.3**
+**Current version: v0.11.4**
+
+### v0.11.4 — Adaptive NSE Reliability + Community Merge Patch
+
+- Adaptive NSE debug retries now keep structured `decision_history`, use family-aware retry caps, and block no-op adjustment loops.
+- Per-script NSE reliability and taxonomy counters (`tax_*`) now drive ranking and throttling decisions.
+- Community `nmap_nse` data is confidence-weight merged into existing local slots (not only added for unseen slots).
+- Report presentation cleaned up to avoid duplicate attacker-perspective content.
 
 ### v0.11.3 — CVE Probe Quality & Intelligence
 

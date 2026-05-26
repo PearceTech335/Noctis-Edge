@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  Noctis Edge v0.11.0 — Update Script
+#  Noctis Edge v0.11.4 — Update Script
 #  Run: ./update.sh
 #  Updates: apt packages, snap, pip deps, nuclei, Ollama model, CVE database,
 #           CVE knowledge base (submit + pull), Nuclei KB (submit + pull),
@@ -212,7 +212,7 @@ _ensure_manifest_tool() {
     esac
 }
 
-_MANIFEST_FILE="$SCRIPT_DIR/tool_manifest.json"
+_MANIFEST_FILE="$SCRIPT_DIR/Noctis-Edge-KB/tool_manifest.json"
 if [[ -f "$_MANIFEST_FILE" ]]; then
     _MANIFEST_TOOLS=$(python3 -c "
 import json, sys
@@ -232,7 +232,7 @@ except Exception as e:
         err "Could not parse tool manifest — skipping tool health check"
     fi
 else
-    info "tool_manifest.json not found — skipping manifest tool check"
+    info "Noctis-Edge-KB/tool_manifest.json not found — skipping manifest tool check"
 fi
 
 # =============================================================================
@@ -500,7 +500,7 @@ fi
 # =============================================================================
 header "9/10  CVE Knowledge Base sync"
 
-KB_LOCAL="$SCRIPT_DIR/CVE_KB"
+KB_LOCAL="$SCRIPT_DIR/Noctis-Edge-KB/CVE_KB"
 VENV="$SCRIPT_DIR/.venv"
 PYTHON="${VENV}/bin/python3"
 [[ -f "$PYTHON" ]] || PYTHON="python3"
@@ -600,7 +600,7 @@ ok "Nuclei KB sync done"
 # =============================================================================
 header "10/10  Tool Knowledge Base sync"
 
-TOOL_KB_LOCAL="$SCRIPT_DIR/tool_knowledge_base.json"
+TOOL_KB_LOCAL="$SCRIPT_DIR/Noctis-Edge-KB/tool_knowledge_base.json"
 
 # ── Submit (all users) ────────────────────────────────────────────────────────
 if [[ -z "$KB_USER_ID" ]]; then
@@ -653,7 +653,7 @@ ok "Tool KB sync done"
 # =============================================================================
 header "11/11  Tool Manifest pull"
 
-MANIFEST_LOCAL="$SCRIPT_DIR/tool_manifest.json"
+MANIFEST_LOCAL="$SCRIPT_DIR/Noctis-Edge-KB/tool_manifest.json"
 
 if [[ -z "$KB_LICENSE_KEY" ]]; then
     promo "Tool manifest pull skipped — KB_LICENSE_KEY not set in noctis.conf"
@@ -698,7 +698,7 @@ ok "Tool manifest sync done"
 # =============================================================================
 header "12/12  Unsafe NSE Scripts pull"
 
-UNSAFE_NSE_LOCAL="$SCRIPT_DIR/unsafe_nse_scripts.json"
+UNSAFE_NSE_LOCAL="$SCRIPT_DIR/Noctis-Edge-KB/unsafe_nse_scripts.json"
 
 if [[ -z "$KB_LICENSE_KEY" ]]; then
     promo "Unsafe NSE scripts pull skipped — KB_LICENSE_KEY not set in noctis.conf"
