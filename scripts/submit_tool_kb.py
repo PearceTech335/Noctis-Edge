@@ -28,11 +28,55 @@ RELAY_URL = "https://noctis-kb-relay.pearcetechnologies1.workers.dev/submit-tool
 # ─────────────────────────────────────────────────────────────────────────────
 
 _RE_IPV4 = re.compile(r'\b(?:\d{1,3}\.){3}\d{1,3}\b')
+_RE_MULTI_WS = re.compile(r'\s+')
+_RE_BAD_SVC_CHARS = re.compile(r'[^a-z0-9._\-/]+')
+_MAX_SVC_KEY_LEN = 80
+
+
+def _normalize_service_key(slot_key: str) -> str:
+    """Normalize slot keys to the same character policy enforced server-side."""
+    key = _RE_IPV4.sub("target", str(slot_key))
+    key = key.lower().strip()
+    key = _RE_MULTI_WS.sub("-", key)
+    key = _RE_BAD_SVC_CHARS.sub("-", key)
+    key = re.sub(r'-{2,}', '-', key)
+    key = key.strip("-._/")
+    if not key:
+        return "unknown"
+    if key == "unknown":
+        return key
+    if not key[0].isalnum():
+        key = f"x-{key}"
+    return key[:_MAX_SVC_KEY_LEN]
+
+
+def _merge_slot_stats(existing: dict, incoming: dict) -> dict:
+    """Merge two stats dicts when two keys normalize to the same slot."""
+    if not isinstance(existing, dict) or not isinstance(incoming, dict):
+        return incoming
+
+    merged = dict(existing)
+    for field in ("runs", "findings_yielded", "total_findings", "broken_count", "timed_out_count"):
+        lhs = merged.get(field, 0)
+        rhs = incoming.get(field, 0)
+        if isinstance(lhs, (int, float)) and isinstance(rhs, (int, float)):
+            merged[field] = lhs + rhs
+
+    runs = merged.get("runs", 0)
+    findings_yielded = merged.get("findings_yielded", 0)
+    total_findings = merged.get("total_findings", 0)
+    if isinstance(runs, (int, float)) and runs > 0:
+        merged["success_rate"] = round(float(findings_yielded) / float(runs), 4)
+        merged["avg_findings_per_run"] = round(float(total_findings) / float(runs), 4)
+
+    lhs_last = str(existing.get("last_run", ""))
+    rhs_last = str(incoming.get("last_run", ""))
+    merged["last_run"] = rhs_last if rhs_last > lhs_last else lhs_last
+    return merged
 
 
 def _sanitize_tool_kb(kb: dict) -> dict:
-    """Return a copy of the tool KB with target IPv4 addresses scrubbed from
-    slot keys and any string values."""
+    """Return a copy of the tool KB with validator-safe, privacy-safe slot keys."""
     import copy
     kb = copy.deepcopy(kb)
     sanitized: dict = {}
@@ -42,8 +86,11 @@ def _sanitize_tool_kb(kb: dict) -> dict:
             continue
         clean_slots: dict = {}
         for slot_key, stats in slots.items():
-            clean_key = _RE_IPV4.sub("<TARGET>", slot_key)
-            clean_slots[clean_key] = stats
+            clean_key = _normalize_service_key(slot_key)
+            if clean_key in clean_slots:
+                clean_slots[clean_key] = _merge_slot_stats(clean_slots[clean_key], stats)
+            else:
+                clean_slots[clean_key] = stats
         sanitized[tool] = clean_slots
     return sanitized
 
