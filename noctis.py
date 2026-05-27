@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # <https://www.gnu.org/licenses/agpl-3.0.html>
 """
-Noctis Edge - Security Through Exposure  v0.10.1
+Noctis Edge - Security Through Exposure  v0.11.6
 Implements: structured findings, verification,
 approval gates, async execution, HTML reports,
 service-specific enumerations, risk scoring,
@@ -12,7 +12,7 @@ EPSS exploit-probability scoring, NVD CVSS offline database,
 NIST CSF 2.0 compliance mapping, and OT/ICS asset classification.
 """
 
-VERSION = "v0.11.4"
+VERSION = "v0.11.6"
 
 import os
 import asyncio
@@ -136,7 +136,7 @@ OLLAMA_URL     = os.getenv("NOCTIS_OLLAMA_URL", "http://localhost:11434/api/gene
 #   SCRIPT_MODEL     - Python exploit / verification script generation; also all narrative prose
 #   CVE_SCRIPT_MODEL - CVE exploit/test script generation (falls back to SCRIPT_MODEL)
 MODEL            = os.getenv("NOCTIS_OLLAMA_MODEL",            "qwen2.5-coder:3b-instruct")
-SCRIPT_MODEL     = os.getenv("NOCTIS_OLLAMA_SCRIPT_MODEL",     "qwen2.5-coder:3b-instruct")
+SCRIPT_MODEL     = os.getenv("NOCTIS_SCRIPT_MODEL",            os.getenv("NOCTIS_OLLAMA_SCRIPT_MODEL", "qwen2.5-coder:3b-instruct"))
 CVE_SCRIPT_MODEL = os.getenv("NOCTIS_OLLAMA_CVE_SCRIPT_MODEL", SCRIPT_MODEL)
 OLLAMA_TIMEOUT = int(os.getenv("NOCTIS_OLLAMA_TIMEOUT", "360"))   # seconds - 360s covers cold model reload (~3 min) after RAM eviction
 
@@ -177,6 +177,69 @@ MSF_VALIDATE    = False  # set via --msf-validate; runs safe MSF checks broadly 
 CVE_TEST        = False  # set via --cve-test; LLM generates test scripts per matched CVE
 UNATTENDED      = False  # set via --unattended; auto-approves all prompts (no user input required)
 UNSAFE_VERIFY   = False  # set via --unsafe; opt-in intrusive verifier tier; requires typed UNSAFE prompt
+
+_NARRATIVE_PROHIBITED_WORDS = (
+    "ransomware", "nation-state", "APT", "catastrophic",
+    "devastating", "total compromise", "imminent breach",
+)
+
+def _narrative_policy_prohibited() -> str:
+    return "PROHIBITED WORDS: Do not use: " + ", ".join(_NARRATIVE_PROHIBITED_WORDS) + "."
+
+def _narrative_policy_evidence_only() -> str:
+    return (
+        "EVIDENCE CONSTRAINT: Base only on observed evidence in this scan context. "
+        "Do not invent tool names, attack paths, CVSS vectors, or lateral movement unless explicitly evidenced."
+    )
+
+def _narrative_gate_tier(confidence: float, verification_status: str = "", detection_method: str = "",
+                         overall_verdict: str = "") -> tuple[str, str]:
+    """Return (tier, reason) for deterministic narrative control.
+
+    Tiers: suppress, generic, specific, full
+    """
+    conf = float(confidence or 0.0)
+    ver  = str(verification_status or "").lower()
+    det  = str(detection_method or "").lower()
+    ov   = str(overall_verdict or "").upper()
+
+    if ov == "CONFIRMED_VULNERABLE" or det == "exploit_confirmed" or ver == "confirmed":
+        return "full", "confirmed evidence"
+    if ov == "PROBABLE_VULNERABLE" or conf >= 0.75:
+        return "specific", "high-confidence fingerprint"
+    if conf >= 0.50:
+        return "generic", "medium-confidence evidence"
+    return "suppress", "low-confidence evidence"
+
+def _compact_findings_observed_inferred(f) -> tuple[str, str]:
+    observed = (
+        f"Observed via {f.tool} on {f.service}; detection={getattr(f, 'detection_method', '') or 'unknown'}; "
+        f"verification={getattr(f, 'verification_status', '') or 'discovered'}; evidence={str(f.evidence or '')[:220]}"
+    )
+    inferred = (
+        f"Inferred risk uses effective severity={getattr(f, 'effective_severity', f.severity)} "
+        f"and confidence={float(getattr(f, 'confidence', 0.0)):.2f}."
+    )
+    return observed, inferred
+
+def _slot_temporal_stability(slot: dict, svc_key: str) -> dict:
+    runs = int(slot.get("runs", 0) or 0)
+    return {
+        "service_key": str(svc_key or "unknown"),
+        "seen_count": runs,
+        "first_seen": str(slot.get("first_run", "") or ""),
+        "last_seen": str(slot.get("last_run", "") or ""),
+        "verification_success_count": int(slot.get("findings_yielded", 0) or 0),
+        "stable_service_fingerprint": bool(runs >= 3),
+    }
+
+def _annotate_findings_temporal_stability(findings: list, slot: dict, svc_key: str) -> None:
+    if not findings or not isinstance(slot, dict):
+        return
+    meta = _slot_temporal_stability(slot, svc_key)
+    for finding in findings:
+        if hasattr(finding, "temporal_stability"):
+            finding.temporal_stability = dict(meta)
 
 # ---------------------------------------------------------------------------
 # --unsafe legal notice. The text below is shown verbatim at session start
@@ -766,6 +829,9 @@ class Finding:
     llm_remediation_failed: bool = False  # True when LLM remediation enrichment failed (parse/network/empty)
     evidence_chain:        list = field(default_factory=list)   # [{step, tool, method, result, timestamp}]
     confidence_breakdown:  dict = field(default_factory=dict)   # {base_tool_confidence, detection_method_modifier, epss_component, final_score, label}
+    temporal_stability:    dict = field(default_factory=dict)   # {seen_count, first_seen, last_seen, verification_success_count}
+    observed_evidence:     str  = ""  # Explicit observed facts for analyst traceability
+    inferred_assessment:   str  = ""  # Explicit inference separated from observed evidence
 
     def to_dict(self):
         return dataclasses.asdict(self)
@@ -2840,6 +2906,21 @@ def enrich_cve(cve: dict, service: dict, log_near_miss=None) -> dict:
         kev_listed  = kev_listed,
         exploit_maturity = _get_exploit_maturity(cve.get("id", cve.get("cve_id", "")), vuln_type),
     )
+    _negative_penalty = 0.0
+    _summary = summary_low
+    _detected = detected_product_loose
+    _mismatch_rules = (
+        ("dropbear", "openssh", -0.30, "summary_product_mismatch_dropbear_openssh"),
+        ("linksys", "windows", -0.25, "summary_product_mismatch_linksys_windows"),
+        ("vmware", "microsoft", -0.20, "summary_product_mismatch_vmware_microsoft"),
+    )
+    for _must_have, _detected_has, _pen, _name in _mismatch_rules:
+        if _must_have in _summary and _detected_has in _detected and _must_have not in _detected:
+            _negative_penalty += _pen
+            _confidence_factors[_name] = _pen
+    if _negative_penalty:
+        match_confidence = max(0.0, min(1.0, match_confidence + _negative_penalty))
+        _confidence_factors["final"] = round(match_confidence, 3)
 
     out = {
         "cve_id":                cve.get("id", cve.get("cve_id", "")),
@@ -6420,11 +6501,16 @@ async def run_service_probe_batch(
                 st   = orig_action["_svc_state"]
 
                 timed_out_w = _timed_out_output(output)
-                _record_tool_outcome(
+                _slot = _record_tool_outcome(
                     tool_kb, tool,
                     _svc_key(tool, orig_action.get("args", ""), services_batch),
                     len(findings) if findings else 0,
                     broken, timed_out_w,
+                )
+                _annotate_findings_temporal_stability(
+                    findings,
+                    _slot,
+                    _svc_key(tool, orig_action.get("args", ""), services_batch),
                 )
 
                 if broken:
@@ -6522,11 +6608,16 @@ async def run_service_probe_batch(
                     tool = orig_action.get("tool", "?")
                     st   = orig_action["_svc_state"]
                     timed_out_w2 = _timed_out_output(output)
-                    _record_tool_outcome(
+                    _slot = _record_tool_outcome(
                         tool_kb, tool,
                         _svc_key(tool, orig_action.get("args", ""), services_batch),
                         len(findings) if findings else 0,
                         broken, timed_out_w2,
+                    )
+                    _annotate_findings_temporal_stability(
+                        findings,
+                        _slot,
+                        _svc_key(tool, orig_action.get("args", ""), services_batch),
                     )
                     if broken:
                         broken_tools.add(tool)
@@ -7218,8 +7309,20 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                     <div><span style="color:#78909c">Confidence:</span> {{ "%.0f%%"|format(f.confidence * 100) }}</div>
                     {% set _sev_basis = _eff_sev_reason.get(f.finding_id, '') %}
                     {% if _sev_basis %}<div><span style="color:#78909c">Severity basis:</span> {{ _sev_basis }}</div>{% endif %}
+                                        {% if f.temporal_stability %}
+                                        <div><span style="color:#78909c">Stability:</span> seen {{ f.temporal_stability.seen_count }} time(s), verified {{ f.temporal_stability.verification_success_count }} time(s)</div>
+                                        {% endif %}
                 </div>
             </div>
+            {% if f.observed_evidence or f.inferred_assessment %}
+            <details style="margin-bottom:.8em">
+                <summary style="cursor:pointer;color:#90caf9;font-size:.85em;user-select:none">&#9654; Observed vs Inferred</summary>
+                <div style="margin-top:.5em;background:#0d1b2a;border:1px solid #1e3a5f;border-radius:6px;padding:.7em .9em;font-size:.83em;color:#b0bec5;line-height:1.55">
+                    {% if f.observed_evidence %}<div><strong style="color:#00d4ff">Observed</strong><br>{{ f.observed_evidence }}</div>{% endif %}
+                    {% if f.inferred_assessment %}<div style="margin-top:.45em"><strong style="color:#ffb74d">Inferred</strong><br>{{ f.inferred_assessment }}</div>{% endif %}
+                </div>
+            </details>
+            {% endif %}
       {% if f.confidence_breakdown %}
       <details style="margin-bottom:.8em">
         <summary style="cursor:pointer;color:#90caf9;font-size:.85em;user-select:none">&#9654; Confidence Factors</summary>
@@ -7453,6 +7556,19 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         </div>
       </details>
       {% endif %}
+
+            {% if c.observed_evidence or c.inferred_assessment or c.temporal_stability %}
+            <details style="margin-bottom:.8em">
+                <summary style="cursor:pointer;color:#90caf9;font-size:.83em;user-select:none">&#9654; Observed vs Inferred</summary>
+                <div style="margin-top:.4em;background:#0d1b2a;border:1px solid #1e3a5f;border-radius:6px;padding:.6em .9em;font-size:.82em;color:#b0bec5;line-height:1.55">
+                    {% if c.observed_evidence %}<div><strong style="color:#00d4ff">Observed</strong><br>{{ c.observed_evidence }}</div>{% endif %}
+                    {% if c.inferred_assessment %}<div style="margin-top:.45em"><strong style="color:#ffb74d">Inferred</strong><br>{{ c.inferred_assessment }}</div>{% endif %}
+                    {% if c.temporal_stability %}
+                    <div style="margin-top:.45em"><strong style="color:#9ccc65">Stability</strong><br>seen {{ c.temporal_stability.seen_count }} test attempt(s), vulnerable verdicts {{ c.temporal_stability.verification_success_count }}</div>
+                    {% endif %}
+                </div>
+            </details>
+            {% endif %}
 
       {# ── Verification Status Banner ────────────────────────────────────── #}
       {% set _tv = c.cve_test_result.overall_verdict if c.cve_test_result else None %}
@@ -8119,6 +8235,10 @@ def _normalise_cve_report_record(cve: dict, service: dict | None = None, *, supp
             reason = "Suppressed because the detected version appears to be outside the vulnerable range."
         cve["suppression_reason"] = reason
         cve["not_tested_reason"] = f"Not actively tested because this CVE was suppressed: {reason}"
+        if isinstance(cve.get("_confidence_factors"), dict):
+            cve["_confidence_factors"]["suppression_penalty"] = -0.35
+            cve["_confidence_factors"]["final"] = round(max(0.0, (cve.get("match_confidence") or 0.0) - 0.35), 3)
+            cve["match_confidence"] = cve["_confidence_factors"]["final"]
     elif not cve.get("cve_test_result") and not cve.get("not_tested_reason"):
         review_reason = _cve_manual_review_reason(cve)
         cve["not_tested_reason"] = (
@@ -8126,6 +8246,24 @@ def _normalise_cve_report_record(cve: dict, service: dict | None = None, *, supp
             if review_reason else
             "Not actively tested because CVE testing was not enabled for this scan. Re-run with --cve-test to verify safely."
         )
+
+    _result = cve.get("cve_test_result") or {}
+    _verdict = str(_result.get("overall_verdict", "") or "")
+    cve["temporal_stability"] = {
+        "seen_count": int(_result.get("attempts_run", 0) or 0),
+        "verification_success_count": int((_result.get("verdict_counts") or {}).get("VULNERABLE", 0) or 0),
+        "stable_service_fingerprint": bool(int(_result.get("attempts_run", 0) or 0) >= 3),
+        "first_seen": str(_result.get("first_tested", "") or ""),
+        "last_seen": str(_result.get("last_tested", "") or ""),
+    }
+    cve["observed_evidence"] = (
+        f"Service={cve.get('service', '')}; match_confidence={float(cve.get('match_confidence') or 0.0):.2f}; "
+        f"verdict={_verdict or 'UNVERIFIED'}; summary={str(cve.get('summary', '') or '')[:220]}"
+    )
+    cve["inferred_assessment"] = (
+        f"Inferred exposure uses severity={cve.get('severity', '?')} and evidence tier={_verdict or 'MATCH_ONLY'}. "
+        f"Manual review reason={cve.get('not_tested_reason', '')[:140]}"
+    )
     return cve
 
 
@@ -8510,8 +8648,7 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
                               "For this report, high findings mean the tone should be clear and measured, not reassuring.\n"
                               "Do not mention WAFs, SQL injection, XSS, ransomware, or generic breach scenarios unless those exact issues appear in the data. "
                               "Keep remediation language tied to the listed findings: HTTP methods, missing headers, directory listing, exposed paths, and banner disclosure.\n"
-                              "PROHIBITED WORDS: Do not use the words: ransomware, nation-state, APT, catastrophic, "
-                              "devastating, total compromise, imminent breach.\n"
+                              f"{_narrative_policy_prohibited()}\n"
                               "EVIDENCE CONSTRAINT: Every specific claim you make MUST be traceable to an entry in the "
                               "assessment data below. If you cannot cite an exact finding, omit the claim.\n"
                               "CRITICAL: Only reference findings, services, and issues "
@@ -8637,6 +8774,19 @@ def generate_report(target, services, all_findings, scan_records, profile="web",
         for result in results:
             _normalise_cve_report_record(result)
         return results
+
+    for _f in all_findings:
+        _obs, _inf = _compact_findings_observed_inferred(_f)
+        _f.observed_evidence = _obs
+        _f.inferred_assessment = _inf
+        if not _f.temporal_stability:
+            _f.temporal_stability = {
+                "seen_count": 1,
+                "verification_success_count": 1 if _f.verified else 0,
+                "stable_service_fingerprint": False,
+                "first_seen": _f.timestamp,
+                "last_seen": _f.timestamp,
+            }
 
     return {
         "target":        target,
@@ -9212,6 +9362,7 @@ def _record_tool_outcome(tool_kb: dict, tool: str, svc_key: str,
         "avg_findings_per_run": 0.0,
         "broken_count":        0,
         "timed_out_count":     0,
+        "first_run":           "",
         "last_run":            "",
     })
     slot["runs"]           += 1
@@ -9224,7 +9375,11 @@ def _record_tool_outcome(tool_kb: dict, tool: str, svc_key: str,
         slot["timed_out_count"]  += 1
     slot["success_rate"]         = round(slot["findings_yielded"] / slot["runs"], 3)
     slot["avg_findings_per_run"] = round(slot["total_findings"]   / slot["runs"], 2)
-    slot["last_run"] = datetime.now(timezone.utc).isoformat()
+    _now = datetime.now(timezone.utc).isoformat()
+    if not slot.get("first_run"):
+        slot["first_run"] = _now
+    slot["last_run"] = _now
+    return slot
 
 
 def _tool_kb_summary(tool_kb: dict) -> str:
@@ -12944,6 +13099,21 @@ def _enrich_hc_finding(f) -> None:
     brief (no reputational damage / financial loss / regulatory penalty language),
     while high/critical findings retain the full business-impact framing.
     """
+    _tier, _tier_reason = _narrative_gate_tier(
+        confidence=float(getattr(f, "confidence", 0.0) or 0.0),
+        verification_status=str(getattr(f, "verification_status", "") or ""),
+        detection_method=str(getattr(f, "detection_method", "") or ""),
+        overall_verdict="",
+    )
+    if _tier == "suppress":
+        f.description = (
+            f"Observed evidence indicates a low-confidence signal ({_tier_reason}). "
+            "Manual validation is recommended before drawing attack-path conclusions.\n\n"
+            "Immediate action: verify service exposure and hardening state using direct service checks, "
+            "then re-scan after corrective changes."
+        )
+        return
+
     port = f.target.split(":")[-1] if ":" in f.target else f.target
     sev  = (f.severity or "").lower()
 
@@ -12955,16 +13125,14 @@ def _enrich_hc_finding(f) -> None:
             "Do NOT mention reputational damage, financial loss, regulatory "
             "penalties, system compromise, lateral movement, or boardroom-level "
             "consequences — those are inappropriate for a {sev} hardening item. "
-            "Do NOT use the words: ransomware, nation-state, APT, catastrophic, "
-            "devastating, total compromise, or imminent breach."
+            f"{_narrative_policy_prohibited()}"
         ).format(sev=sev)
     else:
         risk_brief = (
             "1. Security risk — what this specific evidence demonstrates: how an attacker "
             "would exploit this weakness, what access or data they could gain, and the realistic "
             "business impact at this severity tier. Base ONLY on the Evidence observation below. "
-            "Do NOT use the words: ransomware, nation-state, APT, catastrophic, "
-            "devastating, total compromise, or imminent breach."
+            f"{_narrative_policy_prohibited()}"
         )
 
     prompt = (
@@ -12974,8 +13142,7 @@ def _enrich_hc_finding(f) -> None:
         f"Finding:  {f.title}  ({f.severity.upper()})\n"
         f"Evidence observation: {(f.evidence or '')[:300]}\n\n"
         "Write two short paragraphs in plain text (no markdown, no bullet points, no headers).\n"
-        "EVIDENCE CONSTRAINT: Base ONLY on the evidence observation above. "
-        "Do not describe risks not implied by this specific evidence.\n"
+        f"{_narrative_policy_evidence_only()}\n"
         f"{risk_brief}\n"
         "2. Remediation — one specific immediate action (e.g. change a config setting, "
         "disable a service, enforce a policy) and one permanent architectural recommendation.\n\n"
@@ -13065,8 +13232,7 @@ def _enrich_hc_findings_batch(findings: list) -> None:
             "boardroom language. For high/critical, include realistic business impact.\n"
             "  \"remediation\": 2–3 sentences with one immediate action AND one "
             "permanent architectural recommendation.\n"
-            "PROHIBITED WORDS: Do not use: ransomware, nation-state, APT, catastrophic, "
-            "devastating, total compromise, imminent breach.\n\n"
+            f"{_narrative_policy_prohibited()}\n\n"
             "Return ONLY a JSON array — no markdown, no prose outside the array, "
             "no code fences. One object per finding, in the SAME ORDER as the "
             "listing below, with field \"i\" set to the listing index:\n"
@@ -13308,6 +13474,21 @@ def _generate_attacker_perspective(cve: dict) -> str:
     Ask the LLM for a brief threat-actor narrative: how would an attacker exploit
     this CVE and what could they gain?  Returns plain text or empty on failure.
     """
+    _test = cve.get("cve_test_result") or {}
+    _tier, _tier_reason = _narrative_gate_tier(
+        confidence=float(cve.get("match_confidence") or 0.0),
+        verification_status=str(_test.get("overall_verdict", "") or ""),
+        detection_method="exploit_confirmed" if str(_test.get("overall_verdict", "")) == "CONFIRMED_VULNERABLE" else "",
+        overall_verdict=str(_test.get("overall_verdict", "") or ""),
+    )
+    if _tier == "suppress":
+        return (
+            f"Observed evidence is currently low-confidence ({_tier_reason}) for {cve.get('cve_id', 'this CVE')}. "
+            "An exploit narrative is intentionally suppressed until stronger validation evidence is available.\n\n"
+            "Recommended next step is targeted manual validation against the exposed service before assigning "
+            "business-impact assumptions."
+        )
+
     prompt = (
         f"You are a senior penetration tester writing the threat narrative section of a client report.\n\n"
         f"CVE ID:        {cve.get('cve_id', 'Unknown')}\n"
@@ -13318,12 +13499,11 @@ def _generate_attacker_perspective(cve: dict) -> str:
         "In plain text (no markdown, no bullet symbols), write exactly two paragraphs.\n"
         "Each paragraph must be 2-3 sentences, no longer.\n"
         "Do not label the paragraphs. Never write 'Paragraph 1:' or 'Paragraph 2:'.\n"
-        "EVIDENCE CONSTRAINT: Only describe what the Evidence basis above explicitly states. "
+        f"{_narrative_policy_evidence_only()} "
         "Use past tense for exploitation steps described in the CVE summary. "
         "Do not invent tool names, lateral movement paths, or CVSS vectors not listed. "
         "If the Evidence basis does not mention lateral movement, do NOT write about lateral movement.\n"
-        "PROHIBITED WORDS: Do not use the words ransomware, nation-state, APT, catastrophic, "
-        "devastating, total compromise, or imminent breach.\n"
+        f"{_narrative_policy_prohibited()}\n"
         "The first paragraph should describe how an attacker would discover and exploit this vulnerability "
         "(initial access, tools/techniques, skill level) — based only on what the CVE summary describes.\n"
         "The second paragraph should explain what an attacker could gain if successful "
@@ -13406,11 +13586,10 @@ def _generate_attacker_perspectives_batch(cves: list) -> dict:
             "(initial access, tools/techniques, skill level) — based ONLY on what the CVE summary states.\n"
             "  \"impact\": 2-3 sentences on what they gain if successful (data, credentials, realistic business "
             "consequence directly implied by the vulnerability type).\n"
-            "EVIDENCE CONSTRAINT: Only describe what the CVE summary explicitly states. Use past tense for "
+            f"{_narrative_policy_evidence_only()} Use past tense for "
             "confirmed exploitation behaviours. Do not invent tool names, lateral movement paths, or CVSS vectors "
             "not listed. If the summary does not mention lateral movement, do NOT write about it.\n"
-            "PROHIBITED WORDS: Do not use: ransomware, nation-state, APT, catastrophic, devastating, "
-            "total compromise, imminent breach.\n"
+            f"{_narrative_policy_prohibited()}\n"
             "- Be specific to each CVE's vulnerability type.\n"
             "- Do not inflate risk or impact.\n"
             "- Plain text inside JSON values — no markdown, no bullet characters.\n"
@@ -13606,13 +13785,27 @@ def generate_cve_attacker_perspectives(cve_matches: list,
     """
     _failed = 0
     perspective_severities = {"CRITICAL", "HIGH", "MEDIUM"}
-    targets = [
-        c for c in cve_matches
-        if c.get("severity", "").upper() in perspective_severities
-        and not c.get("attacker_perspective")
-        and not c.get("not_tested_reason")
-        and _cve_match_confidence(c) >= CVE_LOW_CONFIDENCE_THRESHOLD
-    ]
+    targets = []
+    for c in cve_matches:
+        if c.get("severity", "").upper() not in perspective_severities:
+            continue
+        if c.get("attacker_perspective"):
+            continue
+        _res = c.get("cve_test_result") or {}
+        _tier, _reason = _narrative_gate_tier(
+            confidence=_cve_match_confidence(c),
+            verification_status=str(_res.get("overall_verdict", "") or ""),
+            detection_method="exploit_confirmed" if str(_res.get("overall_verdict", "")) == "CONFIRMED_VULNERABLE" else "",
+            overall_verdict=str(_res.get("overall_verdict", "") or ""),
+        )
+        c["narrative_tier"] = _tier
+        c["narrative_gate_reason"] = _reason
+        if _tier == "suppress":
+            c["attacker_perspective"] = (
+                f"Narrative suppressed: {_reason}. Active exploit-path prose is withheld until evidence confidence increases."
+            )
+            continue
+        targets.append(c)
     if not targets:
         return 0
     print(f"\n[REMEDIATION] Generating attacker perspective for {len(targets)} CVE match(es) ...")
@@ -13862,8 +14055,7 @@ def _rewrite_truncated_conclusion(report: dict, prior_conclusion: str,
         "- Paragraph 3: remediation urgency — days vs weeks, systemic gaps.\n"
         "- End paragraph 3 with a complete sentence ending in a full stop.\n"
         "- No bullet points, headings, markdown, sign-offs, or follow-up questions.\n"
-        "- Do not use the words: ransomware, nation-state, APT, catastrophic, "
-        "devastating, total compromise, or imminent breach.\n"
+        f"- {_narrative_policy_prohibited()}\n"
         "- The numbers in the digest below are authoritative — do not invent or "
         "contradict them.\n\n"
         f"DATA DIGEST:\n{digest}"
@@ -14828,11 +15020,16 @@ async def main_async():
                 args = action.get("args", "")
                 used_actions.add(f"{tool}:{str(args)}")
                 timed_out_w = _timed_out_output(output)
-                _record_tool_outcome(
+                _slot = _record_tool_outcome(
                     tool_kb, tool,
                     _svc_key(tool, args, services),
                     len(findings) if findings else 0,
                     broken, timed_out_w,
+                )
+                _annotate_findings_temporal_stability(
+                    findings,
+                    _slot,
+                    _svc_key(tool, args, services),
                 )
                 if broken:
                     broken_tools.add(tool)
@@ -14882,11 +15079,16 @@ async def main_async():
             tool = action["tool"]
             args = action.get("args", "")
             timed_out_w = _timed_out_output(output)
-            _record_tool_outcome(
+            _slot = _record_tool_outcome(
                 tool_kb, tool,
                 _svc_key(tool, args, services),
                 len(findings) if findings else 0,
                 broken, timed_out_w,
+            )
+            _annotate_findings_temporal_stability(
+                findings,
+                _slot,
+                _svc_key(tool, args, services),
             )
             if broken:
                 broken_tools.add(tool)

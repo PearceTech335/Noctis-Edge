@@ -14,6 +14,14 @@ This architecture makes Noctis Edge particularly suited for regulated environmen
 
 ---
 
+## What's New in v0.11.6
+
+- Narrative generation is now deterministically gated by evidence confidence tiers (`suppress`, `generic`, `specific`, `full`) to reduce unsupported exploit prose on low-confidence matches.
+- Prompt safety constraints were deduplicated into shared policy helpers, reducing repeated prompt text while preserving anti-speculation controls.
+- Finding and CVE cards now render an explicit **Observed vs Inferred** split to make evidence provenance and interpretation boundaries clear.
+- Tool-outcome tracking now records temporal stability metadata (`first_run`, `last_run`, `seen_count`, verification-success count), surfaced in report diagnostics.
+- CVE match confidence now applies additional negative-evidence penalties for known product-drift patterns to suppress overconfident mismatches.
+
 ## What's New in v0.11.4
 
 - Adaptive NSE debug retries are now more deterministic and auditable: debug decision history is recorded, retries are bounded with family-aware caps, and no-op adjustment loops are blocked.
@@ -549,7 +557,15 @@ The worker is already deployed at `https://noctis-kb-relay.pearcetechnologies1.w
 
 ## Version History
 
-**Current version: v0.11.4**
+**Current version: v0.11.6**
+
+### v0.11.6 — Lean Scaffolding and Evidence Controls
+
+- Added deterministic narrative gating tiers to suppress or downscope prose when confidence is weak, while keeping confirmed/probable paths detailed.
+- Consolidated repeated narrative safety rules into shared helpers, reducing prompt duplication and maintenance overhead.
+- Added explicit Observed vs Inferred sections for both finding and CVE cards, improving analyst traceability.
+- Added temporal stability metadata to tool outcome tracking and finding diagnostics (`seen_count`, `first_seen`, `last_seen`, successful verification count).
+- Added mismatch-penalty factors to CVE confidence scoring for known summary/product drift patterns.
 
 ### v0.11.4 — Adaptive NSE Reliability + Community Merge Patch
 

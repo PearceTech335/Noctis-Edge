@@ -2,6 +2,28 @@
 
 ---
 
+## v0.11.6 — Lean Scaffolding and Evidence Controls
+
+### Deterministic narrative gating
+- Added deterministic evidence-confidence narrative tiers (`suppress`, `generic`, `specific`, `full`) to constrain when attacker-style prose is generated.
+- Low-confidence CVE/finding paths now produce deterministic fallback language instead of speculative narratives.
+
+### Prompt policy deduplication
+- Repeated prohibited-word/evidence-only clauses were consolidated into shared helper functions used across prose generation paths.
+- Reduced prompt duplication while preserving anti-speculation guardrails.
+
+### Observed vs Inferred explainability
+- Added explicit `observed_evidence` and `inferred_assessment` fields for findings and CVE records.
+- HTML report cards now render Observed vs Inferred sections for clearer evidence provenance.
+
+### Temporal stability metadata
+- Tool KB slots now persist `first_run` in addition to `last_run` and counters.
+- Findings now carry `temporal_stability` metadata (`seen_count`, `first_seen`, `last_seen`, `verification_success_count`) surfaced in diagnostics.
+
+### CVE mismatch suppression hardening
+- Match confidence now applies explicit negative-evidence penalties for known summary/product drift patterns (for example Dropbear-vs-OpenSSH style mismatches).
+- Penalty factors are recorded in `_confidence_factors` for analyst traceability.
+
 ## v0.11.4 — Adaptive NSE Reliability + Community Merge Patch
 
 ### Adaptive NSE debug and retry controls
