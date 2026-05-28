@@ -10,7 +10,11 @@ Noctis Edge is a Python-based, Point-In-Time, AI-assisted vulnerability exposure
 
 Unlike cloud-dependent security platforms, **Noctis Edge runs entirely on your local machine**. All scanning, LLM-assisted analysis, CVE validation, and report generation happen on-device — no target data, credentials, or findings ever leave the host. It supports command-line execution via `noctis.py` and a browser-based Web UI via `noctis_web.py` (served locally at `http://127.0.0.1:8888`), without requiring external SaaS platforms, third-party APIs, or cloud processing.
 
-This architecture makes Noctis Edge particularly suited for regulated environments, internal security teams, air-gapped networks, OT environments, and organizations where confidentiality and control are non-## What's New in v0.11.7
+This architecture makes Noctis Edge particularly suited for regulated environments, internal security teams, air-gapped networks, OT environments, and organizations where confidentiality and control are non-negotiable
+
+---
+
+## What's New in v0.11.7
 
 - CVE probe generation now exits early when no safe, target-specific validation path is available, preventing repeated low-value retries on the same CVE.
 - CVE instance mapping and duplicate-strategy controls were tightened so repeated or equivalent attempts are tracked consistently and deprioritised sooner.
