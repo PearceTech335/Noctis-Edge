@@ -2,6 +2,28 @@
 
 ---
 
+## v0.11.7 — CVE Loop Efficiency + Repo Traffic Tracking
+
+### CVE no-safe-path early stop
+- CVE probe generation now exits early for a CVE when no safe target-specific validation path is available.
+- Prevents repeated low-yield retries against the same CVE when evidence is insufficient for safe validation.
+
+### Duplicate-strategy and CVE instance controls
+- Tightened duplicate-attempt handling so equivalent strategies are suppressed earlier.
+- Improved CVE instance traceability across attempts to reduce repeated equivalent generation paths.
+
+### Phase 1b KB-fix efficiency improvements
+- Phase 1b now deduplicates fix candidates by normalized script hash before consuming correction budget.
+- Added one bounded syntax-only retry when a corrected script still fails sanitization.
+- Non-syntax quality failures continue to fail fast without additional retries.
+
+### Repository traffic tracking workflow
+- Added `.github/workflows/clone-tracker.yml` schedule + `workflow_dispatch` path for manual and daily collection.
+- Added `scripts/track_repo_traffic.py` using Python stdlib only to collect clone/view/release-download metrics.
+- History is persisted via workflow artifacts, avoiding committed telemetry files in the repository.
+
+---
+
 ## v0.11.6 — Lean Scaffolding and Evidence Controls
 
 ### Deterministic narrative gating

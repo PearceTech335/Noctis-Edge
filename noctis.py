@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # <https://www.gnu.org/licenses/agpl-3.0.html>
 """
-Noctis Edge - Security Through Exposure  v0.11.6
+Noctis Edge - Security Through Exposure  v0.11.7
 Implements: structured findings, verification,
 approval gates, async execution, HTML reports,
 service-specific enumerations, risk scoring,
@@ -12,7 +12,7 @@ EPSS exploit-probability scoring, NVD CVSS offline database,
 NIST CSF 2.0 compliance mapping, and OT/ICS asset classification.
 """
 
-VERSION = "v0.11.6"
+VERSION = "v0.11.7"
 
 import os
 import asyncio
@@ -139,6 +139,8 @@ MODEL            = os.getenv("NOCTIS_OLLAMA_MODEL",            "qwen2.5-coder:3b
 SCRIPT_MODEL     = os.getenv("NOCTIS_SCRIPT_MODEL",            os.getenv("NOCTIS_OLLAMA_SCRIPT_MODEL", "qwen2.5-coder:3b-instruct"))
 CVE_SCRIPT_MODEL = os.getenv("NOCTIS_OLLAMA_CVE_SCRIPT_MODEL", SCRIPT_MODEL)
 OLLAMA_TIMEOUT = int(os.getenv("NOCTIS_OLLAMA_TIMEOUT", "360"))   # seconds - 360s covers cold model reload (~3 min) after RAM eviction
+PLANNER_TIMEOUT = max(30, min(120, int(os.getenv("NOCTIS_PLANNER_TIMEOUT", "90"))))
+PLANNER_MAX_RETRIES = max(1, min(3, int(os.getenv("NOCTIS_PLANNER_MAX_RETRIES", "2"))))
 
 # Ollama inference options applied to all planning/decision calls.
 # num_ctx:     2048 - bumped from 1024 to accommodate richer prompts when the
@@ -492,6 +494,8 @@ CVE_VERIFY_ATTEMPTS = 5  # independent verifier scripts run when any attempt ret
 CVE_VERIFY_CONFIRM_THRESHOLD = 2  # verifier VULNERABLE count required for CONFIRMED_VULNERABLE
 CVE_UNSAFE_VERIFY_ATTEMPTS = 2  # extra intrusive verifier scripts run only under --unsafe
 CVE_BATCH_SIZE      = 5  # prompt user to continue after this many CVEs (runaway guard)
+CVE_DUPLICATE_GENERATED_BACKOFF = 2  # stop Phase 2 early when generation keeps repeating duplicate probes
+CVE_STRATEGY_REPEAT_LIMIT = 2  # allow at most this many generated attempts per normalized strategy signature
 CVE_LOW_CONFIDENCE_THRESHOLD = 0.5
 CVE_DEFAULT_ATTEMPT_BUDGET   = 8
 CVE_HIGH_CONFIDENCE_BUDGET   = 14
@@ -4047,6 +4051,40 @@ def _strip_markdown_fences(raw: str) -> str:
     return text.strip()
 
 
+def _extract_balanced_json_objects(text: str) -> list[str]:
+    """Extract balanced JSON object substrings from noisy model output."""
+    objs: list[str] = []
+    depth = 0
+    start = -1
+    in_string = False
+    escape = False
+
+    for i, ch in enumerate(text):
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+
+        if ch == '"':
+            in_string = True
+            continue
+        if ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+            continue
+        if ch == "}" and depth > 0:
+            depth -= 1
+            if depth == 0 and start >= 0:
+                objs.append(text[start : i + 1])
+                start = -1
+    return objs
+
+
 def _extract_json_object(raw: str) -> dict[str, Any] | None:
     text = _strip_markdown_fences(raw)
     if not text:
@@ -4056,14 +4094,67 @@ def _extract_json_object(raw: str) -> dict[str, Any] | None:
         return obj if isinstance(obj, dict) else None
     except Exception:
         pass
-    m = re.search(r"\{[\s\S]*\}", text)
-    if not m:
+    for candidate in _extract_balanced_json_objects(text):
+        try:
+            obj = json.loads(candidate)
+            if isinstance(obj, dict):
+                return obj
+        except Exception:
+            continue
+    return None
+
+
+def _extract_nse_decision_text_fallback(raw: str) -> dict[str, Any] | None:
+    """Best-effort action/adjustment parsing when strict JSON is unavailable."""
+    text = _strip_markdown_fences(raw)
+    if not text:
         return None
-    try:
-        obj = json.loads(m.group(0))
-        return obj if isinstance(obj, dict) else None
-    except Exception:
+
+    low = text.lower()
+    action = ""
+    action_match = re.search(r"\baction\b[^a-zA-Z0-9]*(adjust|back[_\s-]?off|backoff)", low)
+    if action_match:
+        token = action_match.group(1).replace(" ", "").replace("-", "_")
+        action = "back_off" if token in ("backoff", "back_off") else token
+    elif re.search(r"\bback[_\s-]?off\b", low):
+        action = "back_off"
+    elif re.search(r"\badjust\b", low):
+        action = "adjust"
+
+    if action not in ("adjust", "back_off"):
         return None
+
+    adj: dict[str, Any] = {}
+    m_timeout = re.search(r"(?:script[_\s-]*timeout[_\s-]*seconds|script[_\s-]*timeout)\D{0,6}(\d{1,3})", low)
+    if m_timeout:
+        try:
+            adj["script_timeout_seconds"] = max(20, min(90, int(m_timeout.group(1))))
+        except Exception:
+            pass
+
+    m_vi = re.search(r"(?:version[_\s-]*intensity|version[_\s-]*scan[_\s-]*intensity)\D{0,6}([1-5])", low)
+    if m_vi:
+        try:
+            adj["version_intensity"] = max(1, min(5, int(m_vi.group(1))))
+        except Exception:
+            pass
+
+    m_timing = re.search(r"\b(t[234])\b", low)
+    if m_timing:
+        adj["timing"] = m_timing.group(1).upper()
+
+    m_retry = re.search(r"(?:max[_\s-]*retries|max[_\s-]*retry|retries)\D{0,6}(\d)", low)
+    if m_retry:
+        try:
+            adj["max_retries"] = max(0, min(2, int(m_retry.group(1))))
+        except Exception:
+            pass
+
+    return {
+        "action": action,
+        "reason": "llm_text_kv_fallback",
+        "adjustments": adj,
+    }
 
 
 def _set_nmap_arg(args: list[str], flag: str, value: str) -> list[str]:
@@ -4089,6 +4180,7 @@ def _nse_llm_debug_decision(
     debug_trace: str,
 ) -> dict[str, Any]:
     """Ask the LLM whether to adjust NSE parameters once or back off."""
+    debug_trace_slim = _sanitize_nse_debug_text(debug_trace, max_chars=1200)
     prompt = (
         "You are deciding how to handle NSE script failures in a safe scanner. "
         "Some scripts returned: 'Script execution failed (use -d to debug)'. "
@@ -4102,7 +4194,7 @@ def _nse_llm_debug_decision(
         f"ports={','.join(ports)}\n"
         f"scripts={scripts_csv[:500]}\n"
         f"failed_scripts={json.dumps(candidates, separators=(',', ':'))}\n"
-        f"debug_trace={json.dumps(_sanitize_nse_debug_text(debug_trace), separators=(',', ':'))}\n"
+        f"debug_trace={json.dumps(debug_trace_slim, separators=(',', ':'))}\n"
         "JSON:"
     )
     raw = _cached_ollama_call(
@@ -4114,8 +4206,23 @@ def _nse_llm_debug_decision(
         scope="nocache",
     )
     raw_preview = _sanitize_nse_debug_text(raw, max_chars=500)
+    if not (raw or "").strip():
+        return {
+            "action": "back_off",
+            "reason": "llm_no_response",
+            "adjustments": {},
+            "raw_preview": "<empty>",
+        }
     obj = _extract_json_object(raw)
     if not obj:
+        fallback = _extract_nse_decision_text_fallback(raw)
+        if fallback:
+            return {
+                "action": fallback.get("action", "back_off"),
+                "reason": fallback.get("reason", "llm_text_kv_fallback"),
+                "adjustments": fallback.get("adjustments", {}) or {},
+                "raw_preview": raw_preview,
+            }
         low = (raw or "").lower()
         if "back_off" in low or "back off" in low:
             return {
@@ -6189,7 +6296,7 @@ or
     _t0 = time.monotonic()
     _sp = _Spinner(f"[ LLM ]  Planning {svc_label} ...").start()
     try:
-        for attempt in range(MAX_LLM_RETRIES):
+        for attempt in range(PLANNER_MAX_RETRIES):
             try:
                 with _LLM_CONCURRENCY_SEMAPHORE:
                     response = requests.post(
@@ -6202,7 +6309,7 @@ or
                             "keep_alive": _OLLAMA_KEEP_ALIVE,
                             "options":    _OLLAMA_PLAN_OPTIONS,
                         },
-                        timeout=OLLAMA_TIMEOUT,
+                        timeout=min(OLLAMA_TIMEOUT, PLANNER_TIMEOUT),
                     )
                 payload = response.json()
                 if "error" in payload or "response" not in payload:
@@ -8210,6 +8317,70 @@ def _evidence_callouts(text, context=""):
 _CVE_ID_PATTERN = re.compile(r"^CVE-\d{4}-\d{4,7}$", re.I)
 
 
+def _normalise_cve_service(service_value: str) -> tuple[str, str]:
+    """Return (port, canonical service label) from a report/service string."""
+    raw = str(service_value or "").strip().lower()
+    if not raw:
+        return "", ""
+    port = ""
+    svc = raw
+    if "/" in raw:
+        head, tail = raw.split("/", 1)
+        if head.isdigit():
+            port = head
+            svc = tail
+    svc = svc.strip().lower()
+    if svc.startswith("ssl/"):
+        svc = svc[4:]
+    elif svc.startswith("tls/"):
+        svc = svc[4:]
+    svc = re.sub(r"\s+", "-", svc)
+    svc = _SVC_KEY_MAP.get(svc, svc)
+    return port, svc
+
+
+def _normalise_cve_product(product_value: str) -> str:
+    product = str(product_value or "").strip().lower()
+    if not product:
+        return ""
+    product = re.sub(r"\s*\([^)]*\)\s*$", "", product)
+    product = re.sub(r"[\s_/.-]*v?\d[\w.:-]*$", "", product).strip()
+    return re.sub(r"\s+", "-", product)
+
+
+def _cve_instance_key(cve: dict) -> str:
+    """Stable per-target execution key for a CVE instance on a specific service context."""
+    cve_id = str(cve.get("cve_id") or cve.get("id") or "MISSING-CVE-ID").strip().upper()
+    port, service = _normalise_cve_service(cve.get("service", ""))
+    explicit_port = str(cve.get("port") or "").strip()
+    if explicit_port.isdigit():
+        port = explicit_port
+    product = _normalise_cve_product(cve.get("product", ""))
+    if not product:
+        product = "unknown-product"
+    if not service:
+        service = "unknown-service"
+    return f"{cve_id}|{port or 'unknown-port'}|{service}|{product}"
+
+
+def _strategy_signature(strategy: str) -> str:
+    """Normalize a free-text strategy so repeated ideas can be detected early."""
+    sig = str(strategy or "").lower()
+    sig = re.sub(r"\[[^\]]+\]", " ", sig)
+    sig = re.sub(r"[^a-z0-9]+", " ", sig)
+    sig = re.sub(r"\s+", " ", sig).strip()
+    return sig
+
+
+def _is_no_safe_validation_strategy(strategy: str) -> bool:
+    """Return True when the model explicitly says no safe active test exists."""
+    text = str(strategy or "").lower()
+    return (
+        "no safe target-specific validation path" in text
+        or "no safe validation path" in text
+    )
+
+
 def _normalise_cve_report_record(cve: dict, service: dict | None = None, *, suppressed: bool = False) -> dict:
     """Ensure report CVE records always expose an ID and reviewer-facing reason."""
     cid = str(cve.get("cve_id") or cve.get("id") or "").strip().upper()
@@ -8228,6 +8399,7 @@ def _normalise_cve_report_record(cve: dict, service: dict | None = None, *, supp
         cve["attacker_perspective"] = _clean_attacker_perspective(cve.get("attacker_perspective", ""))
     if service and not cve.get("service"):
         cve["service"] = f"{service.get('port', '')}/{service.get('name', '')}"
+    cve["cve_instance_key"] = _cve_instance_key(cve)
 
     if suppressed:
         reason = str(cve.get("suppression_reason") or cve.get("_suppression_reason") or "").strip()
@@ -8278,10 +8450,17 @@ def generate_html_report(report_data):
 
     # Merge CVE test results into each CVE match record so cards can render
     # testing evidence inline (verdict banner + attempt accordion).
-    _test_lookup = {r["cve_id"]: r for r in cve_results}
+    _test_lookup_by_instance = {
+        r.get("cve_instance_key"): r
+        for r in cve_results
+        if r.get("cve_instance_key")
+    }
+    _test_lookup_by_cve = {r["cve_id"]: r for r in cve_results}
     for match in report_data.get("cve_matches", []):
         _normalise_cve_report_record(match)
-        result = _test_lookup.get(match.get("cve_id"))
+        result = _test_lookup_by_instance.get(match.get("cve_instance_key"))
+        if not result:
+            result = _test_lookup_by_cve.get(match.get("cve_id"))
         if result:
             match["cve_test_result"] = result
         elif "cve_test_result" not in match:
@@ -11419,6 +11598,16 @@ Reply with ONLY this JSON (no markdown, no code fences):
 _KB_FIXABLE_REJECTION_KEYWORDS = ("syntax error", "placeholder token")
 
 
+def _kb_fix_retryable_reason(reason: str) -> bool:
+    text = (reason or "").lower()
+    return (
+        "syntax" in text
+        or "parse" in text
+        or "literal newline" in text
+        or "unfixable" in text
+    )
+
+
 def _fix_kb_script(cve: dict, target: str, kb_attempt: dict) -> dict | None:
     """Ask the LLM to correct a KB probe script that was rejected due to a fixable
     surface-level defect (syntax error or placeholder token).  The probe logic is
@@ -11457,7 +11646,7 @@ Reply with ONLY this JSON (no markdown, no code fences):
     _t0 = time.monotonic()
     _sp = _Spinner(f"[ KB-Fix ]  Correcting rejected KB script ...").start()
     try:
-        for _attempt in range(MAX_LLM_RETRIES):
+        for attempt in range(PLANNER_MAX_RETRIES):
             try:
                 resp = requests.post(
                     OLLAMA_URL,
@@ -11468,7 +11657,7 @@ Reply with ONLY this JSON (no markdown, no code fences):
                         "keep_alive": _OLLAMA_KEEP_ALIVE,
                         "options":    {"num_ctx": 2048, "temperature": 0.2},
                     },
-                    timeout=OLLAMA_TIMEOUT,
+                    timeout=min(OLLAMA_TIMEOUT, PLANNER_TIMEOUT),
                 )
                 raw = resp.json().get("response", "")
                 obj = _parse_llm_script_response(raw)
@@ -11986,6 +12175,19 @@ def _derive_inconclusive_reason(cve: dict, attempts: list) -> str:
     if not attempts:
         return "No probe scripts were generated or executed for this CVE."
 
+    rejected = [a for a in attempts if _attempt_is_rejected(a)]
+    duplicate_rejections = sum(
+        1 for a in rejected
+        if "duplicate probe" in (a.get("rejection_reason", "") or "").lower()
+        or "repeated strategy signature" in (a.get("rejection_reason", "") or "").lower()
+    )
+    if duplicate_rejections >= 2:
+        return (
+            "Probe generation repeatedly produced duplicate or semantically repeated strategies. "
+            "The model did not produce enough distinct test logic to reach a reliable verdict; "
+            "manual protocol-specific validation is recommended."
+        )
+
     all_outputs = " ".join(a.get("output", "") for a in attempts).lower()
     all_strategies = " ".join(a.get("strategy", "") for a in attempts).lower()
 
@@ -12118,10 +12320,35 @@ async def run_cve_tests(cve_matches: list, target: str,
     total_cves    = len(cve_matches)
     scan_start    = time.monotonic()
     _kb_pruned_total = 0   # cumulative pruned scripts across all CVEs this run
+    _tested_cve_contexts: dict[str, dict] = {}
 
     for cve_idx, cve in enumerate(cve_matches, 1):
         cve_start = time.monotonic()
         cve_id    = cve.get("cve_id", "UNKNOWN")
+        cve_instance_key = _cve_instance_key(cve)
+        cve["cve_instance_key"] = cve_instance_key
+
+        _prior = _tested_cve_contexts.get(cve_instance_key)
+        if _prior is not None:
+            print(f"\n  [CVE-DEDUP] Reusing prior result for {cve_id} on {cve.get('service', '?')} "
+                  f"(same service/product fingerprint)")
+            reused = dict(_prior)
+            reused["cve_id"] = cve_id
+            reused["service"] = cve.get("service", "")
+            reused["cve_instance_key"] = cve_instance_key
+            reused["deduplicated"] = True
+            reused["deduplicated_from_key"] = cve_instance_key
+            reused["verdict_counts"] = dict(_prior.get("verdict_counts", {}))
+            reused["attempts"] = [dict(a) for a in _prior.get("attempts", [])]
+            reused["verification_results"] = [dict(v) for v in _prior.get("verification_results", [])]
+            reused["unsafe_verification_results"] = [dict(v) for v in _prior.get("unsafe_verification_results", [])]
+            if reused.get("overall_verdict") == "INCONCLUSIVE":
+                reused["inconclusive_reason"] = reused.get("inconclusive_reason") or (
+                    "Result reused from an equivalent CVE/service fingerprint that remained inconclusive."
+                )
+            cve_test_results.append(reused)
+            continue
+
         kb_entry         = kb.get(cve_id)
         kb_scripts       = kb_entry["scripts"] if kb_entry else []
         kb_count         = len(kb_scripts)
@@ -12151,6 +12378,9 @@ async def run_cve_tests(cve_matches: list, target: str,
         msf_post_result: dict | None = None
         kb_pending_vulnerable: list = []  # VULNERABLE scripts deferred until Phase 3 confirms
         seen_script_hashes: set[str] = set()
+        strategy_signature_counts: dict[str, int] = {}
+        generated_duplicate_rejects = 0
+        no_safe_validation_path = False
         attempt_budget = _cve_attempt_budget(cve)
 
         manual_reason = _cve_manual_review_reason(cve)
@@ -12158,6 +12388,7 @@ async def run_cve_tests(cve_matches: list, target: str,
             print(f"  [SKIP] {manual_reason}")
             cve_test_results.append({
                 "cve_id":               cve_id,
+                "cve_instance_key":     cve_instance_key,
                 "vulnerability_type":   cve.get("vulnerability_type", ""),
                 "service":              cve.get("service", ""),
                 "overall_verdict":      "INCONCLUSIVE",
@@ -12170,6 +12401,7 @@ async def run_cve_tests(cve_matches: list, target: str,
                 "inconclusive_reason":  manual_reason,
                 "attempts":             [],
             })
+            _tested_cve_contexts[cve_instance_key] = cve_test_results[-1]
             continue
 
         # ------------------------------------------------------------------
@@ -12198,6 +12430,7 @@ async def run_cve_tests(cve_matches: list, target: str,
             })
             cve_test_results.append({
                 "cve_id":               cve_id,
+                "cve_instance_key":     cve_instance_key,
                 "vulnerability_type":   cve.get("vulnerability_type", ""),
                 "service":              cve.get("service", ""),
                 "overall_verdict":      "CONFIRMED_VULNERABLE",
@@ -12210,6 +12443,7 @@ async def run_cve_tests(cve_matches: list, target: str,
                 "inconclusive_reason":  "",
                 "attempts":             attempts,
             })
+            _tested_cve_contexts[cve_instance_key] = cve_test_results[-1]
             _save_cve_kb(kb)
             continue
 
@@ -12221,6 +12455,19 @@ async def run_cve_tests(cve_matches: list, target: str,
                 language = p0_gen["language"]
                 strategy = p0_gen["strategy"]
                 script   = p0_gen["script"]
+                if _is_no_safe_validation_strategy(strategy):
+                    no_safe_validation_path = True
+                    reason = "No safe target-specific validation path is available from the supplied CVE details"
+                    print(f"  [P0] {reason}")
+                    _append_rejected_cve_attempt(
+                        attempts,
+                        "known_exploit",
+                        f"[Known] {strategy}",
+                        language,
+                        script,
+                        reason,
+                    )
+                    script = ""
                 reject_reason = _script_quality_rejection(script, language, cve)
                 script_hash = _normalized_script_hash(script)
                 if reject_reason:
@@ -12444,38 +12691,75 @@ async def run_cve_tests(cve_matches: list, target: str,
             and any(kw in (a.get("rejection_reason") or "").lower()
                     for kw in _KB_FIXABLE_REJECTION_KEYWORDS)
         ]
+        # Avoid spending fix budget on equivalent broken scripts.
+        _kb_fixable_deduped = []
+        _kb_fix_seen_hashes = set()
+        for _candidate in _kb_fixable:
+            _candidate_script = _candidate.get("script") or ""
+            _candidate_hash = _normalized_script_hash(_candidate_script)
+            if _candidate_hash in _kb_fix_seen_hashes:
+                continue
+            _kb_fix_seen_hashes.add(_candidate_hash)
+            _kb_fixable_deduped.append(_candidate)
+        _kb_fixable = _kb_fixable_deduped
         _kb_fix_slots = min(len(_kb_fixable), 2, max(0, attempt_budget - len(attempts)))
         if _kb_fix_slots > 0 and not vulnerable_found and _ollama_is_up():
             print(f"  [Phase 1b] Attempting LLM correction of {_kb_fix_slots} rejected KB script(s).")
             for _fix_candidate in _kb_fixable[:_kb_fix_slots]:
                 if vulnerable_found:
                     break
-                _fixed = _fix_kb_script(cve, target, _fix_candidate)
-                if _fixed is None:
-                    print(f"  [KB-Fix] LLM could not produce a corrected script — skipping.")
+                _fix_attempt_candidate = dict(_fix_candidate)
+                _fix_lang = "python"
+                _fix_strategy = "kb_corrected"
+                _fix_script = ""
+                _fix_ready_to_run = False
+
+                for _fix_try in range(2):
+                    _fixed = _fix_kb_script(cve, target, _fix_attempt_candidate)
+                    if _fixed is None:
+                        print(f"  [KB-Fix] LLM could not produce a corrected script — skipping.")
+                        break
+
+                    _fix_lang = _fixed.get("language", "python")
+                    _fix_strategy = _fixed.get("strategy", "kb_corrected")
+                    _fix_script = _fixed.get("script", "")
+
+                    # Sanitise and quality-check the corrected script before running
+                    _fix_sanitised = _sanitise_script({"language": _fix_lang, "strategy": _fix_strategy, "script": _fix_script})
+                    if _fix_sanitised is None:
+                        _syntax_reason = "corrected script still has unfixable syntax errors"
+                        if _fix_try == 0 and _kb_fix_retryable_reason(_syntax_reason):
+                            print("  [KB-Fix] Corrected script still has syntax errors — retrying once.")
+                            _fix_attempt_candidate = {
+                                **_fix_attempt_candidate,
+                                "script": _fix_script,
+                                "rejection_reason": _syntax_reason,
+                            }
+                            continue
+                        print(f"  [KB-Fix] Corrected script still has syntax errors — skipping.")
+                        _append_rejected_cve_attempt(attempts, "kb_fix", _fix_strategy, _fix_lang,
+                                                     _fix_script, _syntax_reason)
+                        break
+
+                    _fix_script = _fix_sanitised["script"]
+                    _fix_reject = _script_quality_rejection(_fix_script, _fix_lang, cve)
+                    if _fix_reject:
+                        print(f"  [KB-Fix] Corrected script failed quality check: {_fix_reject}")
+                        _append_rejected_cve_attempt(attempts, "kb_fix", _fix_strategy, _fix_lang,
+                                                     _fix_script, _fix_reject)
+                        break
+
+                    _fix_hash = _normalized_script_hash(_fix_script)
+                    if _fix_hash in seen_script_hashes:
+                        print(f"  [KB-Fix] Corrected script is a duplicate — skipping.")
+                        break
+                    seen_script_hashes.add(_fix_hash)
+                    _fix_ready_to_run = True
+                    break
+
+                if not _fix_ready_to_run:
                     continue
-                _fix_lang     = _fixed.get("language", "python")
-                _fix_strategy = _fixed.get("strategy", "kb_corrected")
-                _fix_script   = _fixed.get("script", "")
-                # Sanitise and quality-check the corrected script before running
-                _fix_sanitised = _sanitise_script({"language": _fix_lang, "strategy": _fix_strategy, "script": _fix_script})
-                if _fix_sanitised is None:
-                    print(f"  [KB-Fix] Corrected script still has syntax errors — skipping.")
-                    _append_rejected_cve_attempt(attempts, "kb_fix", _fix_strategy, _fix_lang,
-                                                 _fix_script, "corrected script still has unfixable syntax errors")
-                    continue
-                _fix_script = _fix_sanitised["script"]
-                _fix_reject = _script_quality_rejection(_fix_script, _fix_lang, cve)
-                if _fix_reject:
-                    print(f"  [KB-Fix] Corrected script failed quality check: {_fix_reject}")
-                    _append_rejected_cve_attempt(attempts, "kb_fix", _fix_strategy, _fix_lang,
-                                                 _fix_script, _fix_reject)
-                    continue
-                _fix_hash = _normalized_script_hash(_fix_script)
-                if _fix_hash in seen_script_hashes:
-                    print(f"  [KB-Fix] Corrected script is a duplicate — skipping.")
-                    continue
-                seen_script_hashes.add(_fix_hash)
+
                 _fix_attempt_num = len(attempts) + 1
                 _fix_ext         = ".py" if _fix_lang == "python" else ".sh"
                 _fix_safe_cve    = re.sub(r"[^a-zA-Z0-9_-]", "_", cve_id)
@@ -12619,6 +12903,33 @@ async def run_cve_tests(cve_matches: list, target: str,
             language    = generated["language"]
             strategy    = generated["strategy"]
             script      = generated["script"]
+            if _is_no_safe_validation_strategy(strategy):
+                no_safe_validation_path = True
+                reason = "No safe target-specific validation path is available from the supplied CVE details"
+                print(f"  [{attempt_num:02d}] {reason} — stopping further generation for this CVE")
+                _append_rejected_cve_attempt(attempts, "llm_generated", strategy, language, script, reason)
+                done_new += 1
+                break
+            strategy_sig = _strategy_signature(strategy)
+            if strategy_sig:
+                strategy_signature_counts[strategy_sig] = strategy_signature_counts.get(strategy_sig, 0) + 1
+                if strategy_signature_counts[strategy_sig] > CVE_STRATEGY_REPEAT_LIMIT:
+                    print(f"  [{attempt_num:02d}] Rejected repeated strategy signature")
+                    _append_rejected_cve_attempt(
+                        attempts,
+                        "llm_generated",
+                        strategy,
+                        language,
+                        script,
+                        "repeated strategy signature",
+                    )
+                    generated_duplicate_rejects += 1
+                    done_new += 1
+                    if generated_duplicate_rejects >= CVE_DUPLICATE_GENERATED_BACKOFF:
+                        print("  [Phase 2] Duplicate/repeated strategy backoff triggered — "
+                              "stopping fresh generation early.")
+                        break
+                    continue
             reject_reason = _script_quality_rejection(script, language, cve)
             script_hash = _normalized_script_hash(script)
             if reject_reason:
@@ -12629,7 +12940,12 @@ async def run_cve_tests(cve_matches: list, target: str,
             if script_hash in seen_script_hashes:
                 print(f"  [{attempt_num:02d}] Rejected duplicate generated probe")
                 _append_rejected_cve_attempt(attempts, "llm_generated", strategy, language, script, "duplicate probe")
+                generated_duplicate_rejects += 1
                 done_new += 1
+                if generated_duplicate_rejects >= CVE_DUPLICATE_GENERATED_BACKOFF:
+                    print("  [Phase 2] Duplicate/repeated strategy backoff triggered — "
+                          "stopping fresh generation early.")
+                    break
                 continue
             seen_script_hashes.add(script_hash)
             ext         = ".py" if language == "python" else ".sh"
@@ -13026,12 +13342,19 @@ async def run_cve_tests(cve_matches: list, target: str,
                 "no valid active evidence was executed."
             )
         elif overall == "INCONCLUSIVE":
-            inconclusive_reason = _derive_inconclusive_reason(cve, valid_attempts)
+            if no_safe_validation_path:
+                inconclusive_reason = (
+                    "No safe target-specific validation path is available from the supplied CVE details. "
+                    "Further active probing was skipped for this CVE to avoid redundant inconclusive attempts."
+                )
+            else:
+                inconclusive_reason = _derive_inconclusive_reason(cve, attempts)
         else:
             inconclusive_reason = ""
 
         cve_test_results.append({
             "cve_id":               cve_id,
+            "cve_instance_key":     cve_instance_key,
             "vulnerability_type":   cve.get("vulnerability_type", ""),
             "service":              cve.get("service", ""),
             "overall_verdict":      overall,
@@ -13050,6 +13373,7 @@ async def run_cve_tests(cve_matches: list, target: str,
             "inconclusive_reason":  inconclusive_reason,
             "attempts":             attempts,
         })
+        _tested_cve_contexts[cve_instance_key] = cve_test_results[-1]
 
         # Persist KB progress after every CVE so partial results survive
         # container restarts or early operator stops.
@@ -15286,9 +15610,16 @@ async def main_async():
     # ── Report prose phase (single model already warm from generate_report) ─
     # Generate attacker_perspective for matched CVEs and mirror onto test
     # result records so the test-card UI also shows the prose narrative.
-    _test_lookup_for_prose = {r.get("cve_id"): r for r in cve_test_results if r.get("cve_id")}
+    _test_lookup_for_prose_instance = {
+        r.get("cve_instance_key"): r
+        for r in cve_test_results
+        if r.get("cve_instance_key")
+    }
+    _test_lookup_for_prose_cve = {r.get("cve_id"): r for r in cve_test_results if r.get("cve_id")}
     for _cm in report.get("cve_matches", []):
-        _tr = _test_lookup_for_prose.get(_cm.get("cve_id"))
+        _tr = _test_lookup_for_prose_instance.get(_cm.get("cve_instance_key"))
+        if not _tr:
+            _tr = _test_lookup_for_prose_cve.get(_cm.get("cve_id"))
         if _tr:
             _cm["cve_test_result"] = _tr
             if _tr.get("attempts_run", 0) > 0 or _tr.get("overall_verdict") in ("CONFIRMED_VULNERABLE", "PROBABLE_VULNERABLE"):

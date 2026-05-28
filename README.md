@@ -14,13 +14,13 @@ This architecture makes Noctis Edge particularly suited for regulated environmen
 
 ---
 
-## What's New in v0.11.6
+## What's New in v0.11.7
 
-- Narrative generation is now deterministically gated by evidence confidence tiers (`suppress`, `generic`, `specific`, `full`) to reduce unsupported exploit prose on low-confidence matches.
-- Prompt safety constraints were deduplicated into shared policy helpers, reducing repeated prompt text while preserving anti-speculation controls.
-- Finding and CVE cards now render an explicit **Observed vs Inferred** split to make evidence provenance and interpretation boundaries clear.
-- Tool-outcome tracking now records temporal stability metadata (`first_run`, `last_run`, `seen_count`, verification-success count), surfaced in report diagnostics.
-- CVE match confidence now applies additional negative-evidence penalties for known product-drift patterns to suppress overconfident mismatches.
+- CVE probe generation now exits early when no safe, target-specific validation path is available, preventing repeated low-value retries on the same CVE.
+- CVE instance mapping and duplicate-strategy controls were tightened so repeated or equivalent attempts are tracked consistently and deprioritised sooner.
+- Phase 1b KB-fix flow now deduplicates correction candidates by normalized script hash, avoiding spending correction budget on equivalent broken scripts.
+- Phase 1b now performs one bounded syntax-only local retry when a corrected script still fails sanitization, while still failing fast on non-syntax quality issues.
+- Added a built-in GitHub Actions traffic tracker path (`.github/workflows/clone-tracker.yml` + `scripts/track_repo_traffic.py`) that captures clone/view/download metrics over time and persists history via artifacts without committing telemetry files.
 
 ## What's New in v0.11.4
 
@@ -557,7 +557,15 @@ The worker is already deployed at `https://noctis-kb-relay.pearcetechnologies1.w
 
 ## Version History
 
-**Current version: v0.11.6**
+**Current version: v0.11.7**
+
+### v0.11.7 — CVE Loop Efficiency + Repo Traffic Tracking
+
+- Added early-stop handling for CVEs that have no safe target-specific validation path, reducing wasted generation cycles.
+- Improved duplicate-attempt handling and CVE instance traceability to prevent repeated equivalent strategies from consuming attempt budget.
+- Phase 1b KB-fix selection now deduplicates by normalized script hash so equivalent broken scripts are corrected once.
+- Added one bounded syntax-only retry for KB-fixed scripts that still fail sanitization; non-syntax quality failures still fail immediately.
+- Added a scheduled/manual GitHub Actions workflow and stdlib collector script for private clone/view/download history tracking via artifacts.
 
 ### v0.11.6 — Lean Scaffolding and Evidence Controls
 
