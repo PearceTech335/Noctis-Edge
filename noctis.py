@@ -12142,6 +12142,15 @@ def _valid_cve_attempts(attempts: list) -> list:
     return [attempt for attempt in attempts if not _attempt_is_rejected(attempt)]
 
 
+def _budgeted_cve_attempt_count(attempts: list) -> int:
+    """Count attempts that should consume the CVE execution budget.
+
+    Rejected probes are logged for diagnostics/KB hygiene but should not
+    consume the active probe execution budget.
+    """
+    return len(_valid_cve_attempts(attempts))
+
+
 def _normalized_script_hash(script: str) -> str:
     normalized = re.sub(r"\s+", " ", script.strip())
     return hashlib.sha256(normalized.encode("utf-8", errors="ignore")).hexdigest()
@@ -12572,7 +12581,7 @@ async def run_cve_tests(cve_matches: list, target: str,
             else:
                 print(f"  [KB] Replaying {kb_selected} known script(s) ...")
         for kb_idx, kb_script in enumerate(selected_scripts, 1):
-            if len(attempts) >= attempt_budget:
+            if _budgeted_cve_attempt_count(attempts) >= attempt_budget:
                 print(f"  [KB] Attempt budget reached ({attempt_budget}) — skipping remaining KB scripts.")
                 break
             language   = kb_script.get("language", "python")
@@ -12702,7 +12711,11 @@ async def run_cve_tests(cve_matches: list, target: str,
             _kb_fix_seen_hashes.add(_candidate_hash)
             _kb_fixable_deduped.append(_candidate)
         _kb_fixable = _kb_fixable_deduped
-        _kb_fix_slots = min(len(_kb_fixable), 2, max(0, attempt_budget - len(attempts)))
+        _kb_fix_slots = min(
+            len(_kb_fixable),
+            2,
+            max(0, attempt_budget - _budgeted_cve_attempt_count(attempts)),
+        )
         if _kb_fix_slots > 0 and not vulnerable_found and _ollama_is_up():
             print(f"  [Phase 1b] Attempting LLM correction of {_kb_fix_slots} rejected KB script(s).")
             for _fix_candidate in _kb_fixable[:_kb_fix_slots]:
@@ -12868,7 +12881,7 @@ async def run_cve_tests(cve_matches: list, target: str,
         # ------------------------------------------------------------------
         if vulnerable_found:
             print("  [Phase 2] VULNERABLE already found — skipping LLM script generation.")
-        remaining_budget = max(0, attempt_budget - len(attempts))
+        remaining_budget = max(0, attempt_budget - _budgeted_cve_attempt_count(attempts))
         new_slots   = min(CVE_FRESH_ATTEMPTS, remaining_budget) if not vulnerable_found else 0
         done_new    = 0
 

@@ -20,6 +20,7 @@ This architecture makes Noctis Edge particularly suited for regulated environmen
 - CVE instance mapping and duplicate-strategy controls were tightened so repeated or equivalent attempts are tracked consistently and deprioritised sooner.
 - Phase 1b KB-fix flow now deduplicates correction candidates by normalized script hash, avoiding spending correction budget on equivalent broken scripts.
 - Phase 1b now performs one bounded syntax-only local retry when a corrected script still fails sanitization, while still failing fast on non-syntax quality issues.
+- Rejected probes are now excluded from CVE attempt-budget accounting, so malformed or placeholder-heavy KB content is logged/pruned without consuming active execution slots.
 - Added a built-in GitHub Actions traffic tracker path (`.github/workflows/clone-tracker.yml` + `scripts/track_repo_traffic.py`) that captures clone/view/download metrics over time and persists history via artifacts without committing telemetry files.
 
 ## What's New in v0.11.4
@@ -565,6 +566,7 @@ The worker is already deployed at `https://noctis-kb-relay.pearcetechnologies1.w
 - Improved duplicate-attempt handling and CVE instance traceability to prevent repeated equivalent strategies from consuming attempt budget.
 - Phase 1b KB-fix selection now deduplicates by normalized script hash so equivalent broken scripts are corrected once.
 - Added one bounded syntax-only retry for KB-fixed scripts that still fail sanitization; non-syntax quality failures still fail immediately.
+- Rejected probes no longer consume the per-CVE attempt budget, allowing scans to keep executing valid probes even when KB entries are low quality.
 - Added a scheduled/manual GitHub Actions workflow and stdlib collector script for private clone/view/download history tracking via artifacts.
 
 ### v0.11.6 — Lean Scaffolding and Evidence Controls
