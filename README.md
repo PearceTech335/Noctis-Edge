@@ -10,11 +10,7 @@ Noctis Edge is a Python-based, Point-In-Time, AI-assisted vulnerability exposure
 
 Unlike cloud-dependent security platforms, **Noctis Edge runs entirely on your local machine**. All scanning, LLM-assisted analysis, CVE validation, and report generation happen on-device — no target data, credentials, or findings ever leave the host. It supports command-line execution via `noctis.py` and a browser-based Web UI via `noctis_web.py` (served locally at `http://127.0.0.1:8888`), without requiring external SaaS platforms, third-party APIs, or cloud processing.
 
-This architecture makes Noctis Edge particularly suited for regulated environments, internal security teams, air-gapped networks, OT environments, and organizations where confidentiality and control are non-negotiable.
-
----
-
-## What's New in v0.11.7
+This architecture makes Noctis Edge particularly suited for regulated environments, internal security teams, air-gapped networks, OT environments, and organizations where confidentiality and control are non-## What's New in v0.11.7
 
 - CVE probe generation now exits early when no safe, target-specific validation path is available, preventing repeated low-value retries on the same CVE.
 - CVE instance mapping and duplicate-strategy controls were tightened so repeated or equivalent attempts are tracked consistently and deprioritised sooner.
@@ -22,13 +18,6 @@ This architecture makes Noctis Edge particularly suited for regulated environmen
 - Phase 1b now performs one bounded syntax-only local retry when a corrected script still fails sanitization, while still failing fast on non-syntax quality issues.
 - Rejected probes are now excluded from CVE attempt-budget accounting, so malformed or placeholder-heavy KB content is logged/pruned without consuming active execution slots.
 - Added a built-in GitHub Actions traffic tracker path (`.github/workflows/clone-tracker.yml` + `scripts/track_repo_traffic.py`) that captures clone/view/download metrics over time and persists history via artifacts without committing telemetry files.
-
-## What's New in v0.11.4
-
-- Adaptive NSE debug retries are now more deterministic and auditable: debug decision history is recorded, retries are bounded with family-aware caps, and no-op adjustment loops are blocked.
-- NSE script quality now improves over time with per-script reliability scoring, failure taxonomy counters (for example `tax_debug_requested`), and script ranking/throttling based on local outcomes.
-- Community merge behavior for `nmap_nse` was upgraded from add-only to confidence-weighted blending for existing slots, so community script reliability can improve local routing faster.
-- Report UX cleanup: duplicate attacker perspective content was removed from the testing evidence flow; attacker perspective remains in exploitation details.
 
 ---
 
