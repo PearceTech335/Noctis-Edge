@@ -260,6 +260,17 @@ Phase 3 uses a service-to-NSE-script map to select the most relevant scripts per
 
 CVE lookups run against the normalised service list after Phase 5 completes.
 
+### 2b. Operator-Informed Unknown-Service Triage
+
+When a discovered service lacks reliable identity signals (for example unknown banner, missing product/version, or ambiguous protocol labels), the local LLM in Noctis applies an analyst-informed triage sequence rather than jumping directly to broad probing:
+
+1. Run a compact, safe baseline fingerprint pack (`banner`, `ssl-cert`, `ssl-enum-ciphers`) on the target port.
+2. Parse baseline clues (protocol banners, TLS metadata, response traits) to infer the most likely service family.
+3. Run one bounded, protocol-specific follow-up NSE set (for example HTTP headers/methods, SSH algorithms/host keys, DNS recursion/NSID, or SNMP system descriptors).
+4. Feed the enriched evidence back into planning and CVE matching so later actions are more precise and lower-noise.
+
+This sequence is designed to emulate practical operator reasoning inside the local LLM: establish service identity first, then escalate with targeted checks based on observed evidence. Human operators still control scope and approvals (for example SAFE-mode gating and unsafe acknowledgments).
+
 ### 3. LLM-Driven Scan — Phase 1 (Parallel)
 
 1. The LLM analyzes all discovered services at once (with NSE context) and returns a JSON array of one initial tool per service — or a deterministic fast-path map is used for well-known service fingerprints (SMB, RDP, SSH, FTP, etc.), eliminating LLM calls entirely for common targets.
