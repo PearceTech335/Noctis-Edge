@@ -4012,8 +4012,11 @@ _NSE_SCRIPT_FAMILY_RETRY_CAPS = {
     "ms-sql-": 2,
     "smb-": 2,
     "ldap-": 2,
-    "http-": 1,
-    "ssl-": 1,
+    "http-": 2,
+    "ssl-": 2,
+    "dns-": 2,
+    "snmp-": 2,
+    "ssh-": 2,
     "smtp-": 1,
     "ftp-": 1,
 }
@@ -4388,6 +4391,49 @@ def _nse_rank_and_throttle_scripts(script_csv: str, service_labels: list[str], t
     return ",".join(ranked_scripts), {"ranked": ranked_scripts, "throttled": throttled}
 
 
+_NSE_UNKNOWN_BASELINE_SCRIPTS = "banner,ssl-cert,ssl-enum-ciphers"
+_UNKNOWN_SERVICE_NAMES = {
+    "unknown",
+    "tcpwrapped",
+    "tcp?",
+    "unrecognized",
+}
+
+
+def _is_unknown_service_for_fingerprinting(svc: dict) -> bool:
+    """Return True when the service identity is too weak for targeted NSE mapping."""
+    name = (svc.get("name") or "").strip().lower()
+    product = (svc.get("product") or "").strip()
+    version = (svc.get("version") or "").strip()
+    if name in _UNKNOWN_SERVICE_NAMES:
+        return True
+    if svc.get("version_unknown") and not product and not version:
+        return True
+    return False
+
+
+def _unknown_service_followup_scripts(nse_output: dict[str, str]) -> str:
+    """Infer a safe, service-specific follow-up NSE set from baseline fingerprint clues."""
+    blob = "\n".join(str(v or "") for v in (nse_output or {}).values()).lower()
+    if not blob.strip():
+        return ""
+    if any(tok in blob for tok in ("http/", "server:", "<html", "content-type", "set-cookie")):
+        return "http-title,http-headers,http-methods,http-server-header"
+    if any(tok in blob for tok in ("ssh-", "openssh", "kex", "host key")):
+        return "ssh2-enum-algos,ssh-hostkey,ssh-auth-methods"
+    if any(tok in blob for tok in ("smtp", "ehlo", "mail from", "220 ")):
+        return "smtp-commands"
+    if any(tok in blob for tok in ("ftp", "220-", "vsftpd", "proftpd")):
+        return "ftp-syst"
+    if any(tok in blob for tok in ("dns", "bind", "recursion", "nameserver")):
+        return "dns-nsid,dns-recursion"
+    if any(tok in blob for tok in ("snmp", "sysdescr", "community")):
+        return "snmp-info,snmp-sysdescr"
+    if any(tok in blob for tok in ("tls", "ssl", "certificate", "x509", "cipher")):
+        return "ssl-cert,ssl-enum-ciphers"
+    return ""
+
+
 def _record_nse_script_outcome(tool_kb: dict | None, service_name: str, script_id: str, output: str, taxonomy: str) -> None:
     """Persist per-script reliability metrics in Tool KB for local + community ranking."""
     if not isinstance(tool_kb, dict):
@@ -4550,6 +4596,32 @@ def _collect_policy_scripts(name: str, policy: dict, *, allow_unsafe: bool = Fal
     return scripts
 
 
+_SERVICE_NAME_ALIASES = {
+    # Nmap often reports DNS as "domain"; keep alias parity so DNS NSE scripts
+    # still run and improve router/service fingerprint quality.
+    "domain": "dns",
+    # TLS-wrapped HTTP services frequently appear as vendor-specific names.
+    "ssl/tungsten-https": "https",
+    "ssl/http": "https",
+}
+
+
+def _expand_service_name_aliases(service_name: str) -> str:
+    """Return a match string that includes known aliases for NSE mapping."""
+    raw = (service_name or "").strip().lower()
+    if not raw:
+        return ""
+    terms = {raw}
+    if raw in _SERVICE_NAME_ALIASES:
+        terms.add(_SERVICE_NAME_ALIASES[raw])
+    for src, dst in _SERVICE_NAME_ALIASES.items():
+        if src in raw:
+            terms.add(dst)
+        if dst in raw:
+            terms.add(src)
+    return " ".join(sorted(terms))
+
+
 def _select_nse_scripts(service_name: str) -> str:
     """Return NSE scripts for the active risk tier.
 
@@ -4558,7 +4630,7 @@ def _select_nse_scripts(service_name: str) -> str:
     the only path allowed to include auth, brute, vuln, bypass, or backdoor NSE
     families.
     """
-    name = service_name.lower()
+    name = _expand_service_name_aliases(service_name)
     selected: list[str] = []
 
     selected.extend(_collect_policy_scripts(name, _load_nse_script_policy(SAFE_NSE_SCRIPTS_PATH)))
@@ -4772,6 +4844,46 @@ def run_nmap_discovery(target: str, pinned_ports: str | None = None, tool_kb: di
         print(f"[!] Phase 2: {len(unenriched)} port(s) not enriched — "
               f"CVE matching may be incomplete: {', '.join(unenriched)}")
 
+        # Router and embedded targets commonly hide banners on first-pass
+        # detection. Retry unresolved ports only with deeper probes.
+        deep_ports_arg = ",".join(unenriched)
+        print(
+            "[+] Phase 2b — Deep version fingerprint retry "
+            f"on unresolved ports: {deep_ports_arg}"
+        )
+        p2b_xml = _nmap_run([
+            "-Pn", "-sV",
+            "-T3",
+            "-p", deep_ports_arg,
+            "--version-intensity", "9",
+            "--allports",
+            "-oX", "-",
+            target,
+        ], timeout=240)
+        p2b_services = _parse_nmap_xml(p2b_xml) if p2b_xml.strip() else []
+        if p2b_services:
+            p2b_by_port: dict = {s["port"]: s for s in p2b_services}
+            recovered = 0
+            for svc in p1_services:
+                if not svc.get("version_unknown"):
+                    continue
+                p2b = p2b_by_port.get(svc["port"])
+                if not p2b:
+                    continue
+                svc["name"]      = p2b["name"]      or svc.get("name", "")
+                svc["product"]   = p2b["product"]   or svc.get("product", "")
+                svc["version"]   = p2b["version"]   or svc.get("version", "")
+                svc["extrainfo"] = p2b["extrainfo"] or svc.get("extrainfo", "")
+                if svc.get("product") or svc.get("version"):
+                    svc["version_unknown"] = False
+                    recovered += 1
+            if recovered:
+                print(f"[+] Phase 2b recovered product/version signals on {recovered} port(s)")
+            else:
+                print("[!] Phase 2b completed but did not recover additional version data")
+        else:
+            print("[!] Phase 2b returned no additional service fingerprint data")
+
     print(f"[+] Phase 2 complete — version data enriched on {len(p2_services)} port(s)")
 
     # ------------------------------------------------------------------ #
@@ -4780,8 +4892,12 @@ def run_nmap_discovery(target: str, pinned_ports: str | None = None, tool_kb: di
     print("[+] Nmap Phase 3 — Targeted NSE script execution")
     # Group ports by service family to batch NSE calls
     script_groups: dict = {}  # scripts_csv -> {ports:[...], service_labels:set(...)}
+    unknown_baseline_ports: set[str] = set()
     for svc in p1_services:
         scripts = _select_nse_scripts(svc.get("name", ""))
+        if not scripts and _is_unknown_service_for_fingerprinting(svc):
+            scripts = _NSE_UNKNOWN_BASELINE_SCRIPTS
+            unknown_baseline_ports.add(str(svc.get("port", "")))
         if scripts:
             grp = script_groups.setdefault(scripts, {"ports": [], "service_labels": set()})
             grp["ports"].append(svc["port"])
@@ -4825,9 +4941,14 @@ def run_nmap_discovery(target: str, pinned_ports: str | None = None, tool_kb: di
             if debug_candidates:
                 family_retry_cap = _nse_retry_cap_for_candidates(debug_candidates)
                 max_adjust_retries = min(_NSE_DEBUG_MAX_ADJUST_RETRIES, family_retry_cap)
+                candidate_ids = sorted({str(c.get("script_id", "")).strip() for c in debug_candidates if c.get("script_id")})
+                candidate_preview = ", ".join(candidate_ids[:6])
+                if len(candidate_ids) > 6:
+                    candidate_preview += ", ..."
                 print(
                     f"[!] NSE scripts requested debug mode on ports {batch_ports} "
-                    f"— running up to {max_adjust_retries} adjustment retry/retries"
+                    f"— running up to {max_adjust_retries} adjustment retry/retries "
+                    f"(family cap={family_retry_cap}; scripts: {candidate_preview or 'unknown'})"
                 )
 
                 current_args = list(base_args)
@@ -4838,6 +4959,11 @@ def run_nmap_discovery(target: str, pinned_ports: str | None = None, tool_kb: di
                 final_retry_executed = False
 
                 while current_candidates:
+                    attempt_no = retries_executed + 1
+                    print(
+                        f"[*] NSE debug attempt {attempt_no}/{max_adjust_retries} "
+                        f"for ports {batch_ports} (candidates={len(current_candidates)})"
+                    )
                     diag_args = list(current_args)
                     diag_insert_at = max(0, len(diag_args) - 1)
                     diag_args[diag_insert_at:diag_insert_at] = ["-d1", "--script-trace"]
@@ -4862,6 +4988,12 @@ def run_nmap_discovery(target: str, pinned_ports: str | None = None, tool_kb: di
                         "decision": llm_decision,
                         "candidates": current_candidates,
                     })
+
+                    print(
+                        "[*] NSE debug decision "
+                        f"for ports {batch_ports}: action={llm_decision.get('action', 'back_off')} "
+                        f"reason={llm_decision.get('reason', 'no_reason')}"
+                    )
 
                     if llm_decision.get("reason") == "llm_parse_failed":
                         _pv = (llm_decision.get("raw_preview") or "")[:220]
@@ -4897,6 +5029,10 @@ def run_nmap_discovery(target: str, pinned_ports: str | None = None, tool_kb: di
                         )
                         break
 
+                    print(
+                        f"[*] NSE debug applying adjustments on ports {batch_ports}: "
+                        f"{json.dumps(adjustments, sort_keys=True)}"
+                    )
                     adjusted_xml = _nmap_run(adjusted_args, timeout=210)
                     retries_executed += 1
                     final_retry_executed = True
@@ -4910,6 +5046,16 @@ def run_nmap_discovery(target: str, pinned_ports: str | None = None, tool_kb: di
                             _record_nse_script_outcome(tool_kb, service_by_port.get(str(port), "unknown"), sid, str(out), tax)
 
                     current_candidates = _nse_debug_candidates(adjusted_results)
+                    if current_candidates:
+                        print(
+                            f"[*] NSE debug retry {retries_executed}/{max_adjust_retries} complete "
+                            f"for ports {batch_ports}; remaining debug candidates={len(current_candidates)}"
+                        )
+                    else:
+                        print(
+                            f"[+] NSE debug retry {retries_executed}/{max_adjust_retries} resolved "
+                            f"all debug-requesting scripts on ports {batch_ports}"
+                        )
 
                 last_decision = decision_history[-1]["decision"] if decision_history else {
                     "action": "back_off",
@@ -4943,6 +5089,43 @@ def run_nmap_discovery(target: str, pinned_ports: str | None = None, tool_kb: di
         else:
             svc["nse_output"]  = {}
             svc["nse_summary"] = ""
+
+    nse_port_count = sum(1 for p in nse_results if nse_results[p])
+
+    # Unknown-service follow-up: use baseline script evidence to infer a likely
+    # protocol and run one extra safe, targeted NSE probe pass.
+    followup_groups: dict[str, list[str]] = {}
+    for svc in p1_services:
+        port = str(svc.get("port", ""))
+        if port not in unknown_baseline_ports:
+            continue
+        followup_scripts = _unknown_service_followup_scripts(svc.get("nse_output", {}) or {})
+        if not followup_scripts:
+            continue
+        followup_groups.setdefault(followup_scripts, []).append(port)
+
+    for followup_scripts, followup_ports in followup_groups.items():
+        batch_ports = ",".join(sorted(dict.fromkeys(followup_ports), key=lambda p: int(p) if p.isdigit() else 0))
+        print(
+            f"[+] Phase 3b — Unknown-service follow-up fingerprinting on ports {batch_ports} "
+            f"with scripts: {followup_scripts}"
+        )
+        followup_xml = _nmap_run([
+            "-Pn", "-sT", "-sV", "--version-intensity", "3", "-T4",
+            "-p", batch_ports,
+            "--script", followup_scripts,
+            "--script-timeout", "30s",
+            "-oX", "-",
+            target,
+        ], timeout=180)
+        if not followup_xml:
+            continue
+        followup_results = _nmap_extract_script_output(followup_xml, batch_ports=batch_ports.split(","))
+        for port, scripts_out in followup_results.items():
+            nse_results.setdefault(port, {}).update(scripts_out)
+            for sid, out in scripts_out.items():
+                tax = _nse_failure_taxonomy(str(out), "")
+                _record_nse_script_outcome(tool_kb, service_by_port.get(str(port), "unknown"), sid, str(out), tax)
 
     nse_port_count = sum(1 for p in nse_results if nse_results[p])
     print(f"[+] Phase 3 complete — NSE data on {nse_port_count} port(s)")
@@ -5027,6 +5210,37 @@ def run_nmap_discovery(target: str, pinned_ports: str | None = None, tool_kb: di
                 os_info = best
         except ET.ParseError:
             pass
+
+    if not os_info.get("name"):
+        print("[!] Phase 4: no OS match from initial pass — retrying with longer probe window")
+        p4_retry_xml = _nmap_run([
+            "-Pn", "-O",
+            "--osscan-guess",
+            "--max-os-tries", "4",
+            "--osscan-limit",
+            "-p", ports_arg,
+            "-oX", "-",
+            target,
+        ], timeout=120)
+        if p4_retry_xml:
+            try:
+                root = ET.fromstring(p4_retry_xml)
+                best = None
+                for osmatch in root.findall(".//osmatch"):
+                    acc = int(osmatch.attrib.get("accuracy", "0"))
+                    if best is None or acc > best["accuracy"]:
+                        best = {
+                            "name":     osmatch.attrib.get("name", ""),
+                            "accuracy": acc,
+                        }
+                        osclass = osmatch.find("osclass")
+                        if osclass is not None:
+                            best["type"]   = osclass.attrib.get("type", "")
+                            best["vendor"] = osclass.attrib.get("vendor", "")
+                if best:
+                    os_info = best
+            except ET.ParseError:
+                pass
     nmap_meta["phase4_os"] = os_info
     _check_os_guess_plausibility(os_info, p1_services)
     name = os_info.get("name", "")

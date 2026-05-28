@@ -33,6 +33,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         # SSH auditing
         ssh-audit \
         # DNS enumeration
+        dnsutils \
         dnsenum \
         dnsrecon \
         # Password brute-forcing
