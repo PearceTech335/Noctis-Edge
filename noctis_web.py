@@ -85,6 +85,7 @@ FLAGS = [
   ("--dns-enum",     "Enable DNS enumeration tools — requires internet"),
   ("--msf-validate", "Run safe Metasploit 'check' probes for each matched CVE"),
   ("--cve-test",     "Ask the LLM to generate & execute probe scripts per CVE"),
+  ("--cve-nse",      "\u26a0\ufe0f  Enables CVE-targeted NSE escalation. Requires explicit operator confirmation. Runs active NSE checks tied to matched CVEs."),
   ("--unsafe",       "\u26a0\ufe0f  Enables intrusive/unsafe verifier and exploit checks. You must have explicit authorisation. Operator confirmation required. Results are flagged as unsafe in reports."),
   ("--unattended",   "Auto-approve all prompts — run to completion without user input"),
 ]
@@ -271,6 +272,18 @@ def api_start():
             f.write("acknowledged by web UI on scan start\n")
         except Exception as e:
           print(f"[!] Failed to create webui_unsafe_ack file: {e}")
+
+    # If --cve-nse is present, set NOCTIS_WEBUI_CVE_NSE_ACK=1 and create
+    # webui_cve_nse_ack file in session_dir.
+    if "--cve-nse" in flags:
+      env["NOCTIS_WEBUI_CVE_NSE_ACK"] = "1"
+      if session_dir:
+        try:
+          ack_path = os.path.join(resolved_sd, "webui_cve_nse_ack")
+          with open(ack_path, "w") as f:
+            f.write("acknowledged by web UI on scan start\n")
+        except Exception as e:
+          print(f"[!] Failed to create webui_cve_nse_ack file: {e}")
 
     proc = subprocess.Popen(
       cmd,
@@ -955,7 +968,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
     <legend>Scan Flags</legend>
     <div class="cb-row" id="flags-row">
       {% for flag, tip in flags %}
-        {% if flag != '--unsafe' %}
+        {% if flag != '--unsafe' and flag != '--cve-nse' %}
         <label>
           <input type="checkbox" class="flag-cb" value="{{ flag }}">
           {{ flag }}
@@ -964,6 +977,11 @@ button:disabled { opacity: .45; cursor: not-allowed; }
         {% endif %}
       {% endfor %}
       <div style="margin-left:auto;">
+        <label style="font-weight:bold; color:#d68910; margin-right:14px;">
+          <input type="checkbox" class="flag-cb" id="cve-nse-flag-cb" value="--cve-nse">
+          --cve-nse
+          <span class="tip" style="color:#d68910;">Enables CVE-targeted NSE escalation. Explicit operator confirmation required.</span>
+        </label>
         <label style="font-weight:bold; color:#c0392b;">
           <input type="checkbox" class="flag-cb" id="unsafe-flag-cb" value="--unsafe">
           --unsafe
@@ -996,6 +1014,28 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 
 <!-- Input row -->
 <div id="inp-row">
+  <!-- CVE-NSE CONFIRMATION MODAL -->
+  <div id="cve-nse-confirm-modal-overlay" style="display:none; position:fixed; left:0; top:0; right:0; bottom:0; background:rgba(10,10,10,0.9); z-index:10000; align-items:center; justify-content:center;">
+    <div id="cve-nse-confirm-modal" style="background:#1e1e1e; color:#e0e0e0; border-radius:6px; box-shadow:0 4px 32px #000d; padding:28px 32px 24px 32px; max-width:620px; width:94vw; margin:auto; display:flex; flex-direction:column; gap:16px; max-height:90vh;">
+      <div style="display:flex; align-items:center; gap:10px; flex-shrink:0;">
+        <span style="font-size:22px;">&#9888;&#65039;</span>
+        <h2 style="color:#d68910; margin:0; font-size:15px; letter-spacing:.04em;">NOCTIS EDGE &mdash; CVE-NSE ESCALATION MODE</h2>
+      </div>
+      <div style="overflow-y:auto; flex:1; min-height:0; background:#141414; border:1px solid #3a3a3a; border-radius:4px; padding:14px 16px; font-size:11px; line-height:1.7; font-family:'Consolas','Courier New',monospace; color:#cfd8dc; white-space:pre-wrap;">You have requested --cve-nse. This mode enables targeted NSE script escalation for matched CVE candidates. These checks are more active than baseline discovery and may impact service availability on unstable or legacy systems.
+
+By proceeding, you represent and warrant that:
+  1. You are the owner of the target system(s), OR you have obtained prior, written, and explicit authorization from the system owner to perform active security testing.
+  2. Your testing is conducted within approved scope and complies with applicable laws and contractual obligations.
+  3. You accept full and sole responsibility for any direct or indirect consequences, including service disruption, data loss, or third-party impact.
+
+Noctis Edge, its authors, contributors, and distributors provide this software "AS IS", without warranty of any kind, and disclaim all liability for any damage, loss, or legal action arising from its use. Use of --cve-nse constitutes acceptance of these terms.</div>
+      <div style="display:flex; gap:12px; flex-shrink:0;">
+        <button style="flex:1; background:#1a1a1a; color:#aaa; border:1px solid #555; border-radius:4px; padding:10px 0; font-size:12px; font-weight:bold; cursor:pointer; letter-spacing:.03em;" onclick="closeCveNseConfirmModal()">&#10005;&nbsp; DO NOT ESCALATE</button>
+        <button style="flex:2; background:#d68910; color:#fff; border:none; border-radius:4px; padding:10px 0; font-size:12px; font-weight:bold; cursor:pointer; letter-spacing:.03em;" onclick="confirmCveNseAndStartScan()">&#9888;&nbsp; PROCEED &mdash; I HAVE EXPLICIT AUTHORITY</button>
+      </div>
+    </div>
+  </div>
+
   <!-- UNSAFE CONFIRMATION MODAL -->
   <div id="unsafe-confirm-modal-overlay" style="display:none; position:fixed; left:0; top:0; right:0; bottom:0; background:rgba(10,10,10,0.92); z-index:10000; align-items:center; justify-content:center;">
     <div id="unsafe-confirm-modal" style="background:#1e1e1e; color:#e0e0e0; border-radius:6px; box-shadow:0 4px 32px #000d; padding:28px 32px 24px 32px; max-width:620px; width:94vw; margin:auto; display:flex; flex-direction:column; gap:16px; max-height:90vh;">
@@ -1037,6 +1077,11 @@ Noctis Edge, its authors, contributors, and distributors provide this software "
 
 <!-- Status bar -->
 <div id="status-bar"><span id="status-text">Ready</span><span id="version-badge">{{ version }}</span></div>
+
+<!-- CVE-NSE MODE WARNING BANNER -->
+<div id="cve-nse-banner" style="display:none; flex-shrink:0; width:100%; background:#d68910; color:#1e1e1e; text-align:center; font-size:15px; font-weight:bold; padding:10px 0; letter-spacing:0.5px; box-shadow:0 -2px 12px #0007;">
+  &#9888;&#65039; CVE-NSE ESCALATION SELECTED - ACTIVE NSE CHECKS WILL RUN FOR MATCHED CVEs &#9888;&#65039;
+</div>
 
 <!-- UNSAFE MODE WARNING BANNER -->
 <div id="unsafe-banner" style="display:none; flex-shrink:0; width:100%; background:#c0392b; color:#fff; text-align:center; font-size:16px; font-weight:bold; padding:12px 0; letter-spacing:1px; box-shadow:0 -2px 16px #000a;">
@@ -1111,24 +1156,45 @@ Noctis Edge, its authors, contributors, and distributors provide this software "
 </div>
 
 <script>
-// Show UNSAFE MODE banner if unsafe flag is checked and adjust terminal area
-function updateUnsafeBanner() {
+// Show CVE-NSE / UNSAFE mode banners based on selected flags
+function updateModeBanners() {
+  const cveNseCb = document.getElementById('cve-nse-flag-cb');
+  const cveNseBanner = document.getElementById('cve-nse-banner');
   const unsafeCb = document.getElementById('unsafe-flag-cb');
-  const banner = document.getElementById('unsafe-banner');
-  const termWrap = document.getElementById('term-wrap');
-  if (unsafeCb && unsafeCb.checked) {
-    banner.style.display = 'block';
+  const unsafeBanner = document.getElementById('unsafe-banner');
+  if (cveNseCb && cveNseCb.checked) {
+    cveNseBanner.style.display = 'block';
   } else {
-    banner.style.display = 'none';
+    cveNseBanner.style.display = 'none';
+  }
+  if (unsafeCb && unsafeCb.checked) {
+    unsafeBanner.style.display = 'block';
+  } else {
+    unsafeBanner.style.display = 'none';
   }
 }
 document.addEventListener('DOMContentLoaded', function() {
+  const cveNseCb = document.getElementById('cve-nse-flag-cb');
   const unsafeCb = document.getElementById('unsafe-flag-cb');
+  if (cveNseCb) {
+    cveNseCb.addEventListener('change', updateModeBanners);
+  }
   if (unsafeCb) {
-    unsafeCb.addEventListener('change', updateUnsafeBanner);
-    updateUnsafeBanner();
+    unsafeCb.addEventListener('change', updateModeBanners);
+    updateModeBanners();
   }
 });
+// CVE-NSE confirmation modal logic
+function openCveNseConfirmModal() {
+  document.getElementById('cve-nse-confirm-modal-overlay').style.display = 'flex';
+}
+function closeCveNseConfirmModal() {
+  document.getElementById('cve-nse-confirm-modal-overlay').style.display = 'none';
+}
+function confirmCveNseAndStartScan() {
+  closeCveNseConfirmModal();
+  actuallyStartScan();
+}
 // Unsafe confirmation modal logic
 function openUnsafeConfirmModal() {
   document.getElementById('unsafe-confirm-modal-overlay').style.display = 'flex';
@@ -1138,6 +1204,11 @@ function closeUnsafeConfirmModal() {
 }
 function confirmUnsafeAndStartScan() {
   closeUnsafeConfirmModal();
+  const cveNseCb = document.getElementById('cve-nse-flag-cb');
+  if (cveNseCb && cveNseCb.checked) {
+    openCveNseConfirmModal();
+    return;
+  }
   actuallyStartScan();
 }
 
@@ -1145,8 +1216,13 @@ function confirmUnsafeAndStartScan() {
 const origStartScan = startScan;
 function startScan() {
   const unsafeCb = document.getElementById('unsafe-flag-cb');
+  const cveNseCb = document.getElementById('cve-nse-flag-cb');
   if (unsafeCb && unsafeCb.checked) {
     openUnsafeConfirmModal();
+    return;
+  }
+  if (cveNseCb && cveNseCb.checked) {
+    openCveNseConfirmModal();
     return;
   }
   actuallyStartScan();

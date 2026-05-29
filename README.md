@@ -14,19 +14,14 @@ This architecture makes Noctis Edge particularly suited for regulated environmen
 
 ---
 
-## What's New in v0.11.7
+## What's New in v0.11.8
 
-- CVE probe generation now exits early when no safe, target-specific validation path is available, preventing repeated low-value retries on the same CVE.
-- CVE instance mapping and duplicate-strategy controls were tightened so repeated or equivalent attempts are tracked consistently and deprioritised sooner.
-- Phase 1b KB-fix flow now deduplicates correction candidates by normalized script hash, avoiding spending correction budget on equivalent broken scripts.
-- Phase 1b now performs one bounded syntax-only local retry when a corrected script still fails sanitization, while still failing fast on non-syntax quality issues.
-- Rejected probes are now excluded from CVE attempt-budget accounting, so malformed or placeholder-heavy KB content is logged/pruned without consuming active execution slots.
-- Service-name alias normalisation now improves NSE routing for router and embedded targets (for example `domain` mapped into DNS script selection).
-- Added a deep second-pass version fingerprint retry for unresolved ports (`-sV --version-intensity 9 --allports`) to improve product/version recovery on hard-to-identify services.
-- OS fingerprinting now includes a bounded fallback pass when the initial OS run is inconclusive, improving host context quality on appliances and network gear.
-- Unknown-service handling now follows an analyst-style triage path: safe baseline fingerprint scripts run first, then one inferred protocol-specific follow-up NSE pack is selected from observed clues.
-- NSE retry telemetry is now more transparent: per-attempt logging, selected adjustments, remaining candidates, and family-aware retry ceilings are surfaced during scan execution.
-- Added a built-in GitHub Actions traffic tracker path (`.github/workflows/clone-tracker.yml` + `scripts/track_repo_traffic.py`) that captures clone/view/download metrics over time and persists history via artifacts without committing telemetry files.
+- Added `--cve-nse`, an explicit opt-in mode for CVE-targeted NSE escalation with separate legal acknowledgment and operator consent handling.
+- Added CVE-NSE policy loading/selection from `Noctis-Edge-KB/cve_nse_scripts.json` with strict bounds on script count, per-script timeout, and per-run nmap timeout.
+- Added bounded CVE-NSE runtime execution after CVE matching and merged script output back into per-service NSE evidence and report metadata.
+- Added CVE-NSE visibility in report metadata under `nmap_discovery.cve_nse` for auditability of escalation decisions and returned script results.
+- Web UI now includes a dedicated `--cve-nse` toggle, warning banner, and explicit confirmation modal before scan launch.
+- Docker image dependencies now include `dnsutils` to ensure `dig`/`nslookup` are available in containerized runs.
 
 ---
 
@@ -567,7 +562,16 @@ The worker is already deployed at `https://noctis-kb-relay.pearcetechnologies1.w
 
 ## Version History
 
-**Current version: v0.11.7**
+**Current version: v0.11.8**
+
+### v0.11.8 — Explicit CVE-NSE Escalation Mode
+
+- Added `--cve-nse`, a separately acknowledged escalation tier for running policy-mapped NSE checks tied to matched CVE evidence.
+- Added CVE-NSE policy plumbing (`Noctis-Edge-KB/cve_nse_scripts.json`) with bounded execution controls and strict script-id normalization.
+- Added runtime CVE-NSE metadata emission in report output (`nmap_discovery.cve_nse`) including escalated ports, matched CVEs, requested scripts, and returned script output.
+- Added CLI and Web UI explicit acknowledgment handling for CVE-NSE (`CVE_NSE` token in TTY mode or Web UI acknowledgment handoff).
+- Added Web UI controls for CVE-NSE with dedicated warning state and pre-launch confirmation flow.
+- Added `dnsutils` in Docker runtime dependencies to restore DNS utility availability in container scans.
 
 ### v0.11.7 — CVE Loop Efficiency + Adaptive Fingerprinting
 

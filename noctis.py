@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # <https://www.gnu.org/licenses/agpl-3.0.html>
 """
-Noctis Edge - Security Through Exposure  v0.11.7
+Noctis Edge - Security Through Exposure  v0.11.8
 Implements: structured findings, verification,
 approval gates, async execution, HTML reports,
 service-specific enumerations, risk scoring,
@@ -12,7 +12,7 @@ EPSS exploit-probability scoring, NVD CVSS offline database,
 NIST CSF 2.0 compliance mapping, and OT/ICS asset classification.
 """
 
-VERSION = "v0.11.7"
+VERSION = "v0.11.8"
 
 import os
 import asyncio
@@ -31,7 +31,13 @@ KB_DIR = os.path.join(BASE_DIR, "Noctis-Edge-KB")
 SAFE_NSE_SCRIPTS_PATH       = os.path.join(KB_DIR, "safe_nse_scripts.json")
 AGGRESSIVE_NSE_SCRIPTS_PATH = os.path.join(KB_DIR, "aggressive_nse_scripts.json")
 UNSAFE_NSE_SCRIPTS_PATH     = os.path.join(KB_DIR, "unsafe_nse_scripts.json")
+CVE_NSE_SCRIPTS_PATH        = os.path.join(KB_DIR, "cve_nse_scripts.json")
 _NSE_SCRIPT_POLICY_CACHE = {}
+_CVE_NSE_POLICY_CACHE: dict[str, dict] | None = None
+
+CVE_NSE_MAX_SCRIPTS_PER_SERVICE = max(1, min(12, int(os.getenv("NOCTIS_CVE_NSE_MAX_SCRIPTS_PER_SERVICE", "6"))))
+CVE_NSE_SCRIPT_TIMEOUT_SECONDS  = max(10, min(90, int(os.getenv("NOCTIS_CVE_NSE_SCRIPT_TIMEOUT", "25"))))
+CVE_NSE_NMAP_TIMEOUT_SECONDS    = max(30, min(300, int(os.getenv("NOCTIS_CVE_NSE_NMAP_TIMEOUT", "150"))))
 
 def _load_nse_script_policy(path: str) -> dict:
     if path in _NSE_SCRIPT_POLICY_CACHE:
@@ -72,6 +78,99 @@ def _load_nse_script_policy(path: str) -> dict:
 
 def _load_safe_nse_script_map():
     return _load_nse_script_policy(SAFE_NSE_SCRIPTS_PATH)
+
+
+def _load_cve_nse_policy() -> dict[str, dict]:
+    """Load CVE→NSE escalation mappings from cve_nse_scripts.json.
+
+    Expected shape:
+      {
+        "CVE-YYYY-NNNN": {
+          "scripts": ["script-a", "script-b"],
+          "service": "optional-service-hint",
+          "port": "optional-port"
+        }
+      }
+    """
+    global _CVE_NSE_POLICY_CACHE
+    if _CVE_NSE_POLICY_CACHE is not None:
+        return _CVE_NSE_POLICY_CACHE
+    if not os.path.exists(CVE_NSE_SCRIPTS_PATH):
+        _CVE_NSE_POLICY_CACHE = {}
+        return _CVE_NSE_POLICY_CACHE
+    try:
+        with open(CVE_NSE_SCRIPTS_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            raise ValueError("CVE-NSE mapping must be a dict")
+        normalised: dict[str, dict] = {}
+        for key, entry in data.items():
+            if not isinstance(key, str) or not isinstance(entry, dict):
+                continue
+            cve_id = key.strip().upper()
+            if not re.match(r"^CVE-\d{4}-\d+$", cve_id):
+                continue
+            scripts = entry.get("scripts", [])
+            if isinstance(scripts, str):
+                scripts = [s.strip() for s in scripts.split(",")]
+            if not isinstance(scripts, list):
+                continue
+            clean_scripts = [
+                str(script).strip()
+                for script in scripts
+                if str(script).strip() and re.match(r"^[A-Za-z0-9_.-]+$", str(script).strip())
+            ]
+            if not clean_scripts:
+                continue
+            normalised[cve_id] = {
+                "scripts": clean_scripts,
+                "service": str(entry.get("service", "") or "").strip().lower(),
+                "port": str(entry.get("port", "") or "").strip(),
+            }
+        _CVE_NSE_POLICY_CACHE = normalised
+        return _CVE_NSE_POLICY_CACHE
+    except Exception as e:
+        print(f"[!] Could not load CVE-NSE policy {os.path.basename(CVE_NSE_SCRIPTS_PATH)}: {e}")
+        _CVE_NSE_POLICY_CACHE = {}
+        return _CVE_NSE_POLICY_CACHE
+
+
+def _select_cve_nse_scripts_for_service(service: dict, policy: dict[str, dict]) -> tuple[list[str], list[str]]:
+    """Return (script_ids, matched_cve_ids) for this service from CVE-NSE policy."""
+    if not isinstance(policy, dict) or not policy:
+        return [], []
+    cves = service.get("cves", [])
+    if not isinstance(cves, list) or not cves:
+        return [], []
+
+    svc_name = str(service.get("name", "") or "").lower()
+    svc_product = str(service.get("product", "") or "").lower()
+    svc_port = str(service.get("port", "") or "")
+
+    scripts: list[str] = []
+    matched_cves: list[str] = []
+    for c in cves:
+        cve_id = str((c or {}).get("cve_id") or (c or {}).get("id") or "").strip().upper()
+        if not cve_id:
+            continue
+        entry = policy.get(cve_id)
+        if not isinstance(entry, dict):
+            continue
+
+        entry_service = str(entry.get("service", "") or "").strip().lower()
+        entry_port = str(entry.get("port", "") or "").strip()
+        if entry_service and entry_service not in svc_name and entry_service not in svc_product:
+            continue
+        if entry_port and entry_port != svc_port:
+            continue
+
+        matched_cves.append(cve_id)
+        scripts.extend(entry.get("scripts", []))
+
+    deduped = list(dict.fromkeys([s for s in scripts if s]))
+    if len(deduped) > CVE_NSE_MAX_SCRIPTS_PER_SERVICE:
+        deduped = deduped[:CVE_NSE_MAX_SCRIPTS_PER_SERVICE]
+    return deduped, list(dict.fromkeys(matched_cves))
 import os
 import random
 import re
@@ -179,6 +278,7 @@ MSF_VALIDATE    = False  # set via --msf-validate; runs safe MSF checks broadly 
 CVE_TEST        = False  # set via --cve-test; LLM generates test scripts per matched CVE
 UNATTENDED      = False  # set via --unattended; auto-approves all prompts (no user input required)
 UNSAFE_VERIFY   = False  # set via --unsafe; opt-in intrusive verifier tier; requires typed UNSAFE prompt
+CVE_NSE         = False  # set via --cve-nse; opt-in CVE-targeted NSE escalation; requires explicit acknowledgment
 
 _NARRATIVE_PROHIBITED_WORDS = (
     "ransomware", "nation-state", "APT", "catastrophic",
@@ -281,6 +381,31 @@ Noctis Edge, its authors, contributors, and distributors
 provide this software "AS IS", without warranty of any kind,
 and disclaim all liability for any damage, loss, or legal
 action arising from its use. Use of --unsafe constitutes
+acceptance of these terms.
+"""
+LEGAL_NOTICE_CVE_NSE = """\
+============================================================
+             NOCTIS EDGE - CVE-NSE ESCALATION MODE
+============================================================
+You have requested --cve-nse. This mode enables targeted NSE
+script escalation for matched CVE candidates. These checks are
+more active than baseline discovery and may impact service
+availability on unstable or legacy systems.
+
+By proceeding, you represent and warrant that:
+  1. You are the owner of the target system(s), OR you have
+      obtained prior, written, and explicit authorization from
+      the system owner to perform active security testing.
+  2. Your testing is conducted within approved scope and
+      complies with applicable laws and contractual obligations.
+  3. You accept full and sole responsibility for any direct
+      or indirect consequences, including service disruption,
+      data loss, or third-party impact.
+
+Noctis Edge, its authors, contributors, and distributors
+provide this software "AS IS", without warranty of any kind,
+and disclaim all liability for any damage, loss, or legal
+action arising from its use. Use of --cve-nse constitutes
 acceptance of these terms.
 """
 CVE_KB_DIR           = os.path.join(KB_DIR, "CVE_KB")
@@ -15255,12 +15380,76 @@ def _prompt_unsafe_acknowledgment(target: str, session_dir: str, session_id: str
     return True
 
 
+def _prompt_cve_nse_acknowledgment(target: str, session_dir: str, session_id: str) -> bool:
+    """Show LEGAL_NOTICE_CVE_NSE and require explicit acknowledgment.
+
+    CLI path requires typing literal token 'CVE_NSE'. Web UI path may pass an
+    explicit acknowledgment via env var/flag-file handoff.
+    """
+    import hashlib as _hashlib
+    mode_summary = "CVE-targeted NSE escalation based on matched service/CVE evidence"
+    banner = (
+        LEGAL_NOTICE_CVE_NSE
+        + f"\nTarget:       {target}"
+        + f"\nSession:      {session_id}"
+        + f"\nMode:         {mode_summary}"
+        + "\n\nTo proceed, type CVE_NSE (all capitals) and press Enter."
+        + "\nAny other input will abort CVE-NSE escalation."
+        + "\n============================================================\n"
+    )
+    print(banner)
+
+    stdin_is_tty = bool(getattr(sys.stdin, "isatty", lambda: False)())
+    webui_env_ack = os.environ.get("NOCTIS_WEBUI_CVE_NSE_ACK", "0") == "1"
+    webui_flag_file = os.path.exists(os.path.join(session_dir, "webui_cve_nse_ack"))
+
+    if stdin_is_tty:
+        try:
+            response = input("Type CVE_NSE to proceed: ").rstrip("\n")
+        except (EOFError, KeyboardInterrupt):
+            print("\n[!] No acknowledgment received. Aborting CVE-NSE escalation.")
+            return False
+        if response != "CVE_NSE":
+            print("[!] Acknowledgment not received (expected exact token 'CVE_NSE'). Aborting.")
+            return False
+        ack_method = "tty"
+    elif webui_env_ack or webui_flag_file:
+        print("[+] Web UI explicit CVE-NSE acknowledgment detected. Proceeding with CVE-NSE mode.")
+        ack_method = "webui"
+    else:
+        print("[!] --cve-nse requires an interactive terminal at session start (stdin is not a TTY), or explicit web UI acknowledgment.\nIf running from the web UI, ensure the acknowledgment flag is set. Aborting.")
+        return False
+
+    ack_record = {
+        "target":                target,
+        "session_id":            session_id,
+        "operator_input":        "CVE_NSE",
+        "timestamp_utc":         datetime.now(timezone.utc).isoformat(),
+        "noctis_version":        VERSION,
+        "disclaimer_sha256":     _hashlib.sha256(banner.encode("utf-8")).hexdigest(),
+        "stdin_is_tty":          stdin_is_tty,
+        "mode_enabled":          mode_summary,
+        "acknowledgment_method": ack_method,
+        "webui_env_ack":         bool(webui_env_ack),
+        "webui_flag_file":       bool(webui_flag_file),
+    }
+    try:
+        ack_path = os.path.join(session_dir, "cve_nse_acknowledgment.json")
+        with open(ack_path, "w", encoding="utf-8") as fh:
+            json.dump(ack_record, fh, indent=2)
+        print(f"[+] CVE-NSE escalation accepted. Acknowledgment recorded: {ack_path}\n")
+    except Exception as e:
+        print(f"[!] Could not write cve_nse_acknowledgment.json ({e}). Aborting.")
+        return False
+    return True
+
+
 async def main_async():
-    global SAFE_MODE, AIRGAP_MODE, MSF_VALIDATE, CVE_TEST, UNATTENDED, UNSAFE_VERIFY, SESSION_FILE
+    global SAFE_MODE, AIRGAP_MODE, MSF_VALIDATE, CVE_TEST, UNATTENDED, UNSAFE_VERIFY, CVE_NSE, SESSION_FILE
     scan_start = datetime.now()
 
     if len(sys.argv) < 2:
-        print("Usage: python3 noctis.py <target> [profile ...] [--resume] [--session-dir <path>] [--nse-aggressive] [--dns-enum] [--msf-validate] [--cve-test] [--unattended] [--unsafe]")
+        print("Usage: python3 noctis.py <target> [profile ...] [--resume] [--session-dir <path>] [--nse-aggressive] [--dns-enum] [--msf-validate] [--cve-test] [--cve-nse] [--unattended] [--unsafe]")
         print("       Target formats: 192.168.0.1  |  hostname  |  host:port  |  host:80,443,8080")
         print("       python3 noctis.py --report <json_file>")
         print("Profiles (one or more):", ", ".join(PROFILES))
@@ -15301,6 +15490,8 @@ async def main_async():
             MSF_VALIDATE = True
         elif arg == "--cve-test":
             CVE_TEST = True
+        elif arg == "--cve-nse":
+            CVE_NSE = True
         elif arg == "--unattended":
             UNATTENDED = True
         elif arg == "--unsafe":
@@ -15366,6 +15557,19 @@ async def main_async():
     SESSION_FILE = os.path.join(session_dir, "session.json")
 
     # ----------------------------------------------------------------------
+    # --cve-nse pre-flight + legal-notice acknowledgment.
+    #
+    # Runs before any CVE-NSE escalation path. This mode is evidence-gated and
+    # requires --cve-test to be enabled.
+    # ----------------------------------------------------------------------
+    if CVE_NSE:
+        if not CVE_TEST:
+            print("[!] --cve-nse requires --cve-test. Aborting.")
+            sys.exit(2)
+        if not _prompt_cve_nse_acknowledgment(target, session_dir, session_id):
+            sys.exit(2)
+
+    # ----------------------------------------------------------------------
     # --unsafe pre-flight + legal-notice acknowledgment.
     #
     # Runs BEFORE any scanning, LLM call, or tool dispatch \u2014 the operator
@@ -15405,6 +15609,8 @@ async def main_async():
     print(f"  Profile : {profile['name']}")
     mode_str = "AGGRESSIVE" if not SAFE_MODE else "SAFE (approval required for aggressive tools)"
     print(f"  Mode    : {mode_str}")
+    if CVE_NSE:
+        print("  CVE-NSE : ENABLED — CVE-targeted NSE escalation active (operator acknowledged)")
     if UNSAFE_VERIFY:
         print("  Unsafe  : ENABLED — intrusive verifier tier active (operator acknowledged)")
     if not AIRGAP_MODE:
@@ -15485,6 +15691,85 @@ async def main_async():
         if s.get("suppressed_cves"):
             for c in s["suppressed_cves"]:
                 print(f"      [SUPPRESSED] {c['id']}: {c.get('_suppression_reason', '')}")
+
+    # Optional CVE-targeted NSE escalation: only when --cve-nse is enabled and
+    # the service has matched CVEs with an explicit policy mapping.
+    if CVE_NSE:
+        cve_nse_policy = _load_cve_nse_policy()
+        cve_nse_meta = {
+            "enabled": True,
+            "policy_entries": len(cve_nse_policy),
+            "services_escalated": 0,
+            "scripts_executed": 0,
+            "ports": [],
+            "by_port": {},
+        }
+        if not cve_nse_policy:
+            print("[!] --cve-nse enabled but no CVE-NSE policy entries were found (cve_nse_scripts.json missing/empty)")
+        else:
+            print("[+] CVE-NSE escalation phase — running policy-mapped NSE scripts for matched CVEs")
+            for svc in services:
+                scripts, matched_cves = _select_cve_nse_scripts_for_service(svc, cve_nse_policy)
+                if not scripts:
+                    continue
+
+                port = str(svc.get("port", ""))
+                svc_name = str(svc.get("name", "unknown") or "unknown")
+                scripts_csv = ",".join(scripts)
+                print(
+                    f"    [CVE-NSE] {port}/{svc_name} — {len(scripts)} script(s) "
+                    f"for {len(matched_cves)} matched CVE(s): {scripts_csv}"
+                )
+                batch_xml = _nmap_run([
+                    "-Pn", "-sT", "-sV", "--version-intensity", "3", "-T3",
+                    "-p", port,
+                    "--script", scripts_csv,
+                    "--script-timeout", f"{CVE_NSE_SCRIPT_TIMEOUT_SECONDS}s",
+                    "-oX", "-",
+                    target,
+                ], timeout=CVE_NSE_NMAP_TIMEOUT_SECONDS)
+                if not batch_xml:
+                    continue
+
+                batch_results = _nmap_extract_script_output(batch_xml, batch_ports=[port])
+                port_scripts = batch_results.get(port, {})
+                if not port_scripts:
+                    continue
+
+                svc.setdefault("nse_output", {})
+                svc["nse_output"].update(port_scripts)
+                svc["nse_summary"] = "; ".join(
+                    f"{sid}: {out[:200]}" for sid, out in svc["nse_output"].items()
+                )
+
+                nmap_meta.setdefault("phase3_scripts", {})
+                nmap_meta["phase3_scripts"].setdefault(port, {}).update(port_scripts)
+
+                for sid, out in port_scripts.items():
+                    tax = _nse_failure_taxonomy(str(out), "")
+                    _record_nse_script_outcome(tool_kb, svc_name, sid, str(out), tax)
+
+                cve_nse_meta["services_escalated"] += 1
+                cve_nse_meta["scripts_executed"] += len(port_scripts)
+                cve_nse_meta["ports"].append(port)
+                cve_nse_meta["by_port"][port] = {
+                    "service": svc_name,
+                    "matched_cves": matched_cves,
+                    "scripts_requested": scripts,
+                    "scripts_returned": sorted(port_scripts.keys()),
+                }
+
+            cve_nse_meta["ports"] = sorted(set(cve_nse_meta["ports"]), key=lambda p: int(p) if str(p).isdigit() else 0)
+            if cve_nse_meta["scripts_executed"]:
+                print(
+                    f"[+] CVE-NSE complete — {cve_nse_meta['scripts_executed']} script result(s) "
+                    f"across {cve_nse_meta['services_escalated']} service(s)"
+                )
+            else:
+                print("[+] CVE-NSE complete — no policy-mapped scripts returned output for matched services")
+        nmap_meta["cve_nse"] = cve_nse_meta
+    else:
+        nmap_meta["cve_nse"] = {"enabled": False}
 
     svc_summary = ", ".join(
         f"{s['port']}/{s['name']}(p{s['priority']})" for s in services
@@ -15829,6 +16114,7 @@ async def main_async():
             if scripts
         },
         "nse_debug": nmap_meta.get("phase3_debug", {}),
+        "cve_nse": nmap_meta.get("cve_nse", {"enabled": False}),
     }
 
     json_path = os.path.join(session_dir, f"report_{safe_tgt}.json")
