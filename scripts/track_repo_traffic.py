@@ -153,11 +153,11 @@ def _write_outputs(history: dict[str, Any]) -> None:
 
 
 def main() -> int:
-    token = os.getenv("GITHUB_TOKEN", "").strip()
+    token = os.getenv("REPO_TRAFFIC_TOKEN", "").strip() or os.getenv("GITHUB_TOKEN", "").strip()
     repo_slug = os.getenv("GITHUB_REPOSITORY", "").strip()
 
     if not token:
-        raise RuntimeError("GITHUB_TOKEN is required")
+        raise RuntimeError("REPO_TRAFFIC_TOKEN (or GITHUB_TOKEN) is required")
     if "/" not in repo_slug:
         raise RuntimeError("GITHUB_REPOSITORY must be in owner/repo format")
 
@@ -203,6 +203,8 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except urllib.error.HTTPError as exc:
         print(f"[traffic] GitHub API HTTP error: {exc.code} {exc.reason}")
+        if exc.code == 403:
+            print("[traffic] Hint: set repository secret REPO_TRAFFIC_TOKEN with a classic PAT that has repo scope.")
         raise
     except Exception as exc:
         print(f"[traffic] error: {exc}")

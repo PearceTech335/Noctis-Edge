@@ -518,6 +518,7 @@ Once you have subscribed at [noctisedge.lemonsqueezy.com](https://noctisedge.lem
 | `scripts/submit_nuclei_kb.py` | POSTs the local Nuclei template knowledge base to the Cloudflare relay. Called automatically by `update.sh`. |
 | `scripts/submit_tool_kb.py` | POSTs the local tool performance knowledge base to the Cloudflare relay. Called automatically by `update.sh`. |
 | `scripts/merge_tool_kb.py` | Additively merges an external tool knowledge base JSON into the local one. |
+| `scripts/track_repo_traffic.py` | Used by `.github/workflows/clone-tracker.yml` to collect clone/view/release metrics and persist history artifacts. Requires repository secret `REPO_TRAFFIC_TOKEN` (classic PAT with `repo` scope). |
 
 ---
 

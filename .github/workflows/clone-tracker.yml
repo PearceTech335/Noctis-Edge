@@ -18,7 +18,7 @@ jobs:
 
       - name: Collect and merge traffic history
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.REPO_TRAFFIC_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           TRAFFIC_ARTIFACT_NAME: repo-traffic-history
         run: |
