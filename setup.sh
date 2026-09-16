@@ -10,7 +10,7 @@
 #    ./setup.sh
 #
 #  What this script does (in order):
-#    1.  Git submodules — nikto (bundled scanner)
+#    1.  Nikto — pinned clone (sullo/nikto @ NIKTO_REF, runtime-cloned, not a submodule)
 #    2.  apt  — core system packages
 #    3.  snap — SecLists wordlists
 #    4.  Go   — language runtime (needed for Nuclei)
@@ -39,6 +39,11 @@ CVE_OFFLINE_REPO="https://github.com/trickest/cve-offline.git"
 CVE_OFFLINE_ACTUAL="https://github.com/trickest/cve-offline.git"
 
 RDPSCAN_REPO="https://github.com/robertdavidgraham/rdpscan.git"
+
+# Nikto is runtime-cloned (not a git submodule) and pinned to a release tag
+# so native installs and Docker builds run the same code.
+NIKTO_REPO="https://github.com/sullo/nikto.git"
+NIKTO_REF="2.6.1"
 
 # ── colour helpers ──────────────────────────────────────────────────────────
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; CYAN='\033[0;36m'; NC='\033[0m'
@@ -102,10 +107,10 @@ _ensure_manifest_tool() {
             ;;
         nikto|nikto_cgi)
             [[ -f "$SCRIPT_DIR/nikto/program/nikto.pl" ]] && return 0
-            info "nikto submodule missing — initialising ..."
-            git -C "$SCRIPT_DIR" submodule update --init --recursive \
-                && ok "nikto submodule ready" \
-                || err "nikto submodule init failed"
+            info "nikto missing — cloning pinned release ($NIKTO_REPO @ $NIKTO_REF) ..."
+            git clone --depth 1 --branch "$NIKTO_REF" "$NIKTO_REPO" "$SCRIPT_DIR/nikto" 2>/dev/null \
+                && ok "nikto ready ($NIKTO_REF)" \
+                || err "nikto clone failed — web scanning will be unavailable"
             ;;
         nuclei)
             ( command -v nuclei &>/dev/null \
@@ -148,14 +153,15 @@ _ensure_manifest_tool() {
 # =============================================================================
 # 1.  Git submodules
 # =============================================================================
-header "1/10  Git submodules (nikto)"
-if [[ -f "$SCRIPT_DIR/.gitmodules" ]]; then
-    info "Initialising and updating git submodules ..."
-    git -C "$SCRIPT_DIR" submodule update --init --recursive \
-        && ok "Submodules up to date (nikto cloned at nikto/)" \
-        || err "Submodule update failed — run: git submodule update --init --recursive"
+header "1/10  Nikto (pinned clone)"
+if [[ -f "$SCRIPT_DIR/nikto/program/nikto.pl" ]]; then
+    ok "nikto already present at nikto/ (pinned to $NIKTO_REF)"
 else
-    skip ".gitmodules not found — no submodules to initialise"
+    info "Cloning nikto $NIKTO_REF ..."
+    rm -rf "$SCRIPT_DIR/nikto"
+    git clone --depth 1 --branch "$NIKTO_REF" "$NIKTO_REPO" "$SCRIPT_DIR/nikto" \
+        && ok "nikto $NIKTO_REF cloned at nikto/" \
+        || err "nikto clone failed — web scanning will be unavailable until it succeeds"
 fi
 
 # =============================================================================
@@ -605,12 +611,12 @@ KB_USER_ID=""
 KB_RELAY_URL=""
 
 # =============================================================================
-# PAID TIER
+# COMMUNITY KB (open access — no license key required)
+# KB_LICENSE_KEY is legacy and ignored.  Kept so old configs still parse and
+# so a paid tier can be re-introduced later without a config migration.
 # =============================================================================
 
 KB_LICENSE_KEY=""
-# ↑ Paste your Lemon Squeezy license key here to enable the community CVE KB download.
-#   Subscribe at: https://noctisedge.lemonsqueezy.com
 CONF_EOF
     ok "noctis.conf created"
 else
@@ -643,15 +649,14 @@ fi
 if [[ ! -f "$MANIFEST_FILE" ]]; then
     info "Creating empty tool_manifest.json ..."
     echo '{}' > "$MANIFEST_FILE"
-    ok "tool_manifest.json created (empty — populate via ./update.sh with a subscription key)"
+    ok "tool_manifest.json created (empty — populate via ./update.sh open pull)"
 fi
 
 TOOL_COUNT=$(python3 -c "import json; d=json.load(open('$MANIFEST_FILE')); print(sum(1 for k in d if not k.startswith('_')))" 2>/dev/null || echo "0")
 if [[ "$TOOL_COUNT" -gt 0 ]] 2>/dev/null; then
     ok "Tool manifest loaded — $TOOL_COUNT tools ($MANIFEST_FILE)"
 else
-    info "Tool manifest is empty — add KB_LICENSE_KEY to noctis.conf and run ./update.sh to receive full manifest"
-    info "  Subscribe at: https://noctisedge.lemonsqueezy.com"
+    info "Tool manifest is empty — run ./update.sh to pull the open community manifest"
 fi
 
 # =============================================================================

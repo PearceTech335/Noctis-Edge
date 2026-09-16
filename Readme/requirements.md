@@ -8,7 +8,7 @@ Follow each section in order on a fresh Kali/Parrot/Debian-based system.
 ## 1. Clone the Repository
 
 ```bash
-git clone --recurse-submodules https://github.com/PearceTech335/Noctis-Edge.git
+git clone https://github.com/PearceTech335/Noctis-Edge.git
 cd Noctis-Edge
 ```
 
@@ -157,22 +157,12 @@ start `ollama serve`** if it is not already running — no manual step is needed
 
 ---
 
-## 7. Nikto (Git Submodule)
+## 7. Nikto (Pinned Clone)
 
-Nikto is included as a **git submodule** pointing to [sullo/nikto](https://github.com/sullo/nikto).
-No separate install is required — it is cloned automatically when you use `--recurse-submodules`:
-
-```bash
-git clone --recurse-submodules https://github.com/PearceTech335/NoctisEdge.git
-```
-
-If you already cloned without that flag, initialise it manually:
-
-```bash
-git submodule update --init --recursive
-```
-
-`setup.sh` also runs this automatically as its first step.
+Nikto is **not** a git submodule — `setup.sh` clones release `2.6.1` of
+[sullo/nikto](https://github.com/sullo/nikto) into `nikto/` automatically as its
+first step (same pin is baked into the Docker image and verified by `update.sh`).
+No manual step is required.
 
 Nikto runs via Perl; the `perl`, `libxml-writer-perl`, and `libjson-perl` packages
 from Section 2 are all it needs.

@@ -1,3 +1,0 @@
-[submodule "nikto"]
-	path = nikto
-	url = https://github.com/sullo/nikto.git

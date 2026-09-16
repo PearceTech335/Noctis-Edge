@@ -14,14 +14,10 @@ This architecture makes Noctis Edge particularly suited for regulated environmen
 
 ---
 
-## What's New in v0.11.8
+## What's New in v0.11.9
 
-- Added `--cve-nse`, an explicit opt-in mode for CVE-targeted NSE escalation with separate legal acknowledgment and operator consent handling.
-- Added CVE-NSE policy loading/selection from `Noctis-Edge-KB/cve_nse_scripts.json` with strict bounds on script count, per-script timeout, and per-run nmap timeout.
-- Added bounded CVE-NSE runtime execution after CVE matching and merged script output back into per-service NSE evidence and report metadata.
-- Added CVE-NSE visibility in report metadata under `nmap_discovery.cve_nse` for auditability of escalation decisions and returned script results.
-- Web UI now includes a dedicated `--cve-nse` toggle, warning banner, and explicit confirmation modal before scan launch.
-- Docker image dependencies now include `dnsutils` to ensure `dig`/`nslookup` are available in containerized runs.
+- **Community KB is now open access** — all six artifacts (CVE KB, Nuclei KB, Tool KB, Tool Manifest, Aggressive/Unsafe NSE policies) pull via `./update.sh` with no license key. The Cloudflare relay and `submissions-pipeline` quorum/blocklist build remain as the submission sanitization path. `KB_LICENSE_KEY` is legacy and ignored (reserved for a future tier).
+- **Dropped the `nikto` git submodule** — `nikto/` is now runtime-cloned pinned at upstream release `2.6.1` by `setup.sh`, verified by `update.sh`, and baked at the same pin in the Docker image. Plain `git clone` with no `--recurse-submodules` is all contributors need.
 
 ---
 
@@ -63,9 +59,7 @@ Noctis keeps active validation evidence-gated: HTTP-only tools such as Nikto, Nu
 
 **Beyond CVEs — system hardening recommendations:** Noctis is not only a CVE scanner. Every scan automatically identifies insecure configurations, weak cryptographic settings, and policy gaps that represent real risk even without a named CVE. SSH services are audited for weak key-exchange algorithms, deprecated MACs, and password-authentication exposure. Web services are checked for missing security headers, unsafe HTTP methods, directory listing, exposed version banners, and misconfigured cookies. SMB and LDAP services are inspected for signing enforcement, anonymous access, and legacy protocol support. Each finding is tagged with its `vuln_type` (e.g. `WeakCipher`, `MissingHeader`, `Misconfiguration`), a `cwe_id` (e.g. CWE-326, CWE-16), and compliance control mappings (PCI-DSS, SOC2, ISO 27001, NIST CSF 2.0). The LLM then generates targeted short-term and long-term remediation advice for every finding — not generic hardening checklists, but advice anchored to the specific product, version, and configuration observed during the scan.
 
-Running `./update.sh` submits your local CVE and Tooling knowledge bases to the community repository via Cloudflare relay — **no target data, credentials, or environment variables ever leave your machine**. Submissions are anonymised (CVE ID or service fingerprint only). Community-contributed scripts are vetted before inclusion. Pulling the aggregated community KB requires a [Noctis Edge Intelligence subscription](https://noctisedge.lemonsqueezy.com).
-
-Community submission is available to all installs. Paid gating applies to community pulls (CVE/Nuclei/Tool KB), Tool Manifest pull, and Unsafe NSE policy pull.
+Running `./update.sh` submits your local CVE and Tooling knowledge bases to the community repository via Cloudflare relay — **no target data, credentials, or environment variables ever leave your machine**. Submissions are anonymised (CVE ID or service fingerprint only). Community-contributed scripts are vetted before inclusion (relay validation + `submissions-pipeline` quorum/blocklist build). Pulling the aggregated community KB, tool manifest, and NSE policies is open access — no license key required.
 
 Alongside CVE probes, `tooling_knowledge_base.json` accumulates tool-performance data — which invocations produced real findings versus noise against specific service fingerprints. The LLM uses this history as context on each new engagement, progressively improving tool selection and script quality over time.
 
@@ -151,7 +145,7 @@ docker compose build && docker compose up -d                   # rebuild after g
 > Full manual setup instructions: [Readme/requirements.md](Readme/requirements.md)
 
 ```bash
-git clone --recurse-submodules https://github.com/PearceTech335/Noctis-Edge.git
+git clone https://github.com/PearceTech335/Noctis-Edge.git
 cd Noctis-Edge
 chmod +x setup.sh && ./setup.sh
 ```
@@ -160,7 +154,7 @@ chmod +x setup.sh && ./setup.sh
 
 | Step | What gets installed |
 |------|---------------------|
-| Git submodules | `nikto/` (from [sullo/nikto](https://github.com/sullo/nikto)) |
+| Nikto | `nikto/` cloned pinned at release `2.6.1` (from [sullo/nikto](https://github.com/sullo/nikto)) |
 | apt packages | `nmap`, `curl`, `ffuf`, `hydra`, `ssh-audit`, `dnsenum`, `dnsrecon`, `perl`, `golang-go`, `python3-tk`, and more |
 | SecLists | Wordlists via `snap install seclists` |
 | Nuclei | Go-based template scanner (`~/go/bin/nuclei`) |
@@ -343,7 +337,7 @@ After the main scan:
 - `NOT_TESTABLE` — every available probe was rejected before execution as low-quality, placeholder, duplicate, or protocol-mismatched
 - `INCONCLUSIVE` — probes ran but could not determine status (timeout, wrong protocol, banner-only, etc.)
 
-**Knowledge Base:** Results are persisted in `cve_knowledge_base.json`. On future runs, previously successful scripts for the same CVE are replayed first, improving confidence without LLM generation. Running `./update.sh` submits this file to the community relay. Pulling the aggregated community KB requires a subscription token.
+**Knowledge Base:** Results are persisted in `cve_knowledge_base.json`. On future runs, previously successful scripts for the same CVE are replayed first, improving confidence without LLM generation. Running `./update.sh` submits this file to the community relay and pulls the open aggregated community KB.
 
 > **Note:** These are heuristic probes generated by a small local LLM, not actual exploit chains. `MATCHED_VERSION` and `PROBABLE_VULNERABLE` are leads to investigate; `CONFIRMED_VULNERABLE` requires verifier agreement or MSF check-only corroboration.
 
@@ -408,7 +402,7 @@ Top-of-file constants in `noctis.py` (all overridable via environment variables)
 | `msfconsole` | MSF validation (`--msf-validate`) |
 | `rdpscan` | RDP enumeration |
 
-> **Note:** `nikto/` is a git submodule pointing to [sullo/nikto](https://github.com/sullo/nikto). Clone with `--recurse-submodules` or run `git submodule update --init --recursive` after cloning.
+> **Note:** `nikto/` is not tracked in git — `setup.sh` / `update.sh` clone it pinned at release `2.6.1` of [sullo/nikto](https://github.com/sullo/nikto), and the Docker image bakes in the same pin. No manual step is required.
 
 Install notes: see [Readme/requirements.md](Readme/requirements.md).
 
@@ -450,30 +444,20 @@ Each entry is identified only by CVE ID, Nuclei template ID, or service fingerpr
 
 Running `./update.sh` submits all three files to the community relay via the Cloudflare Worker (`cloudflare/worker.js`). The worker source is included in this repository for full transparency. Your installation ID (generated once by `setup.sh`, stored in `noctis.conf`) is used only to rate-limit submissions (4 per day) and is never linked to personal data.
 
-### Subscriber Benefits
+### Community Artifacts (open access)
 
-A subscription unlocks six community-maintained artifacts that are delivered via `./update.sh` and never distributed in the public repository:
+Every `./update.sh` run pulls six community-maintained artifacts — no license key required:
 
 | Artifact | What you get |
 |----------|--------------|
-| **Community CVE KB** | Aggregated `cve_knowledge_base.json` built from submissions across all subscriber installs — pre-populated probe scripts, verified exploitation chains, and CVSS/EPSS enrichment for thousands of CVEs. Free installs start with an empty local KB and build it from scratch. |
+| **Community CVE KB** | Aggregated CVE probe scripts built from submissions across all installs — pre-populated probe scripts, verified exploitation chains, and CVSS/EPSS enrichment. Fresh installs get day-one intelligence instead of starting from an empty local KB. |
 | **Community Nuclei KB** | Aggregated `nuclei_kb.json` — community-curated template performance data identifying which Nuclei templates reliably produce true positives on real infrastructure. Reduces false-positive noise from day one. |
 | **Community Tool KB** | Aggregated `tool_knowledge_base.json` — community-sourced tool performance profiles that tune scan timing, service matching, and tool selection before your first scan. |
-| **Tool Manifest** | `tool_manifest.json` — curated and maintained command-line recipes for every tool Noctis Edge drives (nmap, nikto, nuclei, testssl.sh, sqlmap, and 20+ others). The manifest controls argument presets, timeouts, and service-to-tool routing. Subscribers receive updates as new tools are added or existing recipes are improved. |
+| **Tool Manifest** | `tool_manifest.json` — curated and maintained command-line recipes for every tool Noctis Edge drives (nmap, nikto, nuclei, testssl.sh, sqlmap, and 20+ others). The manifest controls argument presets, timeouts, and service-to-tool routing. |
 | **Aggressive NSE Scripts** | `aggressive_nse_scripts.json` — a curated second tier of Nmap NSE scripts that go beyond safe enumeration: deeper service fingerprinting, credential exposure checks, misconfiguration probes, and low-risk vulnerability confirmation. Run when `AGGRESSIVE_NSE=True` is set in `noctis.conf`. |
 | **Unsafe NSE Scripts** | `unsafe_nse_scripts.json` — a curated third tier of Nmap NSE scripts covering brute-force credential checks (using nmap's built-in minimal default list — no wordlists), active vulnerability probes (EternalBlue, Heartbleed, Shellshock, Struts RCE, CCS Injection, POODLE, etc.), and backdoor/misconfiguration detection across 85+ service types. Run only when `UNSAFE_VERIFY=True` is set and explicit scanning authority has been confirmed in the UI. **Execution philosophy:** all scripts are run without `--script-args` wordlists or modification payloads — the intent is to *confirm exploitability* (e.g. "is this host vulnerable to MS17-010?"), not to deliver a payload or cause lasting change. Scripts that would actually execute code on the target, modify state, or cause denial of service are excluded from this tier. |
 
-> **Summary:** free users contribute to the community and build their own local KB over time. Subscribers receive the aggregated community intelligence from day one, plus the aggressive and unsafe NSE script tiers and the curated tool manifest.
-
-### Unlocking Subscriber Benefits
-
-Once you have subscribed at [noctisedge.lemonsqueezy.com](https://noctisedge.lemonsqueezy.com):
-
-1. Open `noctis.conf` and add your license key:
-   ```ini
-   KB_LICENSE_KEY=XXXX-XXXX-XXXX-XXXX
-   ```
-2. Run `./update.sh` — all six subscriber artifacts are downloaded and merged into your local installation automatically.
+> **Summary:** every install both contributes to and benefits from the community corpus. Submissions are sanitized by the Cloudflare relay and vetted by the `submissions-pipeline` quorum/blocklist build before being published. `KB_LICENSE_KEY` in `noctis.conf` is legacy and ignored (reserved so a paid tier can be re-introduced later).
 
 ---
 
@@ -496,8 +480,8 @@ Once you have subscribed at [noctisedge.lemonsqueezy.com](https://noctisedge.lem
 | 5d | CISA KEV catalog refreshed (CISA Known Exploited Vulnerabilities — active exploitation ground truth, used to boost risk scores and flag MUST-PATCH findings) |
 | 6 | CVE offline database pulled + CSV rebuilt |
 | 7 | Noctis Edge source updated (`git fetch` + `git reset --hard origin/master`); Docker image rebuilt if Docker is detected |
-| 8 | Nikto submodule updated |
-| 9–10 | CVE, Nuclei template, and Tool knowledge bases submitted to community relay; community KBs pulled if `KB_LICENSE_KEY` is set |
+| 8 | Nikto pinned clone verified (`2.6.1`) |
+| 9–12 | CVE, Nuclei template, and Tool knowledge bases submitted to community relay; community KBs, tool manifest, and NSE policies pulled (open access, no key) |
 
 > **Data safety:** `git reset --hard` only affects git-tracked files. All user data lives in gitignored paths (`sessions/`, `noctis.conf`, `cve_knowledge_base.json`, `tool_knowledge_base.json`) and is never touched by the update.
 
@@ -532,11 +516,14 @@ The `cloudflare/` directory contains the Cloudflare Worker that relays KB submis
 
 | Route | Method | Purpose |
 |-------|--------|---------|
-| `/submit` | POST | CVE KB submission |
-| `/community-kb` | POST | CVE community KB pull (license-gated) |
+| `/submit` | POST | CVE KB submission (validated, rate-limited, sanitized) |
+| `/community-kb` | GET/POST | CVE community KB pull (open access) |
 | `/submit-tool` | POST | Tool KB submission |
-| `/community-tool-kb` | POST | Tool community KB pull (license-gated) |
+| `/community-tool-kb` | GET/POST | Tool community KB pull (open access) |
 | `/submit-nuclei` | POST | Nuclei template KB submission |
+| `/community-nuclei-kb` | GET/POST | Nuclei community KB pull (open access) |
+| `/tool-manifest` | GET/POST | Tool manifest pull (open access) |
+| `/unsafe-nse-scripts` | GET/POST | Unsafe NSE scripts pull (open access) |
 
 The worker is already deployed at `https://noctis-kb-relay.pearcetechnologies1.workers.dev`. End users do not need to deploy anything.
 
@@ -554,15 +541,21 @@ The worker is already deployed at `https://noctis-kb-relay.pearcetechnologies1.w
 | `cloudflare/.wrangler/` | Wrangler cache (contains Cloudflare account credentials) |
 | `WordLists/rockyou.txt` | 139 MB — not needed for directory enumeration |
 | `CVE/cve-offline/cve-summary.csv` | 57 MB — regenerated by `updatecsv.sh` |
-| `CVE/cve-offline/` | Separate git repo |
+| `CVE/cve-offline/` | Runtime-cloned data repo (not tracked) |
 | `CVE/.nvd-cache/` | NVD CVSS download cache — large intermediate `.json.gz` files |
-| `rdpscan/` | Separate git repo |
+| `nikto/` | Runtime-cloned pinned release (not tracked) |
 
 ---
 
 ## Version History
 
-**Current version: v0.11.8**
+**Current version: v0.11.9**
+
+### v0.11.9 — Open Community KB + Drop Nikto Submodule
+
+- Community KB pulls (CVE/Nuclei/Tool KB, Tool Manifest, Aggressive/Unsafe NSE) are open access — Lemon Squeezy license checks removed from the Cloudflare Worker, `update.sh`, and `pull_community_kb.py`. Submission sanitization (relay validation + pipeline quorum/blocklist) unchanged.
+- Removed the `nikto` git submodule; `setup.sh`/`update.sh`/Dockerfile share a pinned `2.6.1` clone. `nikto/` is now gitignored runtime state.
+- Docs updated: plain `git clone`, corrected credits/requirements wording.
 
 ### v0.11.8 — Explicit CVE-NSE Escalation Mode
 
@@ -645,7 +638,7 @@ For the complete release history see [version_history.md](version_history.md).
 
 | Tool / Library | Author / Org | Purpose |
 |----------------|-------------|---------|
-| [Nikto](https://github.com/sullo/nikto) | Chris Sullo | Web server vulnerability scanner (bundled as submodule) |
+| [Nikto](https://github.com/sullo/nikto) | Chris Sullo | Web server vulnerability scanner (pinned release, runtime-cloned) |
 | [Nuclei](https://github.com/projectdiscovery/nuclei) | ProjectDiscovery | Template-based vulnerability scanning |
 | [nmap](https://nmap.org) | Gordon Lyon (Fyodor) | Network discovery and port scanning |
 | [ffuf](https://github.com/ffuf/ffuf) | Joona Hoikkala | Fast web fuzzer |
@@ -655,7 +648,7 @@ For the complete release history see [version_history.md](version_history.md).
 | [Metasploit Framework](https://github.com/rapid7/metasploit-framework) | Rapid7 | Exploitation framework for MSF validation |
 | [rdpscan](https://github.com/robertdavidgraham/rdpscan) | Robert David Graham | RDP vulnerability scanning |
 | [Ollama](https://ollama.com) | Ollama, Inc. | Local LLM server |
-| [trickest/cve](https://github.com/trickest/cve) | Trickest | CVE PoC reference database (submodule) |
+| [trickest/cve](https://github.com/trickest/cve) | Trickest | CVE PoC reference database (runtime-cloned data) |
 | [trickest/cve-offline](https://github.com/trickest/cve-offline) | Trickest | Offline CVE CSV dataset |
 | [SecLists](https://github.com/danielmiessler/SecLists) | Daniel Miessler | Security wordlists |
 | [NetExec (nxc)](https://github.com/Pennyw0rth/NetExec) | Pennyw0rth | Network service execution and enumeration |

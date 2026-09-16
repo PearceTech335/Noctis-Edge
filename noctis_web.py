@@ -435,7 +435,9 @@ def api_update():
     return jsonify({"ok": True})
 
 
-# ── License key helpers ──────────────────────────────────────────────────────
+# ── License key helpers (legacy — community KB is open access) ───────────────
+# Kept so old noctis.conf files still parse and a paid tier can be
+# re-introduced later without a migration.  The key is stored but ignored.
 _CONF_FILE = os.path.join(BASE_DIR, "noctis.conf")
 
 
@@ -1000,7 +1002,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
     <button id="btn-report" onclick="openReportModal()">Report</button>
     <span id="cmd-label"></span>
     <button id="btn-update" onclick="runUpdate()">&#8635;  Update</button>
-    <button id="btn-settings" onclick="openSettingsModal()" title="Subscription &amp; License">&#9881;</button>
+    <button id="btn-settings" onclick="openSettingsModal()" title="Community KB &amp; Settings">&#9881;</button>
     <span id="lic-badge"></span>
   </div>
 
@@ -1140,12 +1142,14 @@ Noctis Edge, its authors, contributors, and distributors provide this software "
 <!-- Settings modal -->
 <div id="settings-modal-overlay">
   <div id="settings-modal">
-    <h2>&#9881; Subscription &amp; License Key</h2>
+    <h2>&#9881; Community KB &amp; Settings</h2>
     <div>
       <p class="lic-status" id="lic-status-text">Checking…</p>
     </div>
     <div>
-      <label for="lic-key-input">Enter or update your license key:</label>
+      <p style="opacity:.8">Community KB pulls are open access — no key required.
+      The field below is legacy and ignored (reserved for a future tier).</p>
+      <label for="lic-key-input">Legacy license key (optional, ignored):</label>
       <input id="lic-key-input" type="password" placeholder="XXXX-XXXX-XXXX-XXXX" spellcheck="false" autocomplete="off">
     </div>
     <div id="settings-modal-footer">
@@ -1637,20 +1641,13 @@ document.getElementById('unsafe-modal-overlay').addEventListener('click', e => {
   if (e.target === document.getElementById('unsafe-modal-overlay')) closeUnsafeModal();
 });
 
-/* ── Settings / License modal ────────────────────────────────────────── */
+/* ── Settings / Community KB modal (license field is legacy) ─────────── */
 function loadLicenseStatus() {
   fetch('/api/license-key').then(r => r.json()).then(d => {
     const el = document.getElementById('lic-status-text');
-    if (d.set) {
-      el.textContent = 'License key set: ' + d.masked;
-      el.className = 'lic-status active';
-      licBadge.textContent = 'Licensed';
-      licBadge.style.color = '#66bb6a';
-    } else {
-      el.textContent = 'No license key configured.';
-      el.className = 'lic-status';
-      licBadge.textContent = '';
-    }
+    el.textContent = 'Community KB: open access — pulls require no key.'
+      + (d.set ? ' (legacy key stored: ' + d.masked + ', ignored)' : '');
+    el.className = 'lic-status active';
   }).catch(() => {
     licBadge.textContent = '';
   });

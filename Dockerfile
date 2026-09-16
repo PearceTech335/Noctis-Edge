@@ -118,9 +118,10 @@ WORKDIR /app
 COPY . .
 
 # ---------------------------------------------------------------------------
-# 5. Nikto (clone fresh — avoids submodule state dependency)
+# 5. Nikto — runtime-cloned, pinned to the same release as setup.sh/update.sh
 # ---------------------------------------------------------------------------
-RUN git clone --depth=1 https://github.com/sullo/nikto.git nikto
+ARG NIKTO_REF=2.6.1
+RUN git clone --depth=1 --branch ${NIKTO_REF} https://github.com/sullo/nikto.git nikto
 
 # Verify nikto can load all required Perl modules — fail the build fast if any
 # dependency is missing rather than silently producing "tool broken" at runtime.

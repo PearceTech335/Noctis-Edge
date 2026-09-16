@@ -18,7 +18,7 @@ Final safety gate: re-runs the full static blocklist before writing output.
 
 Output layout (inside output_dir):
   CVE_KB/
-    manifest.json          ← shard index (tiny; fetched first by subscribers)
+    manifest.json          ← shard index (tiny; fetched first by clients)
     CVE-1999-1.json        ← one file per year/sequence shard
     CVE-2017-1.json
     CVE-2017-5000.json

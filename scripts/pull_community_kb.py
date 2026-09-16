@@ -3,18 +3,22 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # <https://www.gnu.org/licenses/agpl-3.0.html>
 """
-Noctis Edge — Community KB Pull Tool
+Noctis Edge — Community KB Pull Tool (open access)
 
-Usage: pull_community_kb.py <relay_url> <license_key> <cvekb_dir>
+Usage: pull_community_kb.py <relay_url> <cvekb_dir> [license_key_ignored]
 
 Downloads all community KB shards from the Noctis relay and merges them
 into the local CVE_KB/ directory.  Designed for pre-flight download before
 airgapped deployments — run this while online so the full KB is present on
 disk before you disconnect.
 
+The relay pull endpoints are open (no license key).  An optional third
+positional arg is accepted and ignored for backwards compatibility with
+older update.sh invocations that passed <relay> <license> <dir>.
+
 Steps:
-  1. POST {license_key} to relay  →  manifest.json (tiny, lists all shards)
-  2. For each shard, POST {license_key, shard}  →  shard JSON
+  1. POST {} to relay  →  manifest.json (tiny, lists all shards)
+  2. For each shard, POST {shard}  →  shard JSON
   3. Merge each shard into local CVE_KB/<shard>.json, deduplicating by script_hash
   4. New CVEs and scripts are additive — existing verified entries are kept
 
@@ -61,11 +65,6 @@ def _post_json(relay_url: str, payload: dict, timeout: int = 60) -> dict:
             msg  = body.get("error") or body.get("message") or str(exc)
         except Exception:
             msg = str(exc)
-        if exc.code == 403:
-            raise RuntimeError(
-                f"License key rejected (HTTP 403): {msg}\n"
-                "Check your subscription at https://noctisedge.lemonsqueezy.com"
-            )
         raise RuntimeError(f"HTTP {exc.code}: {msg}")
     except Exception as exc:
         if "CERTIFICATE_VERIFY_FAILED" in str(exc) or "certificate is not yet valid" in str(exc):
@@ -119,24 +118,27 @@ def _merge_shard(existing: dict, incoming: dict) -> tuple[int, int]:
 
 
 def main() -> None:
-    if len(sys.argv) != 4:
+    if len(sys.argv) not in (3, 4):
         print(
-            f"Usage: {sys.argv[0]} <relay_url> <license_key> <cvekb_dir>",
+            f"Usage: {sys.argv[0]} <relay_url> <cvekb_dir> [license_key_ignored]",
             file=sys.stderr,
         )
         sys.exit(1)
 
-    relay_url   = sys.argv[1]
-    license_key = sys.argv[2]
-    cvekb_dir   = pathlib.Path(sys.argv[3])
+    relay_url = sys.argv[1]
+    if len(sys.argv) == 4:
+        # Legacy invocation: <relay_url> <license_key> <cvekb_dir> — license ignored
+        cvekb_dir = pathlib.Path(sys.argv[3])
+    else:
+        cvekb_dir = pathlib.Path(sys.argv[2])
     cvekb_dir.mkdir(parents=True, exist_ok=True)
 
     community_kb_url = relay_url.rstrip("/").removesuffix("/submit") + "/community-kb"
 
     # ── Step 1: Fetch manifest ────────────────────────────────────────────────
-    print("[pull_kb] Fetching community KB manifest ...")
+    print("[pull_kb] Fetching community KB manifest (open access) ...")
     try:
-        manifest = _post_json(community_kb_url, {"license_key": license_key})
+        manifest = _post_json(community_kb_url, {})
     except RuntimeError as exc:
         print(f"[pull_kb] ERROR: {exc}", file=sys.stderr)
         sys.exit(1)
@@ -166,9 +168,7 @@ def main() -> None:
         print(f"[pull_kb] [{i}/{len(shards)}] Downloading {name} ...", end=" ", flush=True)
 
         try:
-            shard_data = _post_json(
-                community_kb_url, {"license_key": license_key, "shard": name}
-            )
+            shard_data = _post_json(community_kb_url, {"shard": name})
         except RuntimeError as exc:
             print(f"FAILED ({exc})")
             errors += 1

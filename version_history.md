@@ -2,6 +2,21 @@
 
 ---
 
+## v0.11.9 — Open Community KB + Drop Nikto Submodule
+
+### Open community KB
+- Removed Lemon Squeezy license gating from all five Cloudflare Worker pull endpoints (`/community-kb`, `/community-tool-kb`, `/community-nuclei-kb`, `/tool-manifest`, `/unsafe-nse-scripts`); pulls accept `GET|POST` with no key.
+- `update.sh` pulls all six community artifacts unconditionally; `pull_community_kb.py` takes `<relay> <cvekb_dir>` (legacy license arg ignored).
+- `KB_LICENSE_KEY` deprecated to an ignored legacy field across `setup.sh`, `docker-entrypoint.sh`, `noctis.conf`, and the Web UI settings modal.
+- Submission sanitization unchanged: relay validation/rate-limiting plus `submissions-pipeline` quorum/blocklist build.
+
+### Drop nikto submodule
+- Removed the `nikto` git submodule (deleted `.gitmodules` gitlink); `nikto/` is now gitignored runtime state.
+- `setup.sh`, `update.sh`, and `Dockerfile` share a pinned clone of `sullo/nikto` at release `2.6.1`.
+- Docs (`README.md`, `Readme/requirements.md`) updated to plain `git clone` with no `--recurse-submodules`.
+
+---
+
 ## v0.11.7 — CVE Loop Efficiency + Repo Traffic Tracking
 
 ### CVE no-safe-path early stop

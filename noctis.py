@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # <https://www.gnu.org/licenses/agpl-3.0.html>
 """
-Noctis Edge - Security Through Exposure  v0.11.8
+Noctis Edge - Security Through Exposure  v0.11.9
 Implements: structured findings, verification,
 approval gates, async execution, HTML reports,
 service-specific enumerations, risk scoring,
@@ -12,7 +12,7 @@ EPSS exploit-probability scoring, NVD CVSS offline database,
 NIST CSF 2.0 compliance mapping, and OT/ICS asset classification.
 """
 
-VERSION = "v0.11.8"
+VERSION = "v0.11.9"
 
 import os
 import asyncio
@@ -24,10 +24,10 @@ import json
 # Set BASE_DIR after imports to comply with style rules
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# --- KB directory (all subscriber/operator knowledge base assets live here) ---
+# --- KB directory (all community/operator knowledge base assets live here) ---
 KB_DIR = os.path.join(BASE_DIR, "Noctis-Edge-KB")
 
-# --- Tiered NSE script mappings (operator/subscriber-maintained) ---
+# --- Tiered NSE script mappings (community-maintained, pulled open via update.sh) ---
 SAFE_NSE_SCRIPTS_PATH       = os.path.join(KB_DIR, "safe_nse_scripts.json")
 AGGRESSIVE_NSE_SCRIPTS_PATH = os.path.join(KB_DIR, "aggressive_nse_scripts.json")
 UNSAFE_NSE_SCRIPTS_PATH     = os.path.join(KB_DIR, "unsafe_nse_scripts.json")
@@ -4764,8 +4764,7 @@ def _select_nse_scripts(service_name: str) -> str:
     if UNSAFE_VERIFY:
         _unsafe_nse_policy = _load_nse_script_policy(UNSAFE_NSE_SCRIPTS_PATH)
         if not _unsafe_nse_policy:
-            print("  [!] unsafe_nse_scripts.json is empty — intrusive NSE scripts require a subscription.")
-            print("      Subscribe at https://noctisedge.lemonsqueezy.com and run ./update.sh to pull them.")
+            print("  [!] unsafe_nse_scripts.json is empty — run ./update.sh to pull the open community NSE policies.")
         else:
             selected.extend(_collect_policy_scripts(
                 name,
@@ -9780,9 +9779,8 @@ def _migrate_tool_kb_v1(kb: dict) -> dict:
 def _load_tool_manifest() -> dict:
     """Lazy-load tool_manifest.json.  Returns {} if the file is absent.
 
-    The manifest is a subscriber artifact delivered via update.sh step 11.
-    Free users will see a one-time advisory at scan start; the scanner
-    degrades gracefully to rule-based defaults (curl catch-all).
+    The manifest is a community artifact delivered via update.sh step 11 (open access).
+    If absent, the scanner degrades gracefully to rule-based defaults (curl catch-all).
     """
     global _TOOL_MANIFEST
     if _TOOL_MANIFEST is not None:
@@ -9813,8 +9811,7 @@ def _validate_manifest_coverage(all_tool_names: list) -> None:
     if not manifest:
         print(
             "[*] No tool_manifest.json found.  Service routing will use built-in rules.\n"
-            "    To improve routing for unusual services, subscribe at:\n"
-            "    https://noctisedge.lemonsqueezy.com  (KB_LICENSE_KEY in noctis.conf)\n"
+            "    To improve routing, run ./update.sh to pull the open community manifest\n"
             "    or generate a local manifest:  python3 scripts/build_tool_manifest.py"
         )
         return

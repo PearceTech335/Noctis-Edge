@@ -4,7 +4,8 @@
 #  Run: ./update.sh
 #  Updates: apt packages, snap, pip deps, nuclei, Ollama model, CVE database,
 #           CVE knowledge base (submit + pull), Nuclei KB (submit + pull),
-#           Tool knowledge base (submit + pull), Tool manifest (subscribers only)
+#           Tool knowledge base (submit + pull), Tool manifest (open pull),
+#           Unsafe NSE scripts (open pull)
 # =============================================================================
 
 set -euo pipefail
@@ -17,7 +18,14 @@ OLLAMA_MODEL="qwen2.5-coder:3b-instruct"
 OLLAMA_SCRIPT_MODEL="$OLLAMA_MODEL"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Load per-user configuration (tokens, UUID, paid-tier flag)
+# Nikto is runtime-cloned (not a git submodule), pinned so native and Docker
+# installs run the same code.  Keep in sync with setup.sh and Dockerfile.
+NIKTO_REPO="https://github.com/sullo/nikto.git"
+NIKTO_REF="2.6.1"
+
+# Load per-user configuration (UUID + optional relay override).
+# KB_LICENSE_KEY is legacy (open-access mode ignores it) and kept only so
+# old noctis.conf files still source cleanly.
 # shellcheck source=/dev/null
 if [[ -f "$SCRIPT_DIR/noctis.conf" ]]; then
     source "$SCRIPT_DIR/noctis.conf"
@@ -166,10 +174,12 @@ _ensure_manifest_tool() {
             ;;
         nikto|nikto_cgi)
             [[ -f "$SCRIPT_DIR/nikto/program/nikto.pl" ]] && return 0
-            info "nikto submodule missing — initialising ..."
-            git -C "$SCRIPT_DIR" submodule update --init --recursive \
-                && ok "nikto submodule ready" \
-                || err "nikto submodule init failed"
+            info "nikto missing — cloning pinned release (${NIKTO_REF:-2.6.1}) ..."
+            git clone --depth 1 --branch "${NIKTO_REF:-2.6.1}" \
+                "${NIKTO_REPO:-https://github.com/sullo/nikto.git}" \
+                "$SCRIPT_DIR/nikto" 2>/dev/null \
+                && ok "nikto ready (${NIKTO_REF:-2.6.1})" \
+                || err "nikto clone failed — web scanning will be unavailable"
             ;;
         nuclei)
             ( command -v nuclei &>/dev/null \
@@ -477,22 +487,18 @@ else
 fi
 
 # =============================================================================
-# 8. Nikto submodule
+# 8. Nikto (pinned clone — kept on NIKTO_REF, never auto-updated past the pin)
 # =============================================================================
-header "8/10  Nikto (submodule update)"
+header "8/10  Nikto (pinned clone)"
 NIKTO_DIR="$SCRIPT_DIR/nikto"
-if [[ -d "$NIKTO_DIR/.git" ]]; then
-    info "Pulling latest nikto ..."
-    git -C "$NIKTO_DIR" pull --quiet \
-        && ok "nikto up to date" \
-        || err "nikto git pull failed — continuing"
-elif [[ -d "$NIKTO_DIR" ]]; then
-    info "nikto/ exists but is not a git repo — initialising submodule ..."
-    git -C "$SCRIPT_DIR" submodule update --init --remote nikto \
-        && ok "nikto submodule initialised and up to date" \
-        || err "nikto submodule update failed — run 'git submodule update --init --remote nikto' manually"
+if [[ -f "$NIKTO_DIR/program/nikto.pl" ]]; then
+    ok "nikto present (pinned to $NIKTO_REF) — leaving as-is"
 else
-    err "nikto/ directory not found — run 'git submodule update --init --recursive' to clone it"
+    info "Cloning nikto $NIKTO_REF ..."
+    rm -rf "$NIKTO_DIR"
+    git clone --depth 1 --branch "$NIKTO_REF" "$NIKTO_REPO" "$NIKTO_DIR" \
+        && ok "nikto $NIKTO_REF cloned" \
+        || err "nikto clone failed — web scanning will be unavailable until it succeeds"
 fi
 
 # =============================================================================
@@ -518,21 +524,18 @@ else
         || err "KB submission failed — will retry on next update"
 fi
 
-# ── Pull community KB (subscribers only) ────────────────────────────────────────
+# ── Pull community KB (open access) ───────────────────────────────────────────
 # pull_community_kb.py fetches the shard manifest first, then downloads every
 # shard individually and merges them into CVE_KB/.  This ensures the full KB
 # is present on disk before going airgapped — no lazy-loading required.
-if [[ -z "$KB_LICENSE_KEY" ]]; then
-    promo "Community KB pull skipped — KB_LICENSE_KEY not set in noctis.conf"
-    promo "Unlock community CVE intelligence: https://noctisedge.lemonsqueezy.com"
-else
-    info "Pulling community CVE knowledge base (license key found) ..."
-    _RELAY="https://noctis-kb-relay.pearcetechnologies1.workers.dev"
-    "$PYTHON" "$SCRIPT_DIR/scripts/pull_community_kb.py" \
-        "$_RELAY" "$KB_LICENSE_KEY" "$KB_LOCAL" \
-        && ok "Community KB pull complete" \
-        || err "Community KB pull failed — will retry on next update"
-fi
+# No license key required; KB_LICENSE_KEY (if set) is ignored for backwards compat.
+info "Pulling community CVE knowledge base (open access) ..."
+_RELAY="https://noctis-kb-relay.pearcetechnologies1.workers.dev"
+[[ -n "${KB_RELAY_URL:-}" ]] && _RELAY="$KB_RELAY_URL"
+"$PYTHON" "$SCRIPT_DIR/scripts/pull_community_kb.py" \
+    "$_RELAY" "$KB_LOCAL" \
+    && ok "Community KB pull complete" \
+    || err "Community KB pull failed — will retry on next update"
 
 ok "KB sync done"
 
@@ -561,36 +564,30 @@ else
         || err "Nuclei KB submission failed — will retry on next update"
 fi
 
-# ── Pull community Nuclei KB (subscribers only) ───────────────────────────────
-if [[ -z "$KB_LICENSE_KEY" ]]; then
-    promo "Community Nuclei KB pull skipped — KB_LICENSE_KEY not set in noctis.conf"
+# ── Pull community Nuclei KB (open access) ────────────────────────────────────
+info "Pulling community Nuclei template KB (open access) ..."
+_NKB_RELAY="https://noctis-kb-relay.pearcetechnologies1.workers.dev"
+[[ -n "${KB_RELAY_URL:-}" ]] && _NKB_RELAY="$KB_RELAY_URL"
+_TMP_NKB="/tmp/_noctis_community_nuclei_kb_$$.json"
+HTTP_CODE=$(curl -sS -w "%{http_code}" -o "$_TMP_NKB" \
+    --max-time 30 \
+    -X POST "$_NKB_RELAY/community-nuclei-kb" \
+    -H "Content-Type: application/json" \
+    -d '{}' 2>/dev/null)
+CURL_EXIT=$?
+if [[ "$CURL_EXIT" != "0" ]]; then
+    err "Community Nuclei KB download failed (curl error $CURL_EXIT) — will retry on next update"
+    rm -f "$_TMP_NKB"
+elif [[ "$HTTP_CODE" == "200" ]]; then
+    MERGE_OUTPUT=$("$PYTHON" "$SCRIPT_DIR/scripts/merge_nuclei_kb.py" \
+        "$_TMP_NKB" "$NUCLEI_KB_LOCAL" 2>&1)
+    MERGE_EXIT=$?
+    [[ "$MERGE_EXIT" == "0" ]] && ok "Community Nuclei KB merged: $MERGE_OUTPUT" \
+        || err "Nuclei KB merge failed: $MERGE_OUTPUT"
+    rm -f "$_TMP_NKB"
 else
-    info "Pulling community Nuclei template KB (license key found) ..."
-    _NKB_RELAY="https://noctis-kb-relay.pearcetechnologies1.workers.dev"
-    _TMP_NKB="/tmp/_noctis_community_nuclei_kb_$$.json"
-    HTTP_CODE=$(curl -sS -w "%{http_code}" -o "$_TMP_NKB" \
-        --max-time 30 \
-        -X POST "$_NKB_RELAY/community-nuclei-kb" \
-        -H "Content-Type: application/json" \
-        -d "{\"license_key\":\"$KB_LICENSE_KEY\"}" 2>/dev/null)
-    CURL_EXIT=$?
-    if [[ "$CURL_EXIT" != "0" ]]; then
-        err "Community Nuclei KB download failed (curl error $CURL_EXIT) — will retry on next update"
-        rm -f "$_TMP_NKB"
-    elif [[ "$HTTP_CODE" == "200" ]]; then
-        MERGE_OUTPUT=$("$PYTHON" "$SCRIPT_DIR/scripts/merge_nuclei_kb.py" \
-            "$_TMP_NKB" "$NUCLEI_KB_LOCAL" 2>&1)
-        MERGE_EXIT=$?
-        [[ "$MERGE_EXIT" == "0" ]] && ok "Community Nuclei KB merged: $MERGE_OUTPUT" \
-            || err "Nuclei KB merge failed: $MERGE_OUTPUT"
-        rm -f "$_TMP_NKB"
-    elif [[ "$HTTP_CODE" == "403" ]]; then
-        err "License key rejected — check your subscription at https://noctisedge.lemonsqueezy.com"
-        rm -f "$_TMP_NKB"
-    else
-        err "Community Nuclei KB download failed (HTTP $HTTP_CODE) — will retry on next update"
-        rm -f "$_TMP_NKB"
-    fi
+    err "Community Nuclei KB download failed (HTTP $HTTP_CODE) — will retry on next update"
+    rm -f "$_TMP_NKB"
 fi
 
 ok "Nuclei KB sync done"
@@ -614,125 +611,103 @@ else
         || err "Tool KB submission failed — will retry on next update"
 fi
 
-# ── Pull community tool KB (subscribers only) ─────────────────────────────────
-if [[ -z "$KB_LICENSE_KEY" ]]; then
-    promo "Community tool KB pull skipped — KB_LICENSE_KEY not set in noctis.conf"
+# ── Pull community tool KB (open access) ──────────────────────────────────────
+info "Pulling community tool knowledge base (open access) ..."
+_TOOL_RELAY="https://noctis-kb-relay.pearcetechnologies1.workers.dev"
+[[ -n "${KB_RELAY_URL:-}" ]] && _TOOL_RELAY="$KB_RELAY_URL"
+_TMP_TOOL_KB="/tmp/_noctis_community_tool_kb_$$.json"
+HTTP_CODE=$(curl -sS -w "%{http_code}" -o "$_TMP_TOOL_KB" \
+    --max-time 30 \
+    -X POST "$_TOOL_RELAY/community-tool-kb" \
+    -H "Content-Type: application/json" \
+    -d '{}' 2>/dev/null)
+CURL_EXIT=$?
+if [[ "$CURL_EXIT" != "0" ]]; then
+    err "Community tool KB download failed (curl error $CURL_EXIT) — will retry on next update"
+    rm -f "$_TMP_TOOL_KB"
+elif [[ "$HTTP_CODE" == "200" ]]; then
+    MERGE_OUTPUT=$("$PYTHON" "$SCRIPT_DIR/scripts/merge_tool_kb.py" \
+        "$_TMP_TOOL_KB" "$TOOL_KB_LOCAL" 2>&1)
+    MERGE_EXIT=$?
+    [[ "$MERGE_EXIT" == "0" ]] && ok "Community tool KB merged: $MERGE_OUTPUT" \
+        || err "Tool KB merge failed: $MERGE_OUTPUT"
+    rm -f "$_TMP_TOOL_KB"
 else
-    info "Pulling community tool knowledge base (license key found) ..."
-    _TOOL_RELAY="https://noctis-kb-relay.pearcetechnologies1.workers.dev"
-    _TMP_TOOL_KB="/tmp/_noctis_community_tool_kb_$$.json"
-    HTTP_CODE=$(curl -sS -w "%{http_code}" -o "$_TMP_TOOL_KB" \
-        --max-time 30 \
-        -X POST "$_TOOL_RELAY/community-tool-kb" \
-        -H "Content-Type: application/json" \
-        -d "{\"license_key\":\"$KB_LICENSE_KEY\"}" 2>/dev/null)
-    CURL_EXIT=$?
-    if [[ "$CURL_EXIT" != "0" ]]; then
-        err "Community tool KB download failed (curl error $CURL_EXIT) — will retry on next update"
-        rm -f "$_TMP_TOOL_KB"
-    elif [[ "$HTTP_CODE" == "200" ]]; then
-        MERGE_OUTPUT=$("$PYTHON" "$SCRIPT_DIR/scripts/merge_tool_kb.py" \
-            "$_TMP_TOOL_KB" "$TOOL_KB_LOCAL" 2>&1)
-        MERGE_EXIT=$?
-        [[ "$MERGE_EXIT" == "0" ]] && ok "Community tool KB merged: $MERGE_OUTPUT" \
-            || err "Tool KB merge failed: $MERGE_OUTPUT"
-        rm -f "$_TMP_TOOL_KB"
-    elif [[ "$HTTP_CODE" == "403" ]]; then
-        err "License key rejected — check your subscription at https://noctisedge.lemonsqueezy.com"
-        rm -f "$_TMP_TOOL_KB"
-    else
-        err "Community tool KB download failed (HTTP $HTTP_CODE) — will retry on next update"
-        rm -f "$_TMP_TOOL_KB"
-    fi
+    err "Community tool KB download failed (HTTP $HTTP_CODE) — will retry on next update"
+    rm -f "$_TMP_TOOL_KB"
 fi
 
 ok "Tool KB sync done"
 
 # =============================================================================
-# 11. Tool Manifest pull (subscribers only)
+# 11. Tool Manifest pull (open access)
 # =============================================================================
 header "11/11  Tool Manifest pull"
 
 MANIFEST_LOCAL="$SCRIPT_DIR/Noctis-Edge-KB/tool_manifest.json"
 
-if [[ -z "$KB_LICENSE_KEY" ]]; then
-    promo "Tool manifest pull skipped — KB_LICENSE_KEY not set in noctis.conf"
-    promo "  Subscribe at: https://noctisedge.lemonsqueezy.com to receive the"
-    promo "  tool_manifest.json with per-tool flag guidance and service routing."
-else
-    info "Pulling tool manifest (license key found) ..."
-    _MANIFEST_RELAY="https://noctis-kb-relay.pearcetechnologies1.workers.dev"
-    _TMP_MANIFEST="/tmp/_noctis_tool_manifest_$$.json"
-    HTTP_CODE=$(curl -sS -w "%{http_code}" -o "$_TMP_MANIFEST" \
-        --max-time 30 \
-        -X POST "$_MANIFEST_RELAY/tool-manifest" \
-        -H "Content-Type: application/json" \
-        -d "{\"license_key\":\"$KB_LICENSE_KEY\"}" 2>/dev/null)
-    CURL_EXIT=$?
-    if [[ "$CURL_EXIT" != "0" ]]; then
-        err "Tool manifest download failed (curl error $CURL_EXIT) — will retry on next update"
-        rm -f "$_TMP_MANIFEST"
-    elif [[ "$HTTP_CODE" == "200" ]]; then
-        # Validate it looks like JSON before replacing the local copy
-        if python3 -c "import json,sys; json.load(open('$_TMP_MANIFEST'))" 2>/dev/null; then
-            mv "$_TMP_MANIFEST" "$MANIFEST_LOCAL"
-            TOOL_COUNT=$(python3 -c "import json; d=json.load(open('$MANIFEST_LOCAL')); print(sum(1 for k in d if not k.startswith('_')))")
-            ok "Tool manifest updated ($TOOL_COUNT tools) at $MANIFEST_LOCAL"
-        else
-            err "Downloaded manifest is not valid JSON — keeping existing copy"
-            rm -f "$_TMP_MANIFEST"
-        fi
-    elif [[ "$HTTP_CODE" == "403" ]]; then
-        err "License key rejected — check your subscription at https://noctisedge.lemonsqueezy.com"
-        rm -f "$_TMP_MANIFEST"
+info "Pulling tool manifest (open access) ..."
+_MANIFEST_RELAY="https://noctis-kb-relay.pearcetechnologies1.workers.dev"
+[[ -n "${KB_RELAY_URL:-}" ]] && _MANIFEST_RELAY="$KB_RELAY_URL"
+_TMP_MANIFEST="/tmp/_noctis_tool_manifest_$$.json"
+HTTP_CODE=$(curl -sS -w "%{http_code}" -o "$_TMP_MANIFEST" \
+    --max-time 30 \
+    -X POST "$_MANIFEST_RELAY/tool-manifest" \
+    -H "Content-Type: application/json" \
+    -d '{}' 2>/dev/null)
+CURL_EXIT=$?
+if [[ "$CURL_EXIT" != "0" ]]; then
+    err "Tool manifest download failed (curl error $CURL_EXIT) — will retry on next update"
+    rm -f "$_TMP_MANIFEST"
+elif [[ "$HTTP_CODE" == "200" ]]; then
+    # Validate it looks like JSON before replacing the local copy
+    if python3 -c "import json,sys; json.load(open('$_TMP_MANIFEST'))" 2>/dev/null; then
+        mv "$_TMP_MANIFEST" "$MANIFEST_LOCAL"
+        TOOL_COUNT=$(python3 -c "import json; d=json.load(open('$MANIFEST_LOCAL')); print(sum(1 for k in d if not k.startswith('_')))")
+        ok "Tool manifest updated ($TOOL_COUNT tools) at $MANIFEST_LOCAL"
     else
-        err "Tool manifest download failed (HTTP $HTTP_CODE) — will retry on next update"
+        err "Downloaded manifest is not valid JSON — keeping existing copy"
         rm -f "$_TMP_MANIFEST"
     fi
+else
+    err "Tool manifest download failed (HTTP $HTTP_CODE) — will retry on next update"
+    rm -f "$_TMP_MANIFEST"
 fi
 
 ok "Tool manifest sync done"
 
 # =============================================================================
-# 12. Unsafe NSE Scripts pull (subscribers only)
+# 12. Unsafe NSE Scripts pull (open access)
 # =============================================================================
 header "12/12  Unsafe NSE Scripts pull"
 
 UNSAFE_NSE_LOCAL="$SCRIPT_DIR/Noctis-Edge-KB/unsafe_nse_scripts.json"
 
-if [[ -z "$KB_LICENSE_KEY" ]]; then
-    promo "Unsafe NSE scripts pull skipped — KB_LICENSE_KEY not set in noctis.conf"
-    promo "  Subscribe at: https://noctisedge.lemonsqueezy.com to unlock"
-    promo "  intrusive NSE script policies for --unsafe scans."
-else
-    info "Pulling unsafe NSE scripts (license key found) ..."
-    _UNSAFE_NSE_RELAY="https://noctis-kb-relay.pearcetechnologies1.workers.dev"
-    _TMP_UNSAFE_NSE="/tmp/_noctis_unsafe_nse_$$.json"
-    HTTP_CODE=$(curl -sS -w "%{http_code}" -o "$_TMP_UNSAFE_NSE" \
-        --max-time 30 \
-        -X POST "$_UNSAFE_NSE_RELAY/unsafe-nse-scripts" \
-        -H "Content-Type: application/json" \
-        -d "{\"license_key\":\"$KB_LICENSE_KEY\"}" 2>/dev/null)
-    CURL_EXIT=$?
-    if [[ "$CURL_EXIT" != "0" ]]; then
-        err "Unsafe NSE scripts download failed (curl error $CURL_EXIT) — will retry on next update"
-        rm -f "$_TMP_UNSAFE_NSE"
-    elif [[ "$HTTP_CODE" == "200" ]]; then
-        if python3 -c "import json,sys; json.load(open('$_TMP_UNSAFE_NSE'))" 2>/dev/null; then
-            mv "$_TMP_UNSAFE_NSE" "$UNSAFE_NSE_LOCAL"
-            SCRIPT_COUNT=$(python3 -c "import json; d=json.load(open('$UNSAFE_NSE_LOCAL')); print(sum(len(v.get('scripts',[])) for v in d.values()))" 2>/dev/null || echo "?")
-            ok "Unsafe NSE scripts updated ($SCRIPT_COUNT scripts across $(python3 -c "import json; print(len(json.load(open('$UNSAFE_NSE_LOCAL'))))" 2>/dev/null || echo "?") services)"
-        else
-            err "Downloaded unsafe NSE scripts is not valid JSON — keeping existing copy"
-            rm -f "$_TMP_UNSAFE_NSE"
-        fi
-    elif [[ "$HTTP_CODE" == "403" ]]; then
-        err "License key rejected — check your subscription at https://noctisedge.lemonsqueezy.com"
-        rm -f "$_TMP_UNSAFE_NSE"
+info "Pulling unsafe NSE scripts (open access) ..."
+_UNSAFE_NSE_RELAY="https://noctis-kb-relay.pearcetechnologies1.workers.dev"
+[[ -n "${KB_RELAY_URL:-}" ]] && _UNSAFE_NSE_RELAY="$KB_RELAY_URL"
+_TMP_UNSAFE_NSE="/tmp/_noctis_unsafe_nse_$$.json"
+HTTP_CODE=$(curl -sS -w "%{http_code}" -o "$_TMP_UNSAFE_NSE" \
+    --max-time 30 \
+    -X POST "$_UNSAFE_NSE_RELAY/unsafe-nse-scripts" \
+    -H "Content-Type: application/json" \
+    -d '{}' 2>/dev/null)
+CURL_EXIT=$?
+if [[ "$CURL_EXIT" != "0" ]]; then
+    err "Unsafe NSE scripts download failed (curl error $CURL_EXIT) — will retry on next update"
+    rm -f "$_TMP_UNSAFE_NSE"
+elif [[ "$HTTP_CODE" == "200" ]]; then
+    if python3 -c "import json,sys; json.load(open('$_TMP_UNSAFE_NSE'))" 2>/dev/null; then
+        mv "$_TMP_UNSAFE_NSE" "$UNSAFE_NSE_LOCAL"
+        SCRIPT_COUNT=$(python3 -c "import json; d=json.load(open('$UNSAFE_NSE_LOCAL')); print(sum(len(v.get('scripts',[])) for v in d.values()))" 2>/dev/null || echo "?")
+        ok "Unsafe NSE scripts updated ($SCRIPT_COUNT scripts across $(python3 -c "import json; print(len(json.load(open('$UNSAFE_NSE_LOCAL'))))" 2>/dev/null || echo "?") services)"
     else
-        err "Unsafe NSE scripts download failed (HTTP $HTTP_CODE) — will retry on next update"
+        err "Downloaded unsafe NSE scripts is not valid JSON — keeping existing copy"
         rm -f "$_TMP_UNSAFE_NSE"
     fi
+else
+    err "Unsafe NSE scripts download failed (HTTP $HTTP_CODE) — will retry on next update"
+    rm -f "$_TMP_UNSAFE_NSE"
 fi
 
 ok "Unsafe NSE scripts sync done"

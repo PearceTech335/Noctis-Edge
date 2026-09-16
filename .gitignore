@@ -58,7 +58,9 @@ COPILOT_INSTRUCTIONS.md.bak
 sessions/
 session.json
 
-# Nikto scan output files (nikto/ directory is the bundled submodule — do NOT ignore it)
+# Nikto — runtime-cloned by setup.sh / update.sh (pinned release, not a submodule)
+nikto/
+# Nikto scan output files
 nikto_*.txt
 
 # Database files
@@ -68,7 +70,7 @@ reconotron.db
 # Generated automatically by setup.sh / docker-entrypoint.sh
 noctis.conf
 
-# Noctis-Edge-KB — all subscriber/community KB assets live here.
+# Noctis-Edge-KB — all community KB assets live here.
 # Contents are populated by update.sh (Cloudflare relay) and written by noctis.py at runtime.
 # Never committed — includes CVE probes, tool KB, tool manifest, NSE script mappings.
 Noctis-Edge-KB/
@@ -84,7 +86,7 @@ improvements/
 # Noctis Edge local config — may contain git tokens; never commit
 .noctis_config
 
-# Tool manifest backup — created when update.sh overwrites with a new subscriber download
+# Tool manifest backup — created when update.sh overwrites with a new community download
 tool_manifest.json.bak
 ForYouToDo.md
 .codex

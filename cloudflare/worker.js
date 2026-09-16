@@ -23,11 +23,18 @@
  *   POST /submit               Accept a CVE KB submission
  *   POST /submit-tool          Accept a tool performance KB submission
  *   POST /submit-nuclei        Accept a Nuclei template KB submission
- *   POST /community-kb         Validate LS license key and serve community_kb.json
- *   POST /community-tool-kb    Validate LS license key and serve community_tool_kb.json
- *   POST /community-nuclei-kb  Validate LS license key and serve community_nuclei_kb.json
- *   POST /tool-manifest        Validate LS license key and serve tool_manifest.json
+ *   GET|POST /community-kb         Serve community KB manifest / shards (open)
+ *   GET|POST /community-tool-kb    Serve community_tool_kb.json (open)
+ *   GET|POST /community-nuclei-kb  Serve community_nuclei_kb.json (open)
+ *   GET|POST /tool-manifest        Serve tool_manifest.json (open)
+ *   GET|POST /unsafe-nse-scripts   Serve unsafe_nse_scripts.json (open)
  *   GET  /health               Liveness probe
+ *
+ * Open-KB mode: pull endpoints require no license key.  Submission endpoints
+ * (+ the submissions-pipeline quorum/blocklist build) remain the sanitization
+ * path.  To re-introduce a paywall later, restore the Lemon Squeezy check in
+ * _requireOpenAccess() below — clients still send an (ignored) license_key
+ * field for backwards compatibility.
  */
 
 const GITHUB_OWNER    = "PearceTech335";
@@ -284,50 +291,43 @@ async function _fetchKbJsonFromGithub(path, token) {
   return { ok: true, status: resp.status, text: await resp.text() };
 }
 
-async function handleCommunityKB(request, env) {
-  // ── Parse body ────────────────────────────────────────────────────────────
-  let body;
+/**
+ * Open-access gate for pull endpoints.  Currently always passes — the
+ * community KB is free while the corpus is being bootstrapped.  Accepts (and
+ * ignores) a legacy `license_key` field so old clients keep working.
+ * To re-gate later, restore the Lemon Squeezy validate call here and return
+ * 403 on invalid keys.
+ */
+function _requireOpenAccess(_body) {
+  return null;
+}
+
+async function _parsePullBody(request) {
+  if (request.method === "GET") {
+    try {
+      const url = new URL(request.url);
+      return { license_key: null, shard: url.searchParams.get("shard") };
+    } catch {
+      return {};
+    }
+  }
   try {
-    body = await request.json();
+    return await request.json();
   } catch {
-    return jsonResp({ error: "Request body must be valid JSON" }, 400);
+    return {};
   }
+}
 
-  const licenseKey = body?.license_key;
-  if (!licenseKey || typeof licenseKey !== "string" || licenseKey.trim() === "") {
-    return jsonResp({ error: "license_key is required" }, 400);
-  }
-
-  // ── Validate license key with Lemon Squeezy ────────────────────────────────
-  // Public License API — no server-side auth token required
-  let lsResp;
-  try {
-    lsResp = await fetch("https://api.lemonsqueezy.com/v1/licenses/validate", {
-      method: "POST",
-      headers: {
-        "Accept":       "application/json",
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: `license_key=${encodeURIComponent(licenseKey.trim())}`,
-    });
-  } catch (err) {
-    console.error("[community-kb] Lemon Squeezy validate network error:", err);
-    return jsonResp({ error: "License validation temporarily unavailable — try again later" }, 503);
-  }
-
-  const lsData = await lsResp.json();
-
-  if (!lsResp.ok || !lsData?.valid || lsData?.license_key?.status !== "active") {
-    return jsonResp({
-      error:   "invalid_key",
-      message: "License key not recognised or inactive. Subscribe at https://noctisedge.lemonsqueezy.com",
-    }, 403);
-  }
+async function handleCommunityKB(request, env) {
+  // ── Parse body (GET query or POST JSON; license_key ignored if present) ──
+  const body = await _parsePullBody(request);
+  const gate = _requireOpenAccess(body);
+  if (gate) return gate;
 
   // ── Determine what to serve ───────────────────────────────────────────────
   // No shard param  → return CVE_KB/manifest.json  (tiny index of available shards)
   // shard=CVE-2017-1 → return CVE_KB/CVE-2017-1.json  (one shard, ~2-25 MB)
-  // This allows subscribers to pre-download the entire KB before going airgapped:
+  // This allows operators to pre-download the entire KB before going airgapped:
   //   1. Pull manifest to get shard list
   //   2. Loop and pull each named shard → write to local CVE_KB/
   const shardName = body?.shard ?? null;
@@ -562,45 +562,13 @@ async function handleNucleiSubmit(request, env) {
 }
 
 // ---------------------------------------------------------------------------
-// Community Nuclei KB download handler (subscribers only)
+// Community Nuclei KB download handler (open, read-only)
 // ---------------------------------------------------------------------------
 
 async function handleCommunityNucleiKB(request, env) {
-  let body;
-  try {
-    body = await request.json();
-  } catch {
-    return jsonResp({ error: "Request body must be valid JSON" }, 400);
-  }
-
-  const licenseKey = body?.license_key;
-  if (!licenseKey || typeof licenseKey !== "string" || licenseKey.trim() === "") {
-    return jsonResp({ error: "license_key is required" }, 400);
-  }
-
-  let lsResp;
-  try {
-    lsResp = await fetch("https://api.lemonsqueezy.com/v1/licenses/validate", {
-      method: "POST",
-      headers: {
-        "Accept":       "application/json",
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: `license_key=${encodeURIComponent(licenseKey.trim())}`,
-    });
-  } catch (err) {
-    console.error("[community-nuclei-kb] Lemon Squeezy validate network error:", err);
-    return jsonResp({ error: "License validation temporarily unavailable — try again later" }, 503);
-  }
-
-  const lsData = await lsResp.json();
-
-  if (!lsResp.ok || !lsData?.valid || lsData?.license_key?.status !== "active") {
-    return jsonResp({
-      error:   "invalid_key",
-      message: "License key not recognised or inactive. Subscribe at https://noctisedge.lemonsqueezy.com",
-    }, 403);
-  }
+  const body = await _parsePullBody(request);
+  const gate = _requireOpenAccess(body);
+  if (gate) return gate;
 
   const kbResp = await fetch(
     "https://api.github.com/repos/PearceTech335/Noctis-Edge-Nuclei-KB/contents/community_nuclei_kb.json",
@@ -625,45 +593,13 @@ async function handleCommunityNucleiKB(request, env) {
 }
 
 // ---------------------------------------------------------------------------
-// Unsafe NSE Scripts download handler (subscribers only, read-only)
+// Unsafe NSE Scripts download handler (open, read-only)
 // ---------------------------------------------------------------------------
 
 async function handleUnsafeNseScripts(request, env) {
-  let body;
-  try {
-    body = await request.json();
-  } catch {
-    return jsonResp({ error: "Request body must be valid JSON" }, 400);
-  }
-
-  const licenseKey = body?.license_key;
-  if (!licenseKey || typeof licenseKey !== "string" || licenseKey.trim() === "") {
-    return jsonResp({ error: "license_key is required" }, 400);
-  }
-
-  let lsResp;
-  try {
-    lsResp = await fetch("https://api.lemonsqueezy.com/v1/licenses/validate", {
-      method: "POST",
-      headers: {
-        "Accept":       "application/json",
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: `license_key=${encodeURIComponent(licenseKey.trim())}`,
-    });
-  } catch (err) {
-    console.error("[unsafe-nse-scripts] Lemon Squeezy validate network error:", err);
-    return jsonResp({ error: "License validation temporarily unavailable — try again later" }, 503);
-  }
-
-  const lsData = await lsResp.json();
-
-  if (!lsResp.ok || !lsData?.valid || lsData?.license_key?.status !== "active") {
-    return jsonResp({
-      error:   "invalid_key",
-      message: "License key not recognised or inactive. Subscribe at https://noctisedge.lemonsqueezy.com",
-    }, 403);
-  }
+  const body = await _parsePullBody(request);
+  const gate = _requireOpenAccess(body);
+  if (gate) return gate;
 
   const fileResp = await fetch(
     "https://api.github.com/repos/PearceTech335/Noctis-Edge-Tool-Manifest-KB/contents/unsafe_nse_scripts.json",
@@ -688,45 +624,13 @@ async function handleUnsafeNseScripts(request, env) {
 }
 
 // ---------------------------------------------------------------------------
-// Tool Manifest download handler (subscribers only, read-only)
+// Tool Manifest download handler (open, read-only)
 // ---------------------------------------------------------------------------
 
 async function handleToolManifest(request, env) {
-  let body;
-  try {
-    body = await request.json();
-  } catch {
-    return jsonResp({ error: "Request body must be valid JSON" }, 400);
-  }
-
-  const licenseKey = body?.license_key;
-  if (!licenseKey || typeof licenseKey !== "string" || licenseKey.trim() === "") {
-    return jsonResp({ error: "license_key is required" }, 400);
-  }
-
-  let lsResp;
-  try {
-    lsResp = await fetch("https://api.lemonsqueezy.com/v1/licenses/validate", {
-      method: "POST",
-      headers: {
-        "Accept":       "application/json",
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: `license_key=${encodeURIComponent(licenseKey.trim())}`,
-    });
-  } catch (err) {
-    console.error("[tool-manifest] Lemon Squeezy validate network error:", err);
-    return jsonResp({ error: "License validation temporarily unavailable — try again later" }, 503);
-  }
-
-  const lsData = await lsResp.json();
-
-  if (!lsResp.ok || !lsData?.valid || lsData?.license_key?.status !== "active") {
-    return jsonResp({
-      error:   "invalid_key",
-      message: "License key not recognised or inactive. Subscribe at https://noctisedge.lemonsqueezy.com",
-    }, 403);
-  }
+  const body = await _parsePullBody(request);
+  const gate = _requireOpenAccess(body);
+  if (gate) return gate;
 
   const manifestResp = await fetch(
     "https://api.github.com/repos/PearceTech335/Noctis-Edge-Tool-Manifest-KB/contents/tool_manifest.json",
@@ -751,46 +655,12 @@ async function handleToolManifest(request, env) {
 }
 
 async function handleCommunityToolKB(request, env) {
-  // ── Parse body ────────────────────────────────────────────────────────────
-  let body;
-  try {
-    body = await request.json();
-  } catch {
-    return jsonResp({ error: "Request body must be valid JSON" }, 400);
-  }
+  // ── Parse body (license_key ignored if present for backwards compat) ──────
+  const body = await _parsePullBody(request);
+  const gate = _requireOpenAccess(body);
+  if (gate) return gate;
 
-  const licenseKey = body?.license_key;
-  if (!licenseKey || typeof licenseKey !== "string" || licenseKey.trim() === "") {
-    return jsonResp({ error: "license_key is required" }, 400);
-  }
-
-  // ── Validate license key with Lemon Squeezy ────────────────────────────────
-  // Public License API — no server-side auth token required
-  let lsResp;
-  try {
-    lsResp = await fetch("https://api.lemonsqueezy.com/v1/licenses/validate", {
-      method: "POST",
-      headers: {
-        "Accept":       "application/json",
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: `license_key=${encodeURIComponent(licenseKey.trim())}`,
-    });
-  } catch (err) {
-    console.error("[community-tool-kb] Lemon Squeezy validate network error:", err);
-    return jsonResp({ error: "License validation temporarily unavailable — try again later" }, 503);
-  }
-
-  const lsData = await lsResp.json();
-
-  if (!lsResp.ok || !lsData?.valid || lsData?.license_key?.status !== "active") {
-    return jsonResp({
-      error:   "invalid_key",
-      message: "License key not recognised or inactive. Subscribe at https://noctisedge.lemonsqueezy.com",
-    }, 403);
-  }
-
-  // ── Fetch community_tool_kb.json from private GitHub repo ────────────────
+  // ── Fetch community_tool_kb.json from GitHub KB repo ──────────────────────
   const kbResp = await fetch(
     "https://api.github.com/repos/PearceTech335/Noctis-Edge-Tool-KB/contents/community_tool_kb.json",
     {
@@ -837,23 +707,23 @@ export default {
       return handleNucleiSubmit(request, env);
     }
 
-    if (pathname === "/community-kb" && request.method === "POST") {
+    if (pathname === "/community-kb" && (request.method === "POST" || request.method === "GET")) {
       return handleCommunityKB(request, env);
     }
 
-    if (pathname === "/community-tool-kb" && request.method === "POST") {
+    if (pathname === "/community-tool-kb" && (request.method === "POST" || request.method === "GET")) {
       return handleCommunityToolKB(request, env);
     }
 
-    if (pathname === "/community-nuclei-kb" && request.method === "POST") {
+    if (pathname === "/community-nuclei-kb" && (request.method === "POST" || request.method === "GET")) {
       return handleCommunityNucleiKB(request, env);
     }
 
-    if (pathname === "/tool-manifest" && request.method === "POST") {
+    if (pathname === "/tool-manifest" && (request.method === "POST" || request.method === "GET")) {
       return handleToolManifest(request, env);
     }
 
-    if (pathname === "/unsafe-nse-scripts" && request.method === "POST") {
+    if (pathname === "/unsafe-nse-scripts" && (request.method === "POST" || request.method === "GET")) {
       return handleUnsafeNseScripts(request, env);
     }
 

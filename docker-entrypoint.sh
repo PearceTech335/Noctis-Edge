@@ -31,14 +31,14 @@ for KB_FILE in /app/cve_knowledge_base.json /app/tool_knowledge_base.json /app/n
     fi
 done
 # ---------------------------------------------------------------------------
-# Tool manifest is a subscriber artifact \u2014 do NOT create a placeholder.
+# Tool manifest is a community artifact \u2014 do NOT create a placeholder.
 # If Docker created it as a directory (because the host file was missing at
 # compose-up time), remove the directory so the scanner can start cleanly.
 # The scanner gracefully runs without the manifest (curl catch-all routing).
 # ---------------------------------------------------------------------------
 if [[ -d "/app/tool_manifest.json" ]]; then
     echo "[!] tool_manifest.json was created as a directory by Docker — removing."
-    echo "    It is an optional subscriber artifact; the scanner will run without it."
+    echo "    It is an optional community artifact; the scanner will run without it."
     rm -rf "/app/tool_manifest.json" 2>/dev/null || \
         echo "[!] Could not remove bind-mounted directory (device busy on macOS) — scanner will start without tool manifest."
 fi
@@ -60,12 +60,10 @@ KB_USER_ID="${UUID}"
 KB_RELAY_URL=""
 
 # =============================================================================
-# PAID TIER
+# COMMUNITY KB (open access — no license key required; legacy key ignored)
 # =============================================================================
 
 KB_LICENSE_KEY=""
-# ↑ Paste your Lemon Squeezy license key here to enable the community CVE KB download.
-#   Subscribe at: https://noctisedge.lemonsqueezy.com
 EOF
     echo "[*] Generated new installation ID: ${UUID}"
     echo "[*] Config written to ${CONF_FILE}"
