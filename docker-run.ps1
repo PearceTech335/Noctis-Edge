@@ -96,8 +96,14 @@ try {
 Write-Header "2/5  Building Noctis Edge Docker image"
 $forceRebuild = $args -contains "--rebuild"
 $imageExists  = $false
-docker image inspect noctis-edge:latest 2>$null | Out-Null
-if ($LASTEXITCODE -eq 0) { $imageExists = $true }
+# Guarded: with $ErrorActionPreference="Stop", a missing image would otherwise
+# throw a terminating NativeCommandError here on first run instead of building.
+try {
+    docker image inspect noctis-edge:latest 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) { $imageExists = $true }
+} catch {
+    $imageExists = $false
+}
 $codeChanged  = ($gitBefore -ne "" -and $gitAfter -ne "" -and $gitBefore -ne $gitAfter)
 
 # Consume the sentinel written by update.sh when it ran inside the container.
