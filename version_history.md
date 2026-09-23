@@ -12,7 +12,7 @@
 - Published the curated v0.12.0 policies to `Noctis-Edge-Tool-Manifest-KB`: `unsafe_nse_scripts.json` (was `{}` — community pulls were empty), plus new `safe_nse_scripts.json` and `aggressive_nse_scripts.json`.
 - `cloudflare/worker.js`: added open-access `/safe-nse-scripts` and `/aggressive-nse-scripts` endpoints mirroring `/unsafe-nse-scripts` (previously only unsafe was servable — fresh installs could never receive safe/aggressive tiers).
 - `update.sh`: added pull steps 12b/12c for safe/aggressive policies with the same JSON-validation + keep-existing-copy fallback as the unsafe pull.
-- **Deployment required:** the live worker still runs the pre-open-access build (pulls return `license_key is required`). Run `wrangler deploy` in `cloudflare/` after pulling this release, otherwise all community pulls stay broken.
+- **Deployment confirmed live:** the worker (including the new `/safe-nse-scripts` and `/aggressive-nse-scripts` endpoints) is deployed and verified — all three tier pulls return the curated policies (unsafe: 79 services; safe: 10; aggressive: 6).
 
 ---
 

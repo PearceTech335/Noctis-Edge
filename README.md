@@ -17,7 +17,7 @@ This architecture makes Noctis Edge particularly suited for regulated environmen
 ## What's New in v0.12.1
 
 - **KB submission sanitizers hardened** — CVE/Nuclei KB submissions now also scrub IPv6, MACs, session-cookie/auth-token values, and firmware/creds-file paths. Device-mode cookies can never reach the community corpus.
-- **NSE policies actually distributable** — curated policies published to `Noctis-Edge-Tool-Manifest-KB` (unsafe was `{}` upstream); worker gains `/safe-nse-scripts` + `/aggressive-nse-scripts` endpoints and `update.sh` pulls them (steps 12b/12c). **You must `wrangler deploy` in `cloudflare/`** — the live worker is still the pre-open-access build and rejects all pulls with `license_key is required`.
+- **NSE policies actually distributable** — curated policies published to `Noctis-Edge-Tool-Manifest-KB` (upstream unsafe was `{}`); worker serves `/safe-nse-scripts` + `/aggressive-nse-scripts` alongside `/unsafe-nse-scripts`, and `update.sh` pulls all three tiers (steps 12/12b/12c). Endpoints verified live against the deployed relay.
 
 ## What's New in v0.12.0
 
