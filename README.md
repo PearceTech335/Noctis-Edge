@@ -14,6 +14,11 @@ This architecture makes Noctis Edge particularly suited for regulated environmen
 
 ---
 
+## What's New in v0.12.1
+
+- **KB submission sanitizers hardened** — CVE/Nuclei KB submissions now also scrub IPv6, MACs, session-cookie/auth-token values, and firmware/creds-file paths. Device-mode cookies can never reach the community corpus.
+- **NSE policies actually distributable** — curated policies published to `Noctis-Edge-Tool-Manifest-KB` (unsafe was `{}` upstream); worker gains `/safe-nse-scripts` + `/aggressive-nse-scripts` endpoints and `update.sh` pulls them (steps 12b/12c). **You must `wrangler deploy` in `cloudflare/`** — the live worker is still the pre-open-access build and rejects all pulls with `license_key is required`.
+
 ## What's New in v0.12.0
 
 - **Abliterated default model** — all LLM roles now default to `huihui_ai/qwen2.5-coder-abliterate:3b-instruct` (same ~2 GB footprint as before), cutting refusals on authorized defensive probe generation (auth-flow reasoning, cookie replay, RTSP/ONVIF checks). Roll back via `NOCTIS_OLLAMA_MODEL` / `NOCTIS_OLLAMA_SCRIPT_MODEL` overrides. See [Model Roles](#model-roles).
@@ -528,8 +533,10 @@ The `cloudflare/` directory contains the Cloudflare Worker that relays KB submis
 | `/community-nuclei-kb` | GET/POST | Nuclei community KB pull (open access) |
 | `/tool-manifest` | GET/POST | Tool manifest pull (open access) |
 | `/unsafe-nse-scripts` | GET/POST | Unsafe NSE scripts pull (open access) |
+| `/safe-nse-scripts` | GET/POST | Safe NSE scripts pull (open access) |
+| `/aggressive-nse-scripts` | GET/POST | Aggressive NSE scripts pull (open access) |
 
-The worker is already deployed at `https://noctis-kb-relay.pearcetechnologies1.workers.dev`. End users do not need to deploy anything.
+The worker is already deployed at `https://noctis-kb-relay.pearcetechnologies1.workers.dev`. End users do not need to deploy anything. After changing `cloudflare/worker.js`, redeploy with `wrangler deploy` in `cloudflare/` so the new endpoints go live.
 
 ---
 
@@ -553,7 +560,12 @@ The worker is already deployed at `https://noctis-kb-relay.pearcetechnologies1.w
 
 ## Version History
 
-**Current version: v0.12.0**
+**Current version: v0.12.1**
+
+### v0.12.1 — KB Pipeline: Sanitizer Hardening + NSE Policy Distribution
+
+- Sanitizers in `submit_kb.py` / `submit_nuclei_kb.py` extended (IPv6, MAC, session-cookie redaction, firmware/creds paths); tool-KB submitter verified sufficient.
+- Curated NSE policies published to the Tool-Manifest-KB repo; worker + `update.sh` now distribute all three tiers. Requires `wrangler deploy` to take effect. See `version_history.md`.
 
 ### v0.12.0 — Device Mode + Recon Sweep + Abliterated Model
 

@@ -28,6 +28,8 @@
  *   GET|POST /community-nuclei-kb  Serve community_nuclei_kb.json (open)
  *   GET|POST /tool-manifest        Serve tool_manifest.json (open)
  *   GET|POST /unsafe-nse-scripts   Serve unsafe_nse_scripts.json (open)
+ *   GET|POST /safe-nse-scripts     Serve safe_nse_scripts.json (open)
+ *   GET|POST /aggressive-nse-scripts Serve aggressive_nse_scripts.json (open)
  *   GET  /health               Liveness probe
  *
  * Open-KB mode: pull endpoints require no license key.  Submission endpoints
@@ -624,6 +626,66 @@ async function handleUnsafeNseScripts(request, env) {
 }
 
 // ---------------------------------------------------------------------------
+// NSE policy download handlers (open, read-only).
+// safe/aggressive mirror /unsafe-nse-scripts so fresh installs receive all
+// three tiers via update.sh instead of shipping with empty policy files.
+// ---------------------------------------------------------------------------
+
+async function handleSafeNseScripts(request, env) {
+  const body = await _parsePullBody(request);
+  const gate = _requireOpenAccess(body);
+  if (gate) return gate;
+
+  const fileResp = await fetch(
+    "https://api.github.com/repos/PearceTech335/Noctis-Edge-Tool-Manifest-KB/contents/safe_nse_scripts.json",
+    {
+      headers: {
+        ...githubHeaders(env.GITHUB_MANIFEST_TOKEN),
+        Accept: "application/vnd.github.v3.raw",
+      },
+    }
+  );
+
+  if (!fileResp.ok) {
+    console.error(`[safe-nse-scripts] GitHub fetch failed HTTP ${fileResp.status}`);
+    return jsonResp({ error: "Safe NSE scripts temporarily unavailable — try again later" }, 502);
+  }
+
+  const fileText = await fileResp.text();
+  return new Response(fileText, {
+    status:  200,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+async function handleAggressiveNseScripts(request, env) {
+  const body = await _parsePullBody(request);
+  const gate = _requireOpenAccess(body);
+  if (gate) return gate;
+
+  const fileResp = await fetch(
+    "https://api.github.com/repos/PearceTech335/Noctis-Edge-Tool-Manifest-KB/contents/aggressive_nse_scripts.json",
+    {
+      headers: {
+        ...githubHeaders(env.GITHUB_MANIFEST_TOKEN),
+        Accept: "application/vnd.github.v3.raw",
+      },
+    }
+  );
+
+  if (!fileResp.ok) {
+    console.error(`[aggressive-nse-scripts] GitHub fetch failed HTTP ${fileResp.status}`);
+    return jsonResp({ error: "Aggressive NSE scripts temporarily unavailable — try again later" }, 502);
+  }
+
+  const fileText = await fileResp.text();
+  return new Response(fileText, {
+    status:  200,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Tool Manifest download handler (open, read-only)
 // ---------------------------------------------------------------------------
 
@@ -725,6 +787,14 @@ export default {
 
     if (pathname === "/unsafe-nse-scripts" && (request.method === "POST" || request.method === "GET")) {
       return handleUnsafeNseScripts(request, env);
+    }
+
+    if (pathname === "/safe-nse-scripts" && (request.method === "POST" || request.method === "GET")) {
+      return handleSafeNseScripts(request, env);
+    }
+
+    if (pathname === "/aggressive-nse-scripts" && (request.method === "POST" || request.method === "GET")) {
+      return handleAggressiveNseScripts(request, env);
     }
 
     return jsonResp({ error: "Not found" }, 404);

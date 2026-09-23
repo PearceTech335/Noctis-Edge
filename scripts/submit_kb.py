@@ -37,16 +37,41 @@ RELAY_URL = "https://noctis-kb-relay.pearcetechnologies1.workers.dev/submit"
 
 # Regex patterns used by the sanitizer
 _RE_IPV4        = re.compile(r'\b(?:\d{1,3}\.){3}\d{1,3}\b')
+_RE_IPV6        = re.compile(r'\b(?:[0-9A-Fa-f]{0,4}:){2,}[0-9A-Fa-f:.]+\b')
+_RE_MAC         = re.compile(r'\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b')
 _RE_LOCAL_PATH  = re.compile(r'(?:/[\w.\-]+){3,}/(?:sessions|cve_tests)/[\w/._\-]+')
+# Session cookies / auth tokens must never leave the host (device Phase-3).
+_RE_SECRET_ASSIGN = re.compile(
+    r"(?i)\b(session|uid|password[-_ ]?cookie|keydata\w*|usrmk|crole|role"
+    r"|token|api[_-]?key|userpwd|passwd|password|cookie)\s*[:=]\s*[^\s;,}]+"
+)
+# Operator-supplied sensitive file arguments (firmware images, creds files).
+_RE_SENSITIVE_PATH = re.compile(
+    r'(?:--firmware|--creds-file)\s+\S+|[\w/\\.\-]*firmware[\w/\\.\-]*\.(?:bin|img|zip|dat)\b',
+    re.IGNORECASE,
+)
+
+
+def _scrub_text(text: str) -> str:
+    """Apply every sanitizer pattern to a free-text field."""
+    text = _RE_IPV4.sub("<TARGET>", text)
+    text = _RE_MAC.sub("<MAC>", text)
+    text = _RE_IPV6.sub("<TARGETv6>", text)
+    text = _RE_LOCAL_PATH.sub("<path>", text)
+    text = _RE_SENSITIVE_PATH.sub("<path>", text)
+    text = _RE_SECRET_ASSIGN.sub(lambda m: m.group(1) + "=<REDACTED>", text)
+    return text
 
 
 def _sanitize_cve_kb(kb: dict) -> dict:
-    """Return a deep copy of the CVE KB with target IPs and local paths removed.
+    """Return a deep copy of the CVE KB with target identifiers removed.
 
-    Specifically:
-    - script fields: IPv4 addresses replaced with <TARGET>
-    - output_sample fields: absolute filesystem paths replaced with <path>
-    Both replacements apply recursively through nested lists/dicts.
+    Specifically (applied to script and output_sample fields):
+    - IPv4/IPv6 addresses replaced with <TARGET>/<TARGETv6>
+    - MAC addresses replaced with <MAC>
+    - Session cookie / auth token assignments replaced with <REDACTED>
+    - Absolute filesystem paths, firmware images, and creds-file args
+      replaced with <path>
     """
     import copy
     kb = copy.deepcopy(kb)
@@ -57,11 +82,9 @@ def _sanitize_cve_kb(kb: dict) -> dict:
             if not isinstance(script, dict):
                 continue
             if isinstance(script.get("script"), str):
-                script["script"] = _RE_IPV4.sub("<TARGET>", script["script"])
+                script["script"] = _scrub_text(script["script"])
             if isinstance(script.get("output_sample"), str):
-                script["output_sample"] = _RE_LOCAL_PATH.sub(
-                    "<path>", script["output_sample"]
-                )
+                script["output_sample"] = _scrub_text(script["output_sample"])
     return kb
 
 

@@ -713,6 +713,76 @@ fi
 ok "Unsafe NSE scripts sync done"
 
 # =============================================================================
+# 12b. Safe NSE Scripts pull (open access)
+# =============================================================================
+header "12b/12  Safe NSE Scripts pull"
+
+SAFE_NSE_LOCAL="$SCRIPT_DIR/Noctis-Edge-KB/safe_nse_scripts.json"
+
+info "Pulling safe NSE scripts (open access) ..."
+_SAFE_NSE_RELAY="https://noctis-kb-relay.pearcetechnologies1.workers.dev"
+[[ -n "${KB_RELAY_URL:-}" ]] && _SAFE_NSE_RELAY="$KB_RELAY_URL"
+_TMP_SAFE_NSE="/tmp/_noctis_safe_nse_$$.json"
+HTTP_CODE=$(curl -sS -w "%{http_code}" -o "$_TMP_SAFE_NSE" \
+    --max-time 30 \
+    -X POST "$_SAFE_NSE_RELAY/safe-nse-scripts" \
+    -H "Content-Type: application/json" \
+    -d '{}' 2>/dev/null)
+CURL_EXIT=$?
+if [[ "$CURL_EXIT" != "0" ]]; then
+    err "Safe NSE scripts download failed (curl error $CURL_EXIT) — will retry on next update"
+    rm -f "$_TMP_SAFE_NSE"
+elif [[ "$HTTP_CODE" == "200" ]]; then
+    if python3 -c "import json,sys; json.load(open('$_TMP_SAFE_NSE'))" 2>/dev/null; then
+        mv "$_TMP_SAFE_NSE" "$SAFE_NSE_LOCAL"
+        ok "Safe NSE scripts updated at $SAFE_NSE_LOCAL"
+    else
+        err "Downloaded safe NSE scripts is not valid JSON — keeping existing copy"
+        rm -f "$_TMP_SAFE_NSE"
+    fi
+else
+    err "Safe NSE scripts download failed (HTTP $HTTP_CODE) — will retry on next update"
+    rm -f "$_TMP_SAFE_NSE"
+fi
+
+ok "Safe NSE scripts sync done"
+
+# =============================================================================
+# 12c. Aggressive NSE Scripts pull (open access)
+# =============================================================================
+header "12c/12  Aggressive NSE Scripts pull"
+
+AGGR_NSE_LOCAL="$SCRIPT_DIR/Noctis-Edge-KB/aggressive_nse_scripts.json"
+
+info "Pulling aggressive NSE scripts (open access) ..."
+_AGGR_NSE_RELAY="https://noctis-kb-relay.pearcetechnologies1.workers.dev"
+[[ -n "${KB_RELAY_URL:-}" ]] && _AGGR_NSE_RELAY="$KB_RELAY_URL"
+_TMP_AGGR_NSE="/tmp/_noctis_aggressive_nse_$$.json"
+HTTP_CODE=$(curl -sS -w "%{http_code}" -o "$_TMP_AGGR_NSE" \
+    --max-time 30 \
+    -X POST "$_AGGR_NSE_RELAY/aggressive-nse-scripts" \
+    -H "Content-Type: application/json" \
+    -d '{}' 2>/dev/null)
+CURL_EXIT=$?
+if [[ "$CURL_EXIT" != "0" ]]; then
+    err "Aggressive NSE scripts download failed (curl error $CURL_EXIT) — will retry on next update"
+    rm -f "$_TMP_AGGR_NSE"
+elif [[ "$HTTP_CODE" == "200" ]]; then
+    if python3 -c "import json,sys; json.load(open('$_TMP_AGGR_NSE'))" 2>/dev/null; then
+        mv "$_TMP_AGGR_NSE" "$AGGR_NSE_LOCAL"
+        ok "Aggressive NSE scripts updated at $AGGR_NSE_LOCAL"
+    else
+        err "Downloaded aggressive NSE scripts is not valid JSON — keeping existing copy"
+        rm -f "$_TMP_AGGR_NSE"
+    fi
+else
+    err "Aggressive NSE scripts download failed (HTTP $HTTP_CODE) — will retry on next update"
+    rm -f "$_TMP_AGGR_NSE"
+fi
+
+ok "Aggressive NSE scripts sync done"
+
+# =============================================================================
 # Done
 # =============================================================================
 echo ""

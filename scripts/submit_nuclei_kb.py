@@ -23,24 +23,45 @@ import urllib.error
 RELAY_URL = "https://noctis-kb-relay.pearcetechnologies1.workers.dev/submit-nuclei"
 
 _RE_IPV4       = re.compile(r'\b(?:\d{1,3}\.){3}\d{1,3}\b')
+_RE_IPV6        = re.compile(r'\b(?:[0-9A-Fa-f]{0,4}:){2,}[0-9A-Fa-f:.]+\b')
+_RE_MAC         = re.compile(r'\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b')
 _RE_LOCAL_PATH = re.compile(r'(?:/[\w.\-]+){3,}/(?:sessions|cve_tests)/[\w/._\-]+')
+# Session cookies / auth tokens must never leave the host (device Phase-3).
+_RE_SECRET_ASSIGN = re.compile(
+    r"(?i)\b(session|uid|password[-_ ]?cookie|keydata\w*|usrmk|crole|role"
+    r"|token|api[_-]?key|userpwd|passwd|password|cookie)\s*[:=]\s*[^\s;,}]+"
+)
+_RE_SENSITIVE_PATH = re.compile(
+    r'(?:--firmware|--creds-file)\s+\S+|[\w/\\.\-]*firmware[\w/\\.\-]*\.(?:bin|img|zip|dat)\b',
+    re.IGNORECASE,
+)
+
+
+def _scrub_text(text: str, ip_token: str = "<TARGET>") -> str:
+    """Apply every sanitizer pattern to a free-text field."""
+    text = _RE_IPV4.sub(ip_token, text)
+    text = _RE_MAC.sub("<MAC>", text)
+    text = _RE_IPV6.sub("<TARGETv6>", text)
+    text = _RE_LOCAL_PATH.sub("<path>", text)
+    text = _RE_SENSITIVE_PATH.sub("<path>", text)
+    text = _RE_SECRET_ASSIGN.sub(lambda m: m.group(1) + "=<REDACTED>", text)
+    return text
 
 
 def _sanitize_nuclei_kb(nkb: dict) -> dict:
-    """Return a deep copy with target IPs and local paths scrubbed from yaml_content
-    and output_samples fields."""
+    """Return a deep copy with target identifiers scrubbed from yaml_content
+    and output_samples fields (IPs, IPv6, MACs, session cookies, local paths)."""
     import copy
     nkb = copy.deepcopy(nkb)
     for entry in nkb.values():
         if not isinstance(entry, dict):
             continue
         if isinstance(entry.get("yaml_content"), str):
-            entry["yaml_content"] = _RE_IPV4.sub("{{BaseURL}}", entry["yaml_content"])
+            entry["yaml_content"] = _scrub_text(entry["yaml_content"], "{{BaseURL}}")
         samples = entry.get("output_samples", [])
         if isinstance(samples, list):
             entry["output_samples"] = [
-                _RE_IPV4.sub("<TARGET>", _RE_LOCAL_PATH.sub("<path>", s))
-                if isinstance(s, str) else s
+                _scrub_text(s) if isinstance(s, str) else s
                 for s in samples
             ]
     return nkb

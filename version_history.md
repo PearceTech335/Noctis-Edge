@@ -2,6 +2,20 @@
 
 ---
 
+## v0.12.1 — KB Pipeline: Sanitizer Hardening + NSE Policy Distribution
+
+### Sanitizer hardening (device/recon data types)
+- `scripts/submit_kb.py` and `scripts/submit_nuclei_kb.py` now also scrub IPv6 (`<TARGETv6>`), MACs (`<MAC>`), session cookie / auth token assignments (`=<REDACTED>`), and firmware-image / `--creds-file` / `--firmware` path arguments (`<path>`) from probe scripts and output samples. Device Phase-3 session cookies can no longer leak into community submissions.
+- `scripts/submit_tool_kb.py` verified sufficient (counter-only stats; slot keys already normalized with IPv4→`target` mapping).
+
+### NSE policy distribution fix
+- Published the curated v0.12.0 policies to `Noctis-Edge-Tool-Manifest-KB`: `unsafe_nse_scripts.json` (was `{}` — community pulls were empty), plus new `safe_nse_scripts.json` and `aggressive_nse_scripts.json`.
+- `cloudflare/worker.js`: added open-access `/safe-nse-scripts` and `/aggressive-nse-scripts` endpoints mirroring `/unsafe-nse-scripts` (previously only unsafe was servable — fresh installs could never receive safe/aggressive tiers).
+- `update.sh`: added pull steps 12b/12c for safe/aggressive policies with the same JSON-validation + keep-existing-copy fallback as the unsafe pull.
+- **Deployment required:** the live worker still runs the pre-open-access build (pulls return `license_key is required`). Run `wrangler deploy` in `cloudflare/` after pulling this release, otherwise all community pulls stay broken.
+
+---
+
 ## v0.12.0 — Device Mode + Recon Sweep + Abliterated Model
 
 ### Abliterated default model
