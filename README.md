@@ -188,18 +188,20 @@ After setup:
 **Docker:**
 ```bash
 docker compose run --rm noctis scan 192.168.0.1
-docker compose run --rm noctis scan 192.168.0.1 web --cve-test
+docker compose run --rm noctis scan 192.168.0.1 full --cve-test
 docker compose run --rm noctis scan 192.168.0.1 --nse-aggressive --msf-validate --cve-test
 docker compose run --rm noctis scan 192.168.0.1 --resume
 ```
 
 **Native Linux:**
 ```bash
-./noctis.py 192.168.0.1                                         # default web profile
-./noctis.py 192.168.0.1 web external api                        # multiple profiles merged
-./noctis.py 192.168.0.1 web --cve-test --dns-enum
+./noctis.py 192.168.0.1                                         # default standard profile
+./noctis.py 192.168.0.1 full                                    # full authorised assessment
+./noctis.py 192.168.0.1 standard --cve-test --dns-enum
 ./noctis.py 192.168.0.1 --nse-aggressive --msf-validate --cve-test  # full aggressive run
 ./noctis.py 192.168.0.1 --resume                                # resume interrupted scan
+./noctis.py --recon 192.168.1.0/24                              # discovery sweep -> recon.json triage
+./noctis.py --device 192.168.1.50                               # single-host embedded assessment
 ```
 
 ![Command Line Usage](https://github.com/user-attachments/assets/5c27d403-60bb-4608-93ce-0332c1a5a2f4)
@@ -210,14 +212,23 @@ docker compose run --rm noctis scan 192.168.0.1 --resume
 
 | Flag | Description |
 |------|-------------|
-| `<target>` | IP address or hostname to scan (required) |
-| `[profile]` | Assessment profile (default: `web`). Multiple profiles merge their tool lists. |
+| `<target>` | IP address or hostname to scan (required, except with `--recon` where a CIDR/range is expected) |
+| `[profile]` | Assessment profile (default: `standard`). Multiple profiles merge their tool lists. |
 | `--nse-aggressive` | Disable safe mode — enables aggressive NSE script tier; runs ffuf and hydra without approval prompts |
 | `--dns-enum` | Enable DNS enumeration tools (amass, dnsenum, dnsrecon) — requires internet access |
 | `--msf-validate` | Non-destructively validate CVE matches using Metasploit safe checks; with `--cve-test`, runs post-positive check-only corroboration |
 | `--cve-test` | Generate and execute LLM-driven probe scripts for each matched CVE |
+| `--cve-nse` | Separately acknowledged escalation tier for policy-mapped NSE checks tied to matched CVE evidence (requires `--cve-test`) |
+| `--unsafe` | Opt-in intrusive verifier tier — requires typing the exact token `UNSAFE` at the legal-notice prompt (no unattended bypass) |
+| `--device` | Single-host embedded/IoT assessment (IP, DHCP hostname, or FQDN only — CIDR refused). Implies aggressive-but-safe NSE; with `--unsafe` adds the unsafe tier. See [Optional Phases](#optional-phases) |
+| `--recon` | Discovery-only subnet sweep producing versioned `recon.json` triage (refuses `--unsafe`/`--cve-test`). See [Optional Phases](#optional-phases) |
+| `--input <recon.json>` | Second-sweep host selection from a recon file |
+| `--firmware <path>` | Offline stdlib-only firmware string scan (operator supplies the image; runs in P1 only with `--unsafe`, otherwise deferred) |
+| `--creds-file <path>` | JSON cookies file for device Phase-3 authenticated mapping (0600 recommended; secrets redacted in logs/reports) |
 | `--unattended` | Auto-approve all interactive prompts (useful for scripted/automated runs) |
 | `--resume` | Resume the most recent interrupted scan session for this target |
+| `--session-dir <path>` | Resume a specific session directory (e.g. via Web UI picker) |
+| `--report <json_file>` | Render an HTML report from an existing report JSON |
 
 ---
 
@@ -227,12 +238,9 @@ Pass one or more profile names after the target. Tools from all selected profile
 
 | Profile | Focus | Key Tools |
 |---------|-------|-----------|
-| `web` | Web Application Assessment | curl, nikto, nuclei, ffuf |
-| `external` | External Perimeter Review | nmap, curl, nuclei, ffuf, dns_enum |
-| `internal_ad` | Internal AD Assessment | nmap, nxc (SMB/LDAP) |
-| `api` | API Assessment | curl, nuclei, ffuf |
-| `cloud` | Cloud Exposure Review | curl, nuclei, dns_enum |
-| `ot` | Industrial / OT Assessment | nmap (OT-aware — skips ffuf/hydra/nuclei by default) |
+| `standard` | Standard Assessment (default) | curl, nikto, nuclei, ffuf, dns_enum, ssh_enum, rdp_enum, mysql_enum, mssql_enum |
+| `full` | Full Authorised Assessment | everything in `standard`, plus nxc (SMB/LDAP) and impacket; `hydra` available as escalation |
+| `ot` | Industrial / OT Assessment | nmap only (OT-aware — skips ffuf/hydra/nuclei by default) |
 
 ---
 
@@ -253,7 +261,7 @@ Pass one or more profile names after the target. Tools from all selected profile
 | **4 — OS Detection** | `-O --osscan-guess` | OS fingerprint with confidence % |
 | **5 — Normalise** | (in-process) | All phases merged into unified service list; NSE output and OS context attached per port |
 
-Phase 3 uses a service-to-NSE-script map to select the most relevant scripts per service type. As of v0.9.1 the map covers 36 service entries — for example HTTP/alt-HTTP/proxy gets `http-title,http-headers,http-methods,http-auth-finder,http-robots.txt,http-cookie-flags,http-cors,http-git,http-waf-detect,http-php-version`; HTTPS additionally runs `ssl-heartbleed,ssl-dh-params,ssl-poodle,tls-ticketbleed`; SSH gets `ssh-auth-methods,ssh2-enum-algos,ssh-hostkey,sshv1`; SMB gets `smb-enum-shares,smb-security-mode,smb-vuln-ms17-010,smb-double-pulsar-backdoor`; specialised entries also cover Redis, MongoDB, CouchDB, NFS, IPMI, Docker API, X11, and more. The full NSE output is injected into every subsequent LLM planning prompt.
+Phase 3 selects NSE scripts from tiered JSON policies (`safe/aggressive/unsafe_nse_scripts.json`, pulled via `./update.sh`) with exact service-key matching — safe enumeration by default, aggressive checks with `--nse-aggressive`, and brute/vuln/backdoor families only with `--unsafe`. A built-in fallback map covers services missing from the policies, filtered through the same tier gate (unsafe families stripped without `--unsafe`; RCE/DoS scripts never run in any tier). The full NSE output is injected into every subsequent LLM planning prompt.
 
 CVE lookups run against the normalised service list after Phase 5 completes.
 
@@ -349,6 +357,43 @@ After the main scan:
 
 > **Note:** These are heuristic probes generated by a small local LLM, not actual exploit chains. `MATCHED_VERSION` and `PROBABLE_VULNERABLE` are leads to investigate; `CONFIRMED_VULNERABLE` requires verifier agreement or MSF check-only corroboration.
 
+### `--recon`
+
+Discovery-only subnet sweep for green-field engagements ("I don't know what exists in this subnet"). Runs R0 ARP/ping sweep → R1 top-100 ∪ IoT/OT port union → R2 version-light plus safe discovery NSE (`upnp-info`, `wsdd-discover`, `smb-os-discovery`, `ssl-cert`, `http-title`). Refuses `--unsafe`/`--cve-test` — recon never touches intrusive tiers.
+
+```bash
+./noctis.py --recon 192.168.1.0/24
+```
+
+Writes versioned `recon.json` into the session directory: per-host services, deterministic `device_likelihood` score with quoted evidence, family classification (`iot/camera`, `windows`, `linux/server`, `ot`, `unknown`), `recommended_profile`, and a copy-paste `second_sweep_cmd`. Second sweep with host selection:
+
+```bash
+./noctis.py --input sessions/recon_<ts>/recon.json
+```
+
+The Web UI offers the same flow: pick a `recon.json` from the Recon dropdown (mirroring the Resume picker) and tick grouped checkboxes ordered by triage priority. Suggested mapping: `iot/camera` high → `--device`; `windows` → `full --cve-test`; `linux/server` → `standard --cve-test`; `ot` → `ot` profile only; printers explicitly never get `--device`.
+
+### `--device`
+
+Single-host embedded/IoT assessment (e.g. a pre-install in-vehicle camera). Accepts exactly one IP, DHCP hostname, or FQDN — CIDR/range input is refused with an error pointing at `--recon`.
+
+```bash
+./noctis.py --device 192.168.1.50
+./noctis.py --device 192.168.1.50 --unsafe --creds-file creds.json --firmware fw.bin
+```
+
+Behaviour: implies aggressive-but-safe NSE by default; with `--unsafe` (typed `UNSAFE` acknowledgment still required) adds the unsafe tier while the hard-excluded RCE/DoS list never runs in any tier. Three phases: (1) surface + client harvest — fetch login pages, `<script src>` sets, enumerate `.rsp`/`.json`/`.cgi` endpoints, extract form fields, handlers, and cookie names; (2) auth-flow assistant — ingest pasted `curl`/HAR output plus `login.js`, build the login state machine and emit one targeted wire-format probe (same 5-probe + 5-verifier budget as `--cve-test`, never blind brute-force); (3) authenticated mapping with operator-supplied creds — session-cookie paste or `--creds-file` (cookies-only JSON, `0600` recommended), every attempt logged with what worked *and* what did not, secrets redacted to hash/length refs.
+
+The HTML/PDF report gains device-only sections: an offline inline-SVG auth-flow state machine, an HTTP-status vs application-status strip (e.g. `302 → /relogin.rsp` vs `200 {"result":-400}`), and a deployment-gate matrix (Pass/Fail/Unknown per control).
+
+### `--firmware` / `--creds-file`
+
+`--firmware <path>` is strictly offline: the operator supplies the image (hash/version verification is the operator's job — Noctis records SHA-256/size/mtime as evidence). A stdlib-only string scan (`re`/`zipfile`/`tarfile`, no unpacking dependencies) flags embedded private keys, certificates, `passwd` markers, and version banners (BusyBox/U-Boot/Boa/GoAhead). Runs in Phase 1 only with `--unsafe`; otherwise records a deferred note with the exact resume command. `--creds-file` points at a cookies-only JSON file for device Phase-3 replay; cookie values never reach logs, reports, or community submissions (submission sanitizers redact them).
+
+### `--unsafe` / `--cve-nse`
+
+`--unsafe` unlocks the intrusive verifier tier (unsafe NSE families plus up to 2 extra CVE verifiers when the safe ladder is unconfirmed) behind a legal notice requiring the exact typed token `UNSAFE` — mandatory even under `--unattended`. Requires `--nse-aggressive` and `--cve-test` alongside. `--cve-nse` is a separate acknowledgment for policy-mapped NSE checks tied to matched CVE evidence (requires `--cve-test`).
+
 ---
 
 ## Output Structure
@@ -364,8 +409,14 @@ sessions/
         ├── CVE-2002-1367_attempt_02.sh
         └── ...
 
-cve_knowledge_base.json           ← cross-engagement CVE test KB (project root)
-                                     gitignored; submitted to community by ./update.sh
+cve_knowledge_base.json           ← legacy single-file CVE test KB (project root, if present)
+                                      gitignored; submitted to community by ./update.sh
+Noctis-Edge-KB/CVE_KB/              ← sharded CVE test KB (current format, CVE-*.json)
+                                      gitignored; submitted to community by ./update.sh
+Noctis-Edge-KB/tool_knowledge_base.json ← accumulated tool performance profiles
+                                      gitignored; submitted to community by ./update.sh
+recon.json                          ← --recon triage output (hosts, likelihood, kickoff cmds)
+firmware_strings.json               ← --firmware offline scan evidence (hashes + offsets)
 ```
 
 ---
@@ -386,7 +437,9 @@ Top-of-file constants in `noctis.py` (all overridable via environment variables)
 | `MAX_EXTENSION_BUDGET` | `8` | — | Total auto-granted extension iterations from uninvestigated findings (+2 per finding) |
 | `MAX_PARALLEL_ACTIONS` | `4` | — | Max concurrent tools in the Phase 1 parallel wave |
 | `MAX_LLM_RETRIES` | `3` | — | LLM call retries per iteration |
-| `CVE_TEST_ATTEMPTS` | `5` | — | LLM script attempts per CVE in `--cve-test` |
+| `CVE_FRESH_ATTEMPTS` | `5` | — | Fresh LLM probe scripts per CVE in `--cve-test` (plus 5 verifiers, confirm threshold 2) |
+| `DEVICE_MODE` | `False` | — | Single-host embedded assessment (override with `--device`) |
+| `RECON_MODE` | `False` | — | Discovery-only subnet sweep (override with `--recon`) |
 | `SAFE_MODE` | `True` | — | Require approval for aggressive tools (override with `--nse-aggressive`) |
 | `UNATTENDED` | `False` | — | Auto-approve all prompts (override with `--unattended`) |
 
@@ -440,15 +493,15 @@ ollama pull huihui_ai/qwen2.5-coder-abliterate:3b-instruct      # planning, scri
 
 ## Community Knowledge Base
 
-Every Noctis Edge installation learns as it works. Three local knowledge base files accumulate over time:
+Every Noctis Edge installation learns as it works. Three local knowledge bases accumulate over time:
 
 | File | What it records |
 |------|-----------------|
-| `cve_knowledge_base.json` | CVE-specific probe scripts, verification results, and LLM-generated exploitation intelligence |
+| `Noctis-Edge-KB/CVE_KB/` (sharded `CVE-*.json`; legacy `cve_knowledge_base.json`) | CVE-specific probe scripts, verification results, and LLM-generated exploitation intelligence |
 | `nuclei_kb.json` | Nuclei template performance data — which templates find real findings vs. noise |
-| `tool_knowledge_base.json` | Per-tool performance profiles — scan durations, false-positive rates, service-match quality |
+| `Noctis-Edge-KB/tool_knowledge_base.json` | Per-tool performance profiles — scan durations, false-positive rates, service-match quality |
 
-Each entry is identified only by CVE ID, Nuclei template ID, or service fingerprint — **no target-specific information is recorded**. All three files are gitignored and never committed to this repository.
+Each entry is identified only by CVE ID, Nuclei template ID, or service fingerprint — **no target-specific information is recorded** (submission scripts strip IPv4/IPv6, MACs, session cookies/auth tokens, local paths, and firmware/creds-file references before anything leaves the host). All three are gitignored and never committed to this repository.
 
 Running `./update.sh` submits all three files to the community relay via the Cloudflare Worker (`cloudflare/worker.js`). The worker source is included in this repository for full transparency. Your installation ID (generated once by `setup.sh`, stored in `noctis.conf`) is used only to rate-limit submissions (4 per day) and is never linked to personal data.
 
@@ -461,9 +514,10 @@ Every `./update.sh` run pulls six community-maintained artifacts — no license 
 | **Community CVE KB** | Aggregated CVE probe scripts built from submissions across all installs — pre-populated probe scripts, verified exploitation chains, and CVSS/EPSS enrichment. Fresh installs get day-one intelligence instead of starting from an empty local KB. |
 | **Community Nuclei KB** | Aggregated `nuclei_kb.json` — community-curated template performance data identifying which Nuclei templates reliably produce true positives on real infrastructure. Reduces false-positive noise from day one. |
 | **Community Tool KB** | Aggregated `tool_knowledge_base.json` — community-sourced tool performance profiles that tune scan timing, service matching, and tool selection before your first scan. |
-| **Tool Manifest** | `tool_manifest.json` — curated and maintained command-line recipes for every tool Noctis Edge drives (nmap, nikto, nuclei, testssl.sh, sqlmap, and 20+ others). The manifest controls argument presets, timeouts, and service-to-tool routing. |
-| **Aggressive NSE Scripts** | `aggressive_nse_scripts.json` — a curated second tier of Nmap NSE scripts that go beyond safe enumeration: deeper service fingerprinting, credential exposure checks, misconfiguration probes, and low-risk vulnerability confirmation. Run when `AGGRESSIVE_NSE=True` is set in `noctis.conf`. |
-| **Unsafe NSE Scripts** | `unsafe_nse_scripts.json` — a curated third tier of Nmap NSE scripts covering brute-force credential checks (using nmap's built-in minimal default list — no wordlists), active vulnerability probes (EternalBlue, Heartbleed, Shellshock, Struts RCE, CCS Injection, POODLE, etc.), and backdoor/misconfiguration detection across 85+ service types. Run only when `UNSAFE_VERIFY=True` is set and explicit scanning authority has been confirmed in the UI. **Execution philosophy:** all scripts are run without `--script-args` wordlists or modification payloads — the intent is to *confirm exploitability* (e.g. "is this host vulnerable to MS17-010?"), not to deliver a payload or cause lasting change. Scripts that would actually execute code on the target, modify state, or cause denial of service are excluded from this tier. |
+| **Tool Manifest** | `tool_manifest.json` — curated command-line recipes for the 12 manifest-driven tools (curl, nikto, nikto_cgi, nuclei, ffuf, dns_enum, ssh_enum, rdp_enum, mysql_enum, mssql_enum, nxc_smb, nxc_ldap). The manifest controls argument presets, timeouts, and service-to-tool routing. |
+| **Aggressive NSE Scripts** | `aggressive_nse_scripts.json` — a curated second tier of Nmap NSE scripts that go beyond safe enumeration: deeper service fingerprinting, credential exposure checks, misconfiguration probes, and low-risk vulnerability confirmation. Active when `--nse-aggressive` is passed (or implied by `--device`). |
+| **Safe NSE Scripts** | `safe_nse_scripts.json` — the default enumeration tier (service banners, HTTP headers, TLS posture, SSH algorithms). Pulled with the other tiers via `./update.sh`. |
+| **Unsafe NSE Scripts** | `unsafe_nse_scripts.json` — a curated third tier of Nmap NSE scripts covering brute-force credential checks (using nmap's built-in minimal default list — no wordlists), active vulnerability probes (EternalBlue, Heartbleed, Shellshock, Struts RCE, CCS Injection, POODLE, etc.), and backdoor/misconfiguration detection across 79 service types. Run only with `--unsafe` after typing the exact `UNSAFE` acknowledgment with confirmed scanning authority. **Execution philosophy:** all scripts are run without `--script-args` wordlists or modification payloads — the intent is to *confirm exploitability* (e.g. "is this host vulnerable to MS17-010?"), not to deliver a payload or cause lasting change. Scripts that would actually execute code on the target, modify state, or cause denial of service are excluded from this tier. |
 
 > **Summary:** every install both contributes to and benefits from the community corpus. Submissions are sanitized by the Cloudflare relay and vetted by the `submissions-pipeline` quorum/blocklist build before being published. `KB_LICENSE_KEY` in `noctis.conf` is legacy and ignored.
 
@@ -489,7 +543,7 @@ Every `./update.sh` run pulls six community-maintained artifacts — no license 
 | 6 | CVE offline database pulled + CSV rebuilt |
 | 7 | Noctis Edge source updated (`git fetch` + `git reset --hard origin/master`); Docker image rebuilt if Docker is detected |
 | 8 | Nikto pinned clone verified (`2.6.1`) |
-| 9–12 | CVE, Nuclei template, and Tool knowledge bases submitted to community relay; community KBs, tool manifest, and NSE policies pulled (open access, no key) |
+| 9–12 | CVE, Nuclei template, and Tool knowledge bases submitted to community relay; community KBs, tool manifest, and all three NSE policy tiers (safe 12b, aggressive 12c, unsafe 12) pulled (open access, no key) |
 
 > **Data safety:** `git reset --hard` only affects git-tracked files. All user data lives in gitignored paths (`sessions/`, `noctis.conf`, `cve_knowledge_base.json`, `tool_knowledge_base.json`) and is never touched by the update.
 
@@ -511,6 +565,13 @@ Every `./update.sh` run pulls six community-maintained artifacts — no license 
 | `scripts/submit_tool_kb.py` | POSTs the local tool performance knowledge base to the Cloudflare relay. Called automatically by `update.sh`. |
 | `scripts/merge_tool_kb.py` | Additively merges an external tool knowledge base JSON into the local one. |
 | `scripts/pull_community_kb.py` | Downloads all community CVE KB shards from the relay and merges them into `Noctis-Edge-KB/CVE_KB/`. Called automatically by `update.sh`. |
+| `scripts/build_cve_db.py` | Rebuilds the local CVE CSV database from the offline sources. |
+| `scripts/build_tool_manifest.py` | Builds `tool_manifest.json` from tool definitions (operator use; gitignored). |
+| `scripts/add_tool_manifest.py` | Adds a single tool entry to the manifest (operator use; gitignored). |
+| `scripts/submit_tool_manifest.py` | Pushes an updated `tool_manifest.json` via the relay (maintainer use; gitignored). |
+| `scripts/merge_nuclei_kb.py` | Additively merges an external Nuclei KB JSON into the local one. |
+| `scripts/migrate_kb_to_shards.py` | Migrates legacy single-file CVE KB to the sharded `CVE_KB/` layout. |
+| `scripts/track_repo_traffic.py` | Collects private clone/view/download metrics via workflow artifacts (stdlib only). |
 
 ---
 
@@ -536,7 +597,7 @@ The `cloudflare/` directory contains the Cloudflare Worker that relays KB submis
 | `/safe-nse-scripts` | GET/POST | Safe NSE scripts pull (open access) |
 | `/aggressive-nse-scripts` | GET/POST | Aggressive NSE scripts pull (open access) |
 
-The worker is already deployed at `https://noctis-kb-relay.pearcetechnologies1.workers.dev`. End users do not need to deploy anything. After changing `cloudflare/worker.js`, redeploy with `wrangler deploy` in `cloudflare/` so the new endpoints go live.
+The worker is already deployed at `https://noctis-kb-relay.pearcetechnologies1.workers.dev`. End users do not need to deploy anything.
 
 ---
 
@@ -546,15 +607,18 @@ The worker is already deployed at `https://noctis-kb-relay.pearcetechnologies1.w
 |------|--------|
 | `sessions/` | Runtime scan output — local to each installation |
 | `noctis.conf` | Per-user config (installation UUID) |
-| `cve_knowledge_base.json` | Machine-specific CVE test results |
+| `Noctis-Edge-KB/` | All community KB assets (CVE shards, tool KB, tool manifest, NSE policies) — populated by `./update.sh`, written at runtime |
+| `cve_knowledge_base.json` | Legacy single-file CVE test results (if present) |
 | `nuclei_kb.json` | Machine-specific Nuclei template performance data |
-| `tool_knowledge_base.json` | Machine-specific tool performance data |
 | `cloudflare/.wrangler/` | Wrangler cache (contains Cloudflare account credentials) |
 | `WordLists/rockyou.txt` | 139 MB — not needed for directory enumeration |
 | `CVE/cve-offline/cve-summary.csv` | 57 MB — regenerated by `updatecsv.sh` |
 | `CVE/cve-offline/` | Runtime-cloned data repo (not tracked) |
 | `CVE/.nvd-cache/` | NVD CVSS download cache — large intermediate `.json.gz` files |
+| `CVE/epss-scores.csv`, `CVE/nvd-cvss.csv`, `CVE/cwe-data.csv`, `CVE/kev-catalog.csv` | Offline threat-intel databases rebuilt by `setup.sh` / `update.sh` |
 | `nikto/` | Runtime-cloned pinned release (not tracked) |
+| `improvements/` | Internal development notes — not for distribution |
+| `*.db`, `*.sqlite`, `*.log` | Runtime databases and logs |
 
 ---
 
@@ -565,7 +629,7 @@ The worker is already deployed at `https://noctis-kb-relay.pearcetechnologies1.w
 ### v0.12.1 — KB Pipeline: Sanitizer Hardening + NSE Policy Distribution
 
 - Sanitizers in `submit_kb.py` / `submit_nuclei_kb.py` extended (IPv6, MAC, session-cookie redaction, firmware/creds paths); tool-KB submitter verified sufficient.
-- Curated NSE policies published to the Tool-Manifest-KB repo; worker + `update.sh` now distribute all three tiers. Requires `wrangler deploy` to take effect. See `version_history.md`.
+- Curated NSE policies published to the Tool-Manifest-KB repo; worker + `update.sh` now distribute all three tiers. See `version_history.md`.
 
 ### v0.12.0 — Device Mode + Recon Sweep + Abliterated Model
 
