@@ -2,6 +2,33 @@
 
 ---
 
+## v0.12.0 — Device Mode + Recon Sweep + Abliterated Model
+
+### Abliterated default model
+- Default LLM for all roles (`MODEL`, `SCRIPT_MODEL`, `CVE_SCRIPT_MODEL`) changed from `qwen2.5-coder:3b-instruct` to `huihui_ai/qwen2.5-coder-abliterate:3b-instruct` (same ~2 GB, 32K context). Reduces refusals on authorized defensive probe-generation (auth-bypass reasoning, cookie replay, RTSP/ONVIF checks).
+- `setup.sh`, `update.sh`, `docker-compose.yml`, `docker-run.sh/ps1`, `docker-test.sh` updated to pull the new default. Roll back any time via `NOCTIS_OLLAMA_MODEL` / `NOCTIS_OLLAMA_SCRIPT_MODEL` overrides — no code change needed.
+
+### NSE safe-mode leak fix
+- `_filter_nse_scripts_by_tier()` now strips three layers without `--unsafe`: substring denylist + explicit blocklist (60+ names such as `ssl-heartbleed`, `x11-access`, `dns-zone-transfer`, `smb-enum-*` that carry no denylist token) + every script listed in `unsafe_nse_scripts.json`. Previously `ssl-heartbleed`, `ldap-novell-getpass`, `x11-access`, `dns-update` and others leaked through the `_NSE_SCRIPT_MAP` fallback in SAFE mode.
+- Hard-excluded RCE/DoS/exfil set (`_HARD_EXCLUDED_NSE`, 11 scripts) is now stripped in every tier including `--unsafe`; `rdp-vuln-ms12-020` removed from the fallback map.
+- Service-key matching switched from substring to exact token match (kills `lu`-in-`cluster` false positives); `_SERVICE_NAME_ALIASES` expanded (`http-proxy/alt`, `ajp13`, `mssql/ms-sql-s/m`, `ldapssl`, `oracle-tns`, `microsoft-ds/netbios-ssn→smb`, `ssl/*→base`).
+
+### Unsafe policy curation
+- Removed 11 philosophy violators (`smb-vuln-regsvc-dos`, `rdp-vuln-ms12-020`, `ms-sql-xp-cmdshell`, `ssh-run`, `mysql/ms-sql-query`, `mysql/ms-sql-dump-hashes`, `http-fileupload-exploiter`, `sip-call-spoof`, `rmi-vuln-classloader`); deleted now-empty `rdp`/`ms-wbt-server`/`rmi` keys, moved `rsa-vuln-roca→ssl`, dropped dead `rsa`/`firewall` keys, added `tftp→tftp-enum`.
+- Added 17 confirm-only probes (`ssh-publickey-acceptance`, `http-vuln-cve2013-6786`, `http-iis-webdav-vuln`, `http-avaya-ipoffice-users`, `http-domino-enum-passwords`, `http-method-tamper`, `smb-server-stats`, `smb-system-info`, `dns-brute/cache-snoop/nsec-enum/nsec3-enum`, `snmp-ios-config`, `irc-botnet-channels`, `mysql-users`, `informix-query/tables`). All 207 scripts verified present in stock Nmap 7.94.
+- `safe_nse_scripts.json`: removed dead `ftp-banner` (no such NSE script).
+
+### New: --device mode (single-host embedded/IoT assessment)
+- `noctis.py --device <IP|hostname|FQDN>`: refuses CIDR/range/multi-target (exit 2); implies aggressive-but-safe NSE; with `--unsafe` adds the unsafe tier. Longer embedded-friendly posture, never DoS/brick.
+- Deterministic `_device_likelihood()` heuristic (banner + port-combo scoring, printer/full-OS counter-signals), offline `_firmware_string_scan()` (stdlib `re/zipfile/tarfile`, 256MB refuse / 50MB cap, SHA-256 recorded; runs in P1 only with `--unsafe`, else deferred with resume command), `--creds-file` / session-cookie intake hooks.
+- Report: offline inline-SVG Device Auth Flow state machine + Deployment Gate matrix (stdlib `xml.etree` → Jinja, no CDN, WeasyPrint-safe), rendered only in device mode.
+
+### New: --recon mode (subnet discovery → triage → second sweep)
+- `noctis.py --recon <CIDR|range>` (discovery-only; refuses `--unsafe/--cve-test`): R0 ARP/ping sweep → R1 top-100 ∪ IoT/OT port union → R2 version-light + safe discovery NSE (`upnp-info`, `wsdd-discover`, `smb-os-discovery`, `ssl-cert`, `http-title`). Writes versioned `recon.json` (hosts, `device_likelihood`, family, `recommended_profile`, `second_sweep_cmd`).
+- `--input recon.json` accepted for second-sweep selection. Mutually exclusive with `--device`.
+
+---
+
 ## v0.11.9 — Open Community KB + Drop Nikto Submodule
 
 ### Open community KB

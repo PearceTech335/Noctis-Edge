@@ -87,8 +87,8 @@ services:
       # Single physical model for all LLM tasks: planning, structured JSON,
       # CVE probe scripts, executive summary, audit, attacker perspectives,
       # and per-finding descriptions.
-      - NOCTIS_OLLAMA_MODEL=qwen2.5-coder:3b-instruct
-      - NOCTIS_OLLAMA_SCRIPT_MODEL=qwen2.5-coder:3b-instruct
+      - NOCTIS_OLLAMA_MODEL=huihui_ai/qwen2.5-coder-abliterate:3b-instruct
+      - NOCTIS_OLLAMA_SCRIPT_MODEL=huihui_ai/qwen2.5-coder-abliterate:3b-instruct
       - NOCTIS_OLLAMA_TIMEOUT=600
       # Bind to all interfaces so the host browser can reach port 8888
       - NOCTIS_BIND_HOST=0.0.0.0

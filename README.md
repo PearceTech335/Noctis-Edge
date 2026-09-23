@@ -14,10 +14,13 @@ This architecture makes Noctis Edge particularly suited for regulated environmen
 
 ---
 
-## What's New in v0.11.9
+## What's New in v0.12.0
 
-- **Community KB is now open access** — all six artifacts (CVE KB, Nuclei KB, Tool KB, Tool Manifest, Aggressive/Unsafe NSE policies) pull via `./update.sh` with no license key. The Cloudflare relay and `submissions-pipeline` quorum/blocklist build remain as the submission sanitization path. `KB_LICENSE_KEY` is legacy and ignored (reserved for a future tier).
-- **Dropped the `nikto` git submodule** — `nikto/` is now runtime-cloned pinned at upstream release `2.6.1` by `setup.sh`, verified by `update.sh`, and baked at the same pin in the Docker image. Plain `git clone` with no `--recurse-submodules` is all contributors need.
+- **Abliterated default model** — all LLM roles now default to `huihui_ai/qwen2.5-coder-abliterate:3b-instruct` (same ~2 GB footprint as before), cutting refusals on authorized defensive probe generation (auth-flow reasoning, cookie replay, RTSP/ONVIF checks). Roll back via `NOCTIS_OLLAMA_MODEL` / `NOCTIS_OLLAMA_SCRIPT_MODEL` overrides. See [Model Roles](#model-roles).
+- **NSE safe-mode leak fixed** — tier filtering now strips substring-denylist matches, 60+ explicit unsafe names (`ssl-heartbleed`, `x11-access`, `dns-zone-transfer`, `smb-enum-*`, …), and everything listed in `unsafe_nse_scripts.json`. Eleven RCE/DoS/exfil scripts are now hard-excluded in every tier including `--unsafe`. Service-key matching is exact-token (no more `lu`-in-`cluster` false positives).
+- **Unsafe policy curated** — 11 philosophy violators removed, 17 confirm-only probes added (`ssh-publickey-acceptance`, `dns-brute/cache-snoop/nsec-enum/nsec3-enum`, `smb-server-stats`, `http-iis-webdav-vuln`, …), dead `rsa`/`firewall` keys dropped, `tftp→tftp-enum` added. All 207 scripts verified against stock Nmap 7.94.
+- **New `--device` mode** — single-host embedded/IoT assessment (`noctis.py --device 192.168.1.50`): single-host gate (CIDR refused), aggressive-but-safe NSE by default (unsafe tier with `--unsafe`), deterministic device-likelihood heuristic, offline `--firmware` string scan (stdlib only, `--unsafe` only), `--creds-file`/cookie intake hooks, and offline SVG Device Auth Flow + Deployment Gate sections in the HTML/PDF report.
+- **New `--recon` mode** — subnet discovery sweep (`noctis.py --recon 192.168.1.0/24`, discovery-only, refuses `--unsafe`): ping-sweep → top-100 ∪ IoT/OT port union → version-light + safe discovery NSE, writing versioned `recon.json` with per-host `device_likelihood`, family, `recommended_profile`, and copy-paste second-sweep commands. Feed back via `--input recon.json`.
 
 ---
 
@@ -79,14 +82,14 @@ Alongside CVE probes, `tooling_knowledge_base.json` accumulates tool-performance
 
 | Item | Size |
 |------|------|
-| Ollama — `qwen2.5-coder:3b-instruct` (all LLM tasks) | ~2 GB |
+| Ollama — `huihui_ai/qwen2.5-coder-abliterate:3b-instruct` (all LLM tasks) | ~2 GB |
 | Nuclei templates | ~1.5 GB |
 | CVE offline database | ~3–5 GB |
 | SecLists wordlists | ~2 GB |
 | Tool binaries + Python venv | ~1 GB |
 | Scan session outputs | Variable |
 
-> **RAM note:** Only one model is needed (`qwen2.5-coder:3b-instruct`, ~2 GB). 8 GB RAM recommended; 16 GB optimal.
+> **RAM note:** Only one model is needed (`huihui_ai/qwen2.5-coder-abliterate:3b-instruct`, ~2 GB). 8 GB RAM recommended; 16 GB optimal.
 
 ---
 
@@ -123,7 +126,7 @@ chmod +x docker-run.sh && ./docker-run.sh
 .\docker-run.ps1
 ```
 
-The launcher script handles everything automatically: pulls latest source, builds the Docker image (all tools + offline CVE database baked in), starts the Ollama sidecar and downloads the LLM model (`qwen2.5-coder:3b-instruct` ~2 GB — one-time download, stored in a Docker volume), then starts the Web UI at **http://localhost:8888**.
+The launcher script handles everything automatically: pulls latest source, builds the Docker image (all tools + offline CVE database baked in), starts the Ollama sidecar and downloads the LLM model (`huihui_ai/qwen2.5-coder-abliterate:3b-instruct` ~2 GB — one-time download, stored in a Docker volume), then starts the Web UI at **http://localhost:8888**.
 
 **Useful Docker commands:**
 ```bash
@@ -158,7 +161,7 @@ chmod +x setup.sh && ./setup.sh
 | apt packages | `nmap`, `curl`, `ffuf`, `hydra`, `ssh-audit`, `dnsenum`, `dnsrecon`, `perl`, `golang-go`, `python3-tk`, and more |
 | SecLists | Wordlists via `snap install seclists` |
 | Nuclei | Go-based template scanner (`~/go/bin/nuclei`) |
-| Ollama | Local LLM server + `qwen2.5-coder:3b-instruct` |
+| Ollama | Local LLM server + `huihui_ai/qwen2.5-coder-abliterate:3b-instruct` |
 | Python venv | `.venv/` with `requests`, `jinja2`, `pycryptodome`, `flask`, `flask-sock` |
 | CVE database | `CVE/cve-offline/` → `cve-summary.csv`; EPSS scores; NVD CVSS + CWE data |
 | CWE dictionary | `CVE/cwe-data.csv` — MITRE weakness names, descriptions, consequences, mitigations (969 entries) |
@@ -368,8 +371,8 @@ Top-of-file constants in `noctis.py` (all overridable via environment variables)
 
 | Constant | Default | Env var | Description |
 |----------|---------|---------|-------------|
-| `MODEL` | `qwen2.5-coder:3b-instruct` | `NOCTIS_OLLAMA_MODEL` | Planning, iteration decisions, structured JSON tool selection |
-| `SCRIPT_MODEL` | `qwen2.5-coder:3b-instruct` | `NOCTIS_OLLAMA_SCRIPT_MODEL` | CVE exploit scripts, verification scripts, executive summary, audit, attacker perspectives, per-finding descriptions |
+| `MODEL` | `huihui_ai/qwen2.5-coder-abliterate:3b-instruct` | `NOCTIS_OLLAMA_MODEL` | Planning, iteration decisions, structured JSON tool selection |
+| `SCRIPT_MODEL` | `huihui_ai/qwen2.5-coder-abliterate:3b-instruct` | `NOCTIS_OLLAMA_SCRIPT_MODEL` | CVE exploit scripts, verification scripts, executive summary, audit, attacker perspectives, per-finding descriptions |
 | `CVE_SCRIPT_MODEL` | *(same as `SCRIPT_MODEL`)* | `NOCTIS_OLLAMA_CVE_SCRIPT_MODEL` | CVE probe generation — optional advanced override; unset by default so no second model is required |
 | `OLLAMA_URL` | `http://localhost:11434/api/generate` | — | Ollama API endpoint |
 | `MAX_ITERATIONS` | `10` | — | Minimum (floor) Phase 2 iteration count — applied when few services detected |
@@ -415,18 +418,18 @@ Install notes: see [Readme/requirements.md](Readme/requirements.md).
 Manual install:
 ```bash
 curl -fsSL https://ollama.com/install.sh | sh
-ollama pull qwen2.5-coder:3b-instruct      # planning, scripts, and all report prose
+ollama pull huihui_ai/qwen2.5-coder-abliterate:3b-instruct      # planning, scripts, and all report prose
 ```
 
 ### Model Roles
 
 | Model | Env var | Purpose |
 |-------|---------|---------|
-| `qwen2.5-coder:3b-instruct` | `NOCTIS_OLLAMA_MODEL` | Tool selection, scan planning, structured JSON decisions |
-| `qwen2.5-coder:3b-instruct` | `NOCTIS_OLLAMA_SCRIPT_MODEL` | CVE exploit/verification scripts, executive summary, attacker perspectives, per-finding descriptions |
-| `qwen2.5-coder:3b-instruct` | `NOCTIS_OLLAMA_CVE_SCRIPT_MODEL` | CVE probe generation; optional advanced override, unset by default |
+| `huihui_ai/qwen2.5-coder-abliterate:3b-instruct` | `NOCTIS_OLLAMA_MODEL` | Tool selection, scan planning, structured JSON decisions |
+| `huihui_ai/qwen2.5-coder-abliterate:3b-instruct` | `NOCTIS_OLLAMA_SCRIPT_MODEL` | CVE exploit/verification scripts, executive summary, attacker perspectives, per-finding descriptions |
+| `huihui_ai/qwen2.5-coder-abliterate:3b-instruct` | `NOCTIS_OLLAMA_CVE_SCRIPT_MODEL` | CVE probe generation; optional advanced override, unset by default |
 
-`qwen2.5-coder:3b-instruct` is ~2 GB. Only one model is needed by default — no report-model download and no model-swap overhead. Inference is typically 20–90 s per call on CPU-only hardware after the initial warm load.
+`huihui_ai/qwen2.5-coder-abliterate:3b-instruct` is ~2 GB. Only one model is needed by default — no report-model download and no model-swap overhead. Inference is typically 20–90 s per call on CPU-only hardware after the initial warm load.
 
 ---
 
@@ -457,7 +460,7 @@ Every `./update.sh` run pulls six community-maintained artifacts — no license 
 | **Aggressive NSE Scripts** | `aggressive_nse_scripts.json` — a curated second tier of Nmap NSE scripts that go beyond safe enumeration: deeper service fingerprinting, credential exposure checks, misconfiguration probes, and low-risk vulnerability confirmation. Run when `AGGRESSIVE_NSE=True` is set in `noctis.conf`. |
 | **Unsafe NSE Scripts** | `unsafe_nse_scripts.json` — a curated third tier of Nmap NSE scripts covering brute-force credential checks (using nmap's built-in minimal default list — no wordlists), active vulnerability probes (EternalBlue, Heartbleed, Shellshock, Struts RCE, CCS Injection, POODLE, etc.), and backdoor/misconfiguration detection across 85+ service types. Run only when `UNSAFE_VERIFY=True` is set and explicit scanning authority has been confirmed in the UI. **Execution philosophy:** all scripts are run without `--script-args` wordlists or modification payloads — the intent is to *confirm exploitability* (e.g. "is this host vulnerable to MS17-010?"), not to deliver a payload or cause lasting change. Scripts that would actually execute code on the target, modify state, or cause denial of service are excluded from this tier. |
 
-> **Summary:** every install both contributes to and benefits from the community corpus. Submissions are sanitized by the Cloudflare relay and vetted by the `submissions-pipeline` quorum/blocklist build before being published. `KB_LICENSE_KEY` in `noctis.conf` is legacy and ignored (reserved so a paid tier can be re-introduced later).
+> **Summary:** every install both contributes to and benefits from the community corpus. Submissions are sanitized by the Cloudflare relay and vetted by the `submissions-pipeline` quorum/blocklist build before being published. `KB_LICENSE_KEY` in `noctis.conf` is legacy and ignored.
 
 ---
 
@@ -502,6 +505,7 @@ Every `./update.sh` run pulls six community-maintained artifacts — no license 
 | `scripts/submit_nuclei_kb.py` | POSTs the local Nuclei template knowledge base to the Cloudflare relay. Called automatically by `update.sh`. |
 | `scripts/submit_tool_kb.py` | POSTs the local tool performance knowledge base to the Cloudflare relay. Called automatically by `update.sh`. |
 | `scripts/merge_tool_kb.py` | Additively merges an external tool knowledge base JSON into the local one. |
+| `scripts/pull_community_kb.py` | Downloads all community CVE KB shards from the relay and merges them into `Noctis-Edge-KB/CVE_KB/`. Called automatically by `update.sh`. |
 
 ---
 
@@ -534,7 +538,7 @@ The worker is already deployed at `https://noctis-kb-relay.pearcetechnologies1.w
 | Path | Reason |
 |------|--------|
 | `sessions/` | Runtime scan output — local to each installation |
-| `noctis.conf` | Per-user config (UUID, license key) |
+| `noctis.conf` | Per-user config (installation UUID) |
 | `cve_knowledge_base.json` | Machine-specific CVE test results |
 | `nuclei_kb.json` | Machine-specific Nuclei template performance data |
 | `tool_knowledge_base.json` | Machine-specific tool performance data |
@@ -549,7 +553,14 @@ The worker is already deployed at `https://noctis-kb-relay.pearcetechnologies1.w
 
 ## Version History
 
-**Current version: v0.11.9**
+**Current version: v0.12.0**
+
+### v0.12.0 — Device Mode + Recon Sweep + Abliterated Model
+
+- Default model for all roles is now `huihui_ai/qwen2.5-coder-abliterate:3b-instruct` (same ~2 GB); `setup.sh`/`update.sh`/Docker launchers pull it. Override with `NOCTIS_OLLAMA_MODEL` / `NOCTIS_OLLAMA_SCRIPT_MODEL` to roll back to stock `qwen2.5-coder:3b-instruct`.
+- Fixed the NSE safe-mode leak (explicit blocklist + unsafe-policy set + hard-excluded RCE/DoS list + exact service-key matching + expanded aliases); curated `unsafe_nse_scripts.json` (11 removals, 17 confirm-only additions, dead keys dropped); removed dead `ftp-banner` from safe policy.
+- Added `--device` (single-host embedded assessment with likelihood heuristic, offline firmware scan, cookie/creds intake, SVG auth-flow + deployment-gate report sections) and `--recon` (discovery-only subnet sweep → versioned `recon.json` triage with recommended profiles + second-sweep commands, `--input` ingestion).
+- Full detail in `version_history.md`.
 
 ### v0.11.9 — Open Community KB + Drop Nikto Submodule
 

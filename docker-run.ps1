@@ -20,8 +20,8 @@
 
 $ErrorActionPreference = "Stop"
 
-$OLLAMA_MODEL  = "qwen2.5-coder:3b-instruct"   # all LLM tasks (planning, scripts, reporting)
-$SCRIPT_MODEL  = "qwen2.5-coder:3b-instruct"   # logical script/prose role, same physical model
+$OLLAMA_MODEL  = "huihui_ai/qwen2.5-coder-abliterate:3b-instruct"   # all LLM tasks (planning, scripts, reporting)
+$SCRIPT_MODEL  = "huihui_ai/qwen2.5-coder-abliterate:3b-instruct"   # logical script/prose role, same physical model
 $SCRIPT_DIR    = Split-Path -Parent $MyInvocation.MyCommand.Definition
 
 function Write-Header($msg) {

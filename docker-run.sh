@@ -20,8 +20,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-OLLAMA_MODEL="qwen2.5-coder:3b-instruct"    # all LLM tasks (planning, scripts, reporting)
-SCRIPT_MODEL="qwen2.5-coder:3b-instruct"    # logical script/prose role, same physical model
+OLLAMA_MODEL="huihui_ai/qwen2.5-coder-abliterate:3b-instruct"    # all LLM tasks (planning, scripts, reporting)
+SCRIPT_MODEL="huihui_ai/qwen2.5-coder-abliterate:3b-instruct"    # logical script/prose role, same physical model
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; CYAN='\033[1;36m'; NC='\033[0m'
 ok()   { echo -e "${GREEN}[OK]${NC}  $*"; }
 info() { echo -e "${YELLOW}[--]${NC}  $*"; }

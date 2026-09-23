@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # <https://www.gnu.org/licenses/agpl-3.0.html>
 """
-Noctis Edge - Security Through Exposure  v0.11.9
+Noctis Edge - Security Through Exposure  v0.12.0
 Implements: structured findings, verification,
 approval gates, async execution, HTML reports,
 service-specific enumerations, risk scoring,
@@ -12,7 +12,7 @@ EPSS exploit-probability scoring, NVD CVSS offline database,
 NIST CSF 2.0 compliance mapping, and OT/ICS asset classification.
 """
 
-VERSION = "v0.11.9"
+VERSION = "v0.12.0"
 
 import os
 import asyncio
@@ -228,14 +228,17 @@ OLLAMA_URL     = os.getenv("NOCTIS_OLLAMA_URL", "http://localhost:11434/api/gene
 # systems with ≥6 GB free RAM without any swap pressure.
 #
 #   Two-model architecture:
-#   qwen2.5-coder:3b-instruct (~2 GB)  - planning, structured JSON decisions,
-#                                          CVE probe scripts, and report prose
+#   huihui_ai/qwen2.5-coder-abliterate:3b-instruct (~2 GB) - planning,
+#          structured JSON decisions, CVE probe scripts, and report prose.
+#          Abliterated variant reduces refusals on authorized defensive
+#          probe-generation tasks. Roll back via NOCTIS_OLLAMA_MODEL override
+#          if it hallucinates or degrades verdict quality.
 #   Peak concurrent RAM during --cve-test: ~3.1 GB. 8 GB RAM recommended.
 #   MODEL            - structured JSON tool-selection decisions
 #   SCRIPT_MODEL     - Python exploit / verification script generation; also all narrative prose
 #   CVE_SCRIPT_MODEL - CVE exploit/test script generation (falls back to SCRIPT_MODEL)
-MODEL            = os.getenv("NOCTIS_OLLAMA_MODEL",            "qwen2.5-coder:3b-instruct")
-SCRIPT_MODEL     = os.getenv("NOCTIS_SCRIPT_MODEL",            os.getenv("NOCTIS_OLLAMA_SCRIPT_MODEL", "qwen2.5-coder:3b-instruct"))
+MODEL            = os.getenv("NOCTIS_OLLAMA_MODEL",            "huihui_ai/qwen2.5-coder-abliterate:3b-instruct")
+SCRIPT_MODEL     = os.getenv("NOCTIS_SCRIPT_MODEL",            os.getenv("NOCTIS_OLLAMA_SCRIPT_MODEL", "huihui_ai/qwen2.5-coder-abliterate:3b-instruct"))
 CVE_SCRIPT_MODEL = os.getenv("NOCTIS_OLLAMA_CVE_SCRIPT_MODEL", SCRIPT_MODEL)
 OLLAMA_TIMEOUT = int(os.getenv("NOCTIS_OLLAMA_TIMEOUT", "360"))   # seconds - 360s covers cold model reload (~3 min) after RAM eviction
 PLANNER_TIMEOUT = max(30, min(120, int(os.getenv("NOCTIS_PLANNER_TIMEOUT", "90"))))
@@ -279,6 +282,10 @@ CVE_TEST        = False  # set via --cve-test; LLM generates test scripts per ma
 UNATTENDED      = False  # set via --unattended; auto-approves all prompts (no user input required)
 UNSAFE_VERIFY   = False  # set via --unsafe; opt-in intrusive verifier tier; requires typed UNSAFE prompt
 CVE_NSE         = False  # set via --cve-nse; opt-in CVE-targeted NSE escalation; requires explicit acknowledgment
+DEVICE_MODE     = False  # set via --device; single-host embedded/IoT assessment (implies aggressive-but-safe)
+RECON_MODE      = False  # set via --recon; subnet discovery sweep producing recon.json for triage
+FIRMWARE_PATH   = None   # set via --firmware <path>; offline stdlib-only firmware string scan
+RECON_INPUT     = None   # set via --input <recon.json>; second-sweep host selection file
 
 _NARRATIVE_PROHIBITED_WORDS = (
     "ransomware", "nation-state", "APT", "catastrophic",
@@ -4629,34 +4636,45 @@ _NSE_SCRIPT_MAP = {
         "http-devframework"
     ),
     # ── SSH ───────────────────────────────────────────────────────────────────
+    # NOTE: ssh-auth-methods/sshv1 are unsafe-gated (filtered without --unsafe).
     "ssh":         "ssh-auth-methods,ssh2-enum-algos,ssh-hostkey,sshv1",
     # ── FTP ───────────────────────────────────────────────────────────────────
+    # NOTE: ftp-bounce/backdoor/vuln entries are unsafe-gated (filtered without --unsafe).
     "ftp":         "ftp-anon,ftp-bounce,ftp-syst,ftp-vsftpd-backdoor,ftp-proftpd-backdoor,ftp-vuln-cve2010-4221",
     # ── SMTP ──────────────────────────────────────────────────────────────────
+    # NOTE: open-relay/enum-users/vuln entries are unsafe-gated (filtered without --unsafe).
     "smtp":        "smtp-open-relay,smtp-commands,smtp-enum-users,smtp-ntlm-info,smtp-vuln-cve2010-4344,smtp-vuln-cve2011-1720,smtp-vuln-cve2011-1764",
     # ── SMB ───────────────────────────────────────────────────────────────────
+    # NOTE: enum/vuln/backdoor entries are unsafe-gated (filtered without --unsafe).
     "smb":         "smb-security-mode,smb2-security-mode,smb-enum-shares,smb-os-discovery,smb-protocols,smb2-capabilities,smb-enum-users,smb-vuln-ms17-010,smb-vuln-cve-2017-7494,smb-double-pulsar-backdoor",
     "microsoft-ds":"smb-security-mode,smb2-security-mode,smb-enum-shares,smb-os-discovery,smb-protocols,smb2-capabilities,smb-enum-users,smb-vuln-ms17-010,smb-vuln-cve-2017-7494,smb-double-pulsar-backdoor",
     # ── Databases ─────────────────────────────────────────────────────────────
+    # NOTE: empty-password/enum entries are unsafe-gated (filtered without --unsafe).
     "mysql":       "mysql-info,mysql-empty-password,mysql-enum",
-    "mssql":       "ms-sql-info,ms-sql-config,ms-sql-empty-password",
+    "ms-sql-s":    "ms-sql-info,ms-sql-config,ms-sql-empty-password",
+    "ms-sql-m":    "ms-sql-info,ms-sql-config,ms-sql-empty-password",
     "ms-sql":      "ms-sql-info,ms-sql-config,ms-sql-empty-password",
     "redis":       "redis-info",
     "mongodb":     "mongodb-info,mongodb-databases",
     "couchdb":     "couchdb-databases,couchdb-stats",
     "oracle":      "oracle-tns-version",
     # ── Remote access ─────────────────────────────────────────────────────────
-    "rdp":         "rdp-enum-encryption,rdp-ntlm-info,rdp-vuln-ms12-020",
+    # NOTE: vnc-brute/realvnc-auth-bypass are unsafe-gated; rdp-vuln-ms12-020
+    # is hard-excluded (DoS) and never emitted in any tier.
+    "rdp":         "rdp-enum-encryption,rdp-ntlm-info",
     "vnc":         "vnc-info,vnc-brute,realvnc-auth-bypass",
     "telnet":      "telnet-encryption,telnet-ntlm-info",
     # ── DNS ───────────────────────────────────────────────────────────────────
+    # NOTE: zone-transfer/update entries are unsafe-gated (filtered without --unsafe).
     "dns":         "dns-zone-transfer,dns-service-discovery,dns-recursion,dns-random-srcport,dns-random-txid,dns-nsid,dns-update",
     # ── Directory / LDAP ──────────────────────────────────────────────────────
+    # NOTE: ldap-novell-getpass is unsafe-gated (filtered without --unsafe).
     "ldap":        "ldap-rootdse,ldap-novell-getpass,ldap-search",
     # ── Mail protocols ─────────────────────────────────────────────────────────
     "pop3":        "pop3-capabilities",
     "imap":        "imap-capabilities",
     # ── SNMP ──────────────────────────────────────────────────────────────────
+    # NOTE: brute/win32 entries are unsafe-gated (filtered without --unsafe).
     "snmp":        "snmp-info,snmp-sysdescr,snmp-brute,snmp-interfaces,snmp-processes,snmp-netstat,snmp-win32-services,snmp-win32-users",
     # ── Printing / IPP ─────────────────────────────────────────────────────────
     "ipp":         "http-title,http-headers,http-methods,http-server-header",
@@ -4667,8 +4685,10 @@ _NSE_SCRIPT_MAP = {
     "memcached":   "memcached-info",
     # ── Java / application servers ──────────────────────────────────────────────
     "ajp":         "ajp-headers,ajp-methods",
+    "ajp13":       "ajp-headers,ajp-methods",
     "jdwp":        "jdwp-version,jdwp-info",
     # ── Infrastructure ───────────────────────────────────────────────────────────
+    # NOTE: ipmi-cipher-zero/x11-access/unrealircd-backdoor are unsafe-gated.
     "ipmi":        "ipmi-version,ipmi-cipher-zero",
     "docker":      "docker-version",
     "x11":         "x11-access",
@@ -4689,9 +4709,131 @@ _SAFE_NSE_SCRIPT_DENYLIST = (
     "bypass",
 )
 
+# Explicit unsafe script names whose NSE names do NOT contain a denylist
+# substring but must still be gated behind --unsafe. Closes the safe-mode
+# leak where e.g. ssl-heartbleed, x11-access or dns-zone-transfer ran
+# without UNSAFE_VERIFY via the _NSE_SCRIPT_MAP fallback.
+_UNSAFE_EXPLICIT_BLOCKLIST = frozenset({
+    # TLS vuln probes (no "vuln" token in some names).
+    "ssl-heartbleed",
+    "ssl-poodle",
+    "ssl-ccs-injection",
+    "sslv2-drown",
+    "sslv2",
+    "tls-ticketbleed",
+    "ssl-cert-intaddr",
+    "ssl-known-key",
+    # Bounce / zone / state-changing probes.
+    "ftp-bounce",
+    "dns-zone-transfer",
+    "dns-update",
+    "dns-brute",
+    "dns-cache-snoop",
+    "dns-nsec-enum",
+    "dns-nsec3-enum",
+    # Credential-material / auth-bypass probes.
+    "ldap-novell-getpass",
+    "x11-access",
+    "ipmi-cipher-zero",
+    "mysql-empty-password",
+    "ms-sql-empty-password",
+    "mysql-enum",
+    "sshv1",
+    "ssh-auth-methods",
+    "ssh-publickey-acceptance",
+    # SMB enumeration (no "enum-users" token).
+    "smb-enum-shares",
+    "smb-enum-domains",
+    "smb-enum-groups",
+    "smb-enum-processes",
+    "smb-enum-services",
+    "smb-enum-sessions",
+    "smb-server-stats",
+    "smb-system-info",
+    "smb2-vuln-uptime",
+    # SNMP detail enumeration.
+    "snmp-win32-services",
+    "snmp-win32-users",
+    "snmp-interfaces",
+    "snmp-processes",
+    "snmp-netstat",
+    "snmp-ios-config",
+    # Info-disclosure helpers that belong in unsafe tier only.
+    "http-git",
+    "http-config-backup",
+    "http-internal-ip-disclosure",
+    "http-passwd",
+    "http-svn-info",
+    "http-svn-enum",
+    "http-userdir-enum",
+    "http-enum",
+    "http-default-accounts",
+    "http-wordpress-enum",
+    "http-wordpress-users",
+    "http-drupal-enum",
+    "http-drupal-enum-users",
+    "http-avaya-ipoffice-users",
+    "http-domino-enum-passwords",
+    "http-method-tamper",
+    "http-iis-webdav-vuln",
+    "http-vuln-cve2013-6786",
+    "tftp-enum",
+    "irc-unrealircd-backdoor",
+    "irc-botnet-channels",
+    "rsa-vuln-roca",
+    # State-changing / RCE / DoS scripts: never run even under --unsafe
+    # via the service map (kept here so safe-mode filtering also strips
+    # them if they ever appear in a policy file).
+    "smb-vuln-regsvc-dos",
+    "rdp-vuln-ms12-020",
+    "ms-sql-xp-cmdshell",
+    "ssh-run",
+    "mysql-query",
+    "ms-sql-query",
+    "mysql-dump-hashes",
+    "ms-sql-dump-hashes",
+    "http-fileupload-exploiter",
+    "sip-call-spoof",
+    "rmi-vuln-classloader",
+})
+
+
+def _unsafe_policy_script_set() -> frozenset:
+    """Return lowercased script names listed in unsafe_nse_scripts.json."""
+    try:
+        policy = _load_nse_script_policy(UNSAFE_NSE_SCRIPTS_PATH)
+    except Exception:
+        return frozenset()
+    names = set()
+    for entry in policy.values():
+        if not isinstance(entry, dict):
+            continue
+        for script in entry.get("scripts", []) or []:
+            name = str(script).strip().lower()
+            if name:
+                names.add(name)
+    return frozenset(names)
+
 
 def _script_csv_from_list(scripts: list[str]) -> str:
     return ",".join(dict.fromkeys(scripts))
+
+
+_HARD_EXCLUDED_NSE = frozenset({
+    # RCE / state-change / DoS / exfiltration: excluded from every tier,
+    # including --unsafe, per confirm-only philosophy.
+    "smb-vuln-regsvc-dos",
+    "rdp-vuln-ms12-020",
+    "ms-sql-xp-cmdshell",
+    "ssh-run",
+    "mysql-query",
+    "ms-sql-query",
+    "mysql-dump-hashes",
+    "ms-sql-dump-hashes",
+    "http-fileupload-exploiter",
+    "sip-call-spoof",
+    "rmi-vuln-classloader",
+})
 
 
 def _filter_nse_scripts_by_tier(scripts: str | list[str], *, allow_unsafe: bool = False) -> str:
@@ -4700,21 +4842,38 @@ def _filter_nse_scripts_by_tier(scripts: str | list[str], *, allow_unsafe: bool 
         script_list = [s.strip() for s in scripts.split(",")]
     else:
         script_list = [str(s).strip() for s in scripts]
+    if allow_unsafe:
+        return _script_csv_from_list(
+            [s for s in script_list if s and s.lower() not in _HARD_EXCLUDED_NSE]
+        )
+    unsafe_names = _unsafe_policy_script_set()
     safe_scripts = []
     for script in script_list:
         if not script:
             continue
         script_low = script.lower()
-        if not allow_unsafe and any(token in script_low for token in _SAFE_NSE_SCRIPT_DENYLIST):
+        if any(token in script_low for token in _SAFE_NSE_SCRIPT_DENYLIST):
+            continue
+        if script_low in _UNSAFE_EXPLICIT_BLOCKLIST:
+            continue
+        if script_low in unsafe_names:
             continue
         safe_scripts.append(script)
     return _script_csv_from_list(safe_scripts)
 
 
+def _service_key_matches(policy_key: str, name_tokens: set[str]) -> bool:
+    """Exact token match for service keys (avoids 'lu' false positives)."""
+    return policy_key.lower() in name_tokens
+
+
 def _collect_policy_scripts(name: str, policy: dict, *, allow_unsafe: bool = False) -> list[str]:
     scripts: list[str] = []
+    tokens = set(str(name or "").strip().lower().split())
     for key, entry in policy.items():
-        if key in name and isinstance(entry, dict):
+        if not isinstance(entry, dict):
+            continue
+        if _service_key_matches(str(key), tokens):
             script_csv = _filter_nse_scripts_by_tier(entry.get("scripts", []), allow_unsafe=allow_unsafe)
             if script_csv:
                 scripts.extend(script_csv.split(","))
@@ -4728,6 +4887,26 @@ _SERVICE_NAME_ALIASES = {
     # TLS-wrapped HTTP services frequently appear as vendor-specific names.
     "ssl/tungsten-https": "https",
     "ssl/http": "https",
+    "http-proxy": "http",
+    "http-alt": "http",
+    "ajp13": "ajp",
+    "mssql": "ms-sql",
+    "ms-sql-s": "ms-sql",
+    "ms-sql-m": "ms-sql",
+    "ldapssl": "ldap",
+    "ldaps": "ldap",
+    "imaps": "imap",
+    "pop3s": "pop3",
+    "smtps": "smtp",
+    "oracle-tns": "oracle",
+    "postgresql": "pgsql",
+    "microsoft-ds": "smb",
+    "netbios-ssn": "smb",
+    "ssl/imap": "imap",
+    "ssl/smtp": "smtp",
+    "ssl/pop3": "pop3",
+    "ssl/ldap": "ldap",
+    "ms-wbt-server": "rdp",
 }
 
 
@@ -4740,10 +4919,20 @@ def _expand_service_name_aliases(service_name: str) -> str:
     if raw in _SERVICE_NAME_ALIASES:
         terms.add(_SERVICE_NAME_ALIASES[raw])
     for src, dst in _SERVICE_NAME_ALIASES.items():
-        if src in raw:
+        if src == raw:
             terms.add(dst)
-        if dst in raw:
+        if dst == raw:
             terms.add(src)
+    # Generic derivations: ssl/<svc> also maps to <svc>; ms-sql-s/m variants
+    # also map to ms-sql so the generic key fires alongside the specific one.
+    if "/" in raw:
+        _base = raw.split("/", 1)[1].strip()
+        if _base:
+            terms.add(_base)
+    if raw in ("ms-sql-s", "ms-sql-m"):
+        terms.add("ms-sql")
+    if raw in ("oracle-tns",):
+        terms.add("oracle")
     return " ".join(sorted(terms))
 
 
@@ -4776,8 +4965,10 @@ def _select_nse_scripts(service_name: str) -> str:
 
     # Fallback to the built-in map for services not covered by policy files.
     # Unsafe script families are stripped unless --unsafe was acknowledged.
+    # Exact token matching avoids substring false positives (e.g. "lu").
+    fallback_tokens = set(name.split())
     for key, scripts in _NSE_SCRIPT_MAP.items():
-        if key in name:
+        if _service_key_matches(str(key), fallback_tokens):
             return _filter_nse_scripts_by_tier(scripts, allow_unsafe=UNSAFE_VERIFY)
     return ""
 
@@ -4828,6 +5019,232 @@ def _check_os_guess_plausibility(os_info: dict, services: list) -> None:
     os_info["raw_accuracy"]      = os_info.get("accuracy", 0)
     os_info["name"]              = "OS guess unreliable"
     os_info["suppressed_reason"] = reason
+
+
+# --- Device / recon helpers (offline, stdlib-only) ---
+RECON_PORT_UNION = (
+    "80,81,88,443,554,8554,8000,8080,8081,8899,1900,5000,5353,3702,"
+    "34567,37777,9527,21,23,161,502,102,4840"
+)
+_DEVICE_BANNERS = ("boa", "goahead", "goahead-webs", "lighttpd", "thttpd",
+                   "uhttpd", "allegro", "rompager", "hikvision", "dahua",
+                   "axis", "hanwha", "uniview")
+
+
+def _validate_device_target(target: str) -> str:
+    """Enforce single-host input for --device; refuse CIDR/range/multi-target."""
+    raw = (target or "").strip()
+    if not raw:
+        print("[!] --device requires exactly one host (IP, DHCP hostname, or FQDN).")
+        sys.exit(2)
+    host = raw.split(":")[0] if not raw.startswith("[") else raw
+    if any(tok in host for tok in ("/", ",", "*", " ")):
+        print("[!] --device accepts exactly one host (IP, DHCP hostname, or FQDN). "
+              "CIDR/subnet/range input is refused in device mode; "
+              "run without --device for subnet enumeration or use --recon.")
+        sys.exit(2)
+    if "-" in host and any(ch.isdigit() for ch in host):
+        print("[!] --device refuses octet ranges; supply a single host.")
+        sys.exit(2)
+    return raw
+
+
+def _device_likelihood(services: list, banner_text: str = "") -> tuple[float, str, list]:
+    """Deterministic embedded-device score from banners + ports (no LLM)."""
+    text = (banner_text or "").lower()
+    ports = {str((s or {}).get("port", "")) for s in (services or [])}
+    score = 0.0
+    evidence: list = []
+    if any(b in text for b in _DEVICE_BANNERS):
+        score += 0.30
+        evidence.append("embedded httpd banner")
+    if "554" in ports or ports & {"8899", "37777", "34567", "8554", "8000"}:
+        score += 0.25
+        evidence.append("RTSP/camera SDK port open")
+    if "21" in ports and "23" in ports:
+        score += 0.10
+        evidence.append("Telnet+FTP combo (embedded)")
+    if "1900" in ports or "5000" in ports:
+        score += 0.10
+        evidence.append("UPnP/SSDP indicator")
+    if "9100" in ports or "631" in ports:
+        score -= 0.20
+        evidence.append("printer counter-signal")
+    if "445" in ports and "3389" in ports:
+        score -= 0.30
+        evidence.append("full-OS counter-signal")
+    score = max(0.0, min(1.0, score))
+    reason = "; ".join(evidence) if evidence else "no device indicators"
+    return score, reason, evidence
+
+
+def _firmware_string_scan(image_path: str, session_dir: str) -> dict:
+    """Offline stdlib-only firmware string scan (no unpack deps, no network)."""
+    import re as _re
+    import hashlib as _hl
+    out: dict = {"image": image_path, "status": "not_run", "hits": []}
+    if not image_path or not os.path.isfile(image_path):
+        out["status"] = "missing"
+        return out
+    try:
+        size = os.path.getsize(image_path)
+        if size > 256 * 1024 * 1024:
+            out["status"] = "too_large"
+            out["size"] = size
+            return out
+        with open(image_path, "rb") as fh:
+            raw = fh.read(50 * 1024 * 1024)  # cap 50MB in-memory
+        out["sha256"] = _hl.sha256(raw).hexdigest()
+        out["size"] = size
+        text = raw.decode("utf-8", errors="ignore")
+        patterns = {
+            "private_key": r"-----BEGIN (?:RSA )?PRIVATE KEY-----",
+            "certificate": r"-----BEGIN CERTIFICATE-----",
+            "passwd": r"root:[x*]:0:0:",
+            "busybox": r"BusyBox v[\d.]+",
+            "linux_ver": r"Linux version [\d.]+",
+            "boa": r"Boa/[\d.]+",
+            "goahead": r"GoAhead",
+        }
+        hits = []
+        for name, pat in patterns.items():
+            for m in _re.finditer(pat, text):
+                hits.append({"type": name, "offset": m.start()})
+                if len(hits) >= 500:
+                    break
+        out["hits"] = hits
+        out["status"] = "done"
+        dest = os.path.join(session_dir, "firmware_strings.json")
+        with open(dest, "w", encoding="utf-8") as fh:
+            json.dump(out, fh, indent=2)
+    except Exception as e:
+        out["status"] = f"error: {e}"
+    return out
+
+
+def _device_auth_flow_svg(auth_flow: dict | None = None) -> str:
+    """Render offline inline SVG of the device auth state machine (no CDN/JS)."""
+    import xml.etree.ElementTree as _ET
+    nodes = ["Unauth", "LoginPage", "JS-Transform", "POST logincheck", "Decision", "Authenticated"]
+    if isinstance(auth_flow, dict) and auth_flow.get("nodes"):
+        try:
+            nodes = [str(n.get("label", n.get("id", "?")))[:22] for n in auth_flow["nodes"]][:8]
+        except Exception:
+            pass
+    w, bw, bh, gap = 900, 130, 44, 20
+    h = 120
+    svg = _ET.Element("svg", {"xmlns": "http://www.w3.org/2000/svg", "viewBox": f"0 0 {w} {h}",
+                              "role": "img", "aria-label": "Device auth flow"})
+    x = 10
+    for i, label in enumerate(nodes):
+        _ET.SubElement(svg, "rect", {"x": str(x), "y": "30", "width": str(bw), "height": str(bh),
+                                     "rx": "6", "fill": "#1b2a3a" if i < len(nodes) - 1 else "#1d4d2b",
+                                     "stroke": "#4d7cb0"})
+        t = _ET.SubElement(svg, "text", {"x": str(x + bw / 2), "y": "55", "fill": "#dfe9f5",
+                                         "font-size": "11", "text-anchor": "middle",
+                                         "font-family": "sans-serif"})
+        t.text = label
+        if i < len(nodes) - 1:
+            _ET.SubElement(svg, "line", {"x1": str(x + bw), "y1": "52", "x2": str(x + bw + gap),
+                                         "y2": "52", "stroke": "#4d7cb0", "stroke-width": "2"})
+            _ET.SubElement(svg, "polygon", {"points": f"{x+bw+gap},46 {x+bw+gap},58 {x+bw+gap+8},52",
+                                            "fill": "#4d7cb0"})
+        x += bw + gap
+        if x > w - bw:
+            break
+    import io as _io
+    buf = _io.StringIO()
+    buf.write(_ET.tostring(svg, encoding="unicode"))
+    return buf.getvalue()
+
+
+def _deployment_gate_svg(gates: list | None = None) -> str:
+    """Render offline deployment-gate matrix (PASS/FAIL/UNKNOWN dots, no JS)."""
+    import xml.etree.ElementTree as _ET
+    rows = gates if isinstance(gates, list) and gates else [
+        {"control": "D1 default creds", "status": "UNKNOWN"},
+        {"control": "D2 attack surface", "status": "UNKNOWN"},
+        {"control": "D7 auth/session", "status": "UNKNOWN"},
+        {"control": "D9 TLS", "status": "UNKNOWN"},
+        {"control": "D11 RTSP/ONVIF", "status": "UNKNOWN"},
+    ]
+    h = 30 * (len(rows) + 1) + 10
+    svg = _ET.Element("svg", {"xmlns": "http://www.w3.org/2000/svg",
+                              "viewBox": f"0 0 640 {h}", "role": "img",
+                              "aria-label": "Deployment gate matrix"})
+    colors = {"PASS": "#2e7d32", "FAIL": "#c62828", "UNKNOWN": "#757575"}
+    y = 25
+    for r in rows[:20]:
+        st = str(r.get("status", "UNKNOWN")).upper()
+        _ET.SubElement(svg, "circle", {"cx": "20", "cy": str(y - 5), "r": "7",
+                                       "fill": colors.get(st, "#757575")})
+        t = _ET.SubElement(svg, "text", {"x": "38", "y": str(y), "fill": "#222",
+                                         "font-size": "12", "font-family": "sans-serif"})
+        t.text = f"{r.get('control', '?')} — {st}"
+        y += 30
+    import io as _io
+    return _ET.tostring(svg, encoding="unicode")
+
+
+async def _run_recon_sweep(scope: str, session_dir: str) -> str:
+    """Discovery-only subnet sweep: ping-sweep + top-ports + version-light.
+
+    Writes versioned recon.json (hosts, device_likelihood, recommended
+    profile, second-sweep commands) for --input triage. Never --unsafe.
+    """
+    import asyncio as _aio
+    print(f"[*] Recon sweep on {scope} (discovery-only, safe mode)...")
+    r0 = await _aio.to_thread(
+        _nmap_run,
+        ["-sn", "-PR", "-PE", "-PS80,443,22,554,8000,8080,8899,37777",
+         "-PA80,443", "-PU161,40125", "-T4", "-oX", "-", scope], 120)
+    live: list[str] = []
+    try:
+        root = ET.fromstring(r0) if r0.strip().startswith("<") else None
+        if root is not None:
+            for host in root.findall("host"):
+                st = host.find("status")
+                if st is not None and st.attrib.get("state") == "up":
+                    addr = host.find("address[@addrtype='ipv4']")
+                    if addr is not None:
+                        live.append(addr.attrib.get("addr", ""))
+    except Exception:
+        pass
+    live = [h for h in live if h]
+    print(f"[*] Recon: {len(live)} live hosts")
+    hosts_out: list[dict] = []
+    fams: dict[str, int] = {}
+    for ip in live[:256]:
+        r1 = await _aio.to_thread(
+            _nmap_run,
+            ["-Pn", "-sV", "--version-intensity", "5", "-T4", "--open",
+             "--top-ports", "100", "-p", RECON_PORT_UNION,
+             "--max-retries", "1", "--host-timeout", "90s",
+             "--script", "upnp-info,wsdd-discover,smb-os-discovery,ssl-cert,http-title",
+             "--script-timeout", "15s", "-oX", "-", ip], 150)
+        svcs = _parse_nmap_xml(r1) if r1.strip().startswith("<") else []
+        banner = " ".join(f"{s.get('product','')} {s.get('name','')}" for s in svcs)
+        score, reason, _ev = _device_likelihood(svcs, banner)
+        if score >= 0.65:
+            fam, prof = "iot/camera", "--device"
+        elif "445" in {str(s.get("port")) for s in svcs}:
+            fam, prof = "windows", "full --cve-test"
+        elif any("ssh" in str(s.get("name")) for s in svcs):
+            fam, prof = "linux/server", "standard --cve-test"
+        else:
+            fam, prof = "unknown", "standard"
+        fams[fam] = fams.get(fam, 0) + 1
+        hosts_out.append({
+            "ip": ip, "services": svcs, "device_likelihood": round(score, 2),
+            "family": fam, "recommended_profile": prof, "reason": reason,
+            "second_sweep_cmd": f"python3 noctis.py {ip} {prof}".strip(),
+        })
+    recon = {"schema": "noctis-recon/1", "scope": scope,
+             "summary": {"alive": len(live), "families": fams}, "hosts": hosts_out}
+    out = os.path.join(session_dir, "recon.json")
+    with open(out, "w", encoding="utf-8") as fh:
+        json.dump(recon, fh, indent=2)
+    return out
 
 
 def run_nmap_discovery(target: str, pinned_ports: str | None = None, tool_kb: dict | None = None) -> tuple:
@@ -7613,6 +8030,15 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   {% endfor %}
 </table>
 
+{% if device_flow_svg %}
+<h2 id="device-flow">Device Auth Flow</h2>
+<div style="background:#fff;border:1px solid #1e4a6e;border-radius:6px;padding:10px;overflow-x:auto">{{ device_flow_svg | safe }}</div>
+{% endif %}
+{% if device_gate_svg %}
+<h2 id="deployment-gate">Deployment Gate</h2>
+<div style="background:#fff;border:1px solid #1e4a6e;border-radius:6px;padding:10px;overflow-x:auto">{{ device_gate_svg | safe }}</div>
+{% endif %}
+
 {% if nmap_discovery and nmap_discovery.nse_summary %}
 <h2 id="nse-scripts">Nmap NSE Scripts</h2>
 <details style="margin-bottom:1em;border:1px solid #1e4a6e;border-radius:6px;background:#0d1b2a">
@@ -8837,8 +9263,18 @@ def generate_html_report(report_data):
                            if _eff_map.get(f["finding_id"], f.get("severity", "info")).lower()
                            not in ("critical", "high", "medium", "low")]
 
+    try:
+        _dev_flow = _device_auth_flow_svg(report_data.get("device_auth_flow"))
+    except Exception:
+        _dev_flow = ""
+    try:
+        _dev_gate = _deployment_gate_svg(report_data.get("deployment_gate"))
+    except Exception:
+        _dev_gate = ""
     data = dict(
         report_data,
+        device_flow_svg=_dev_flow if report_data.get("device_auth_flow") is not None or DEVICE_MODE else "",
+        device_gate_svg=_dev_gate if report_data.get("deployment_gate") is not None or DEVICE_MODE else "",
         rem_short_map=_REMEDIATION_SHORT_TERM,
         rem_long_map=_REMEDIATION_LONG_TERM,
         steps_map=_STEPS_TO_REPRODUCE,
@@ -15443,12 +15879,15 @@ def _prompt_cve_nse_acknowledgment(target: str, session_dir: str, session_id: st
 
 async def main_async():
     global SAFE_MODE, AIRGAP_MODE, MSF_VALIDATE, CVE_TEST, UNATTENDED, UNSAFE_VERIFY, CVE_NSE, SESSION_FILE
+    global DEVICE_MODE, RECON_MODE, FIRMWARE_PATH, RECON_INPUT
     scan_start = datetime.now()
 
     if len(sys.argv) < 2:
-        print("Usage: python3 noctis.py <target> [profile ...] [--resume] [--session-dir <path>] [--nse-aggressive] [--dns-enum] [--msf-validate] [--cve-test] [--cve-nse] [--unattended] [--unsafe]")
+        print("Usage: python3 noctis.py <target> [profile ...] [--resume] [--session-dir <path>] [--nse-aggressive] [--dns-enum] [--msf-validate] [--cve-test] [--cve-nse] [--unattended] [--unsafe] [--device] [--recon] [--input <recon.json>] [--firmware <path>] [--creds-file <path>]")
         print("       Target formats: 192.168.0.1  |  hostname  |  host:port  |  host:80,443,8080")
         print("       python3 noctis.py --report <json_file>")
+        print("       python3 noctis.py --recon 192.168.1.0/24   (discovery sweep -> recon.json)")
+        print("       python3 noctis.py --device 192.168.1.50    (single-host embedded assessment)")
         print("Profiles (one or more):", ", ".join(PROFILES))
         sys.exit(1)
 
@@ -15493,7 +15932,36 @@ async def main_async():
             UNATTENDED = True
         elif arg == "--unsafe":
             UNSAFE_VERIFY = True
+        elif arg == "--device":
+            DEVICE_MODE = True
+        elif arg == "--recon":
+            RECON_MODE = True
+        elif arg == "--input":
+            if _i + 1 < len(_argv):
+                _i += 1
+                RECON_INPUT = _argv[_i]
+        elif arg == "--firmware":
+            if _i + 1 < len(_argv):
+                _i += 1
+                FIRMWARE_PATH = _argv[_i]
+        elif arg == "--creds-file":
+            if _i + 1 < len(_argv):
+                _i += 1
+                _creds = _argv[_i]  # validated at Phase-3 gate; path recorded in session
+                os.environ["NOCTIS_CREDS_FILE"] = _creds
         _i += 1
+
+    if DEVICE_MODE and RECON_MODE:
+        print("[!] --device and --recon are mutually exclusive. Aborting.")
+        sys.exit(2)
+    if DEVICE_MODE:
+        target = _validate_device_target(target)
+        # --device implies aggressive-but-safe; --unsafe adds the unsafe tier.
+        if not UNSAFE_VERIFY:
+            SAFE_MODE = False
+    if RECON_MODE and (UNSAFE_VERIFY or CVE_TEST):
+        print("[!] --recon is discovery-only; refusing --unsafe/--cve-test in recon mode.")
+        sys.exit(2)
 
     # Ensure Ollama is running before we attempt any LLM calls
     if not ensure_ollama_running():
@@ -15552,6 +16020,25 @@ async def main_async():
 
     os.makedirs(session_dir, exist_ok=True)
     SESSION_FILE = os.path.join(session_dir, "session.json")
+
+    # --recon dispatch: discovery-only sweep -> recon.json, then exit.
+    if RECON_MODE:
+        _recon_out = await _run_recon_sweep(target, session_dir)
+        print(f"[+] Recon complete -> {_recon_out}")
+        print("[*] Second sweep: python3 noctis.py --input "
+              f"{_recon_out}  (or pick it in the Web UI Recon dropdown)")
+        return
+
+    # --firmware offline scan (stdlib-only; operator owns hash/version).
+    if FIRMWARE_PATH:
+        if not UNSAFE_VERIFY:
+            print("[*] Firmware string scan deferred: requires --unsafe + supplied image. "
+                  "Resume with: noctis.py <target> --device --unsafe "
+                  f"--firmware {FIRMWARE_PATH}")
+        else:
+            _fw = _firmware_string_scan(FIRMWARE_PATH, session_dir)
+            print(f"[*] Firmware scan: {_fw.get('status')} "
+                  f"({len(_fw.get('hits', []))} hits, sha256={_fw.get('sha256', '-')[:12]})")
 
     # ----------------------------------------------------------------------
     # --cve-nse pre-flight + legal-notice acknowledgment.
@@ -16100,6 +16587,21 @@ async def main_async():
     )
     if ("msfconsole" in _msf_tools_run or _post_positive_msf_ran) and "msfconsole" not in report.get("tools_run", []):
         report.setdefault("tools_run", []).append("msfconsole")
+
+    # Device-mode artifacts: auth-flow + deployment gate (offline SVG in HTML).
+    if DEVICE_MODE:
+        report["device_mode"] = {"enabled": True, "unsafe": bool(UNSAFE_VERIFY)}
+        report.setdefault("device_auth_flow", None)
+        report.setdefault("deployment_gate", [
+            {"control": "D1 default creds", "status": "UNKNOWN"},
+            {"control": "D2 attack surface", "status": "UNKNOWN"},
+            {"control": "D7 auth/session", "status": "UNKNOWN"},
+            {"control": "D9 TLS", "status": "UNKNOWN"},
+            {"control": "D11 RTSP/ONVIF", "status": "UNKNOWN"},
+        ])
+        fw_env = FIRMWARE_PATH or ""
+        if fw_env:
+            report["device_mode"]["firmware"] = os.path.basename(fw_env)
 
     # Attach nmap discovery metadata for report consumers and the HTML renderer
     report["nmap_discovery"] = {
