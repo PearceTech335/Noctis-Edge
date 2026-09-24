@@ -18,6 +18,8 @@ This architecture makes Noctis Edge particularly suited for regulated environmen
 
 - **KB submission sanitizers hardened** — CVE/Nuclei KB submissions now also scrub IPv6, MACs, session-cookie/auth-token values, and firmware/creds-file paths. Device-mode cookies can never reach the community corpus.
 - **NSE policies actually distributable** — curated policies published to `Noctis-Edge-Tool-Manifest-KB` (upstream unsafe was `{}`); worker serves `/safe-nse-scripts` + `/aggressive-nse-scripts` alongside `/unsafe-nse-scripts`, and `update.sh` pulls all three tiers (steps 12/12b/12c). Endpoints verified live against the deployed relay.
+- **Web UI device/recon workflow** — a **Device** radio joins the profile banner (Standard/Full/OT): selecting it restricts targets to a single host, greys out inapplicable flags (`--recon`, `--dns-enum`), reveals sweep-phase radios (All/1 Surface/2 Auth flow/3 Authenticated, sent as `--device-phase-N`), and enables `--firmware` intake from a server-side `firmware/` dropdown plus a creds-file input. A Recon file dropdown lists `recon.json` triage files with a **⚡ Second Strike** launcher: ranked host checkboxes (likelihood + recommended profile), one click to strike the top pick. A **Manual** toolbar button prints the flag reference into the terminal.
+- **CLI `--man`** — `python3 noctis.py --man` prints the 20-entry operator flag reference (same content as the Web UI manual) and exits before any setup. Flag descriptions audited: `--nse-aggressive` no longer claims gobuster (installed but never driven), `--cve-nse` states its `--cve-test` prerequisite.
 
 ## What's New in v0.12.0
 
@@ -220,11 +222,13 @@ docker compose run --rm noctis scan 192.168.0.1 --resume
 | `--cve-test` | Generate and execute LLM-driven probe scripts for each matched CVE |
 | `--cve-nse` | Separately acknowledged escalation tier for policy-mapped NSE checks tied to matched CVE evidence (requires `--cve-test`) |
 | `--unsafe` | Opt-in intrusive verifier tier — requires typing the exact token `UNSAFE` at the legal-notice prompt (no unattended bypass) |
-| `--device` | Single-host embedded/IoT assessment (IP, DHCP hostname, or FQDN only — CIDR refused). Implies aggressive-but-safe NSE; with `--unsafe` adds the unsafe tier. See [Optional Phases](#optional-phases) |
+| `--device` | Single-host embedded/IoT assessment (IP, DHCP hostname, or FQDN only — CIDR refused). Implies aggressive-but-safe NSE; with `--unsafe` adds the unsafe tier. Web UI: Device profile radio. See [Optional Phases](#optional-phases) |
+| `--device-phase-1/2/3` | Device sweep scope: 1 surface harvest only (disables `--cve-test`), 2 auth flow (default behaviour), 3 authenticated mapping (requires creds). Web UI: phase radios under the Device profile |
 | `--recon` | Discovery-only subnet sweep producing versioned `recon.json` triage (refuses `--unsafe`/`--cve-test`). See [Optional Phases](#optional-phases) |
 | `--input <recon.json>` | Second-sweep host selection from a recon file |
 | `--firmware <path>` | Offline stdlib-only firmware string scan (operator supplies the image; runs in P1 only with `--unsafe`, otherwise deferred) |
 | `--creds-file <path>` | JSON cookies file for device Phase-3 authenticated mapping (0600 recommended; secrets redacted in logs/reports) |
+| `--man` | Print the 20-entry operator flag reference and exit (same content as the Web UI Manual button) |
 | `--unattended` | Auto-approve all interactive prompts (useful for scripted/automated runs) |
 | `--resume` | Resume the most recent interrupted scan session for this target |
 | `--session-dir <path>` | Resume a specific session directory (e.g. via Web UI picker) |
@@ -385,6 +389,8 @@ Single-host embedded/IoT assessment (e.g. a pre-install in-vehicle camera). Acce
 Behaviour: implies aggressive-but-safe NSE by default; with `--unsafe` (typed `UNSAFE` acknowledgment still required) adds the unsafe tier while the hard-excluded RCE/DoS list never runs in any tier. Three phases: (1) surface + client harvest — fetch login pages, `<script src>` sets, enumerate `.rsp`/`.json`/`.cgi` endpoints, extract form fields, handlers, and cookie names; (2) auth-flow assistant — ingest pasted `curl`/HAR output plus `login.js`, build the login state machine and emit one targeted wire-format probe (same 5-probe + 5-verifier budget as `--cve-test`, never blind brute-force); (3) authenticated mapping with operator-supplied creds — session-cookie paste or `--creds-file` (cookies-only JSON, `0600` recommended), every attempt logged with what worked *and* what did not, secrets redacted to hash/length refs.
 
 The HTML/PDF report gains device-only sections: an offline inline-SVG auth-flow state machine, an HTTP-status vs application-status strip (e.g. `302 → /relogin.rsp` vs `200 {"result":-400}`), and a deployment-gate matrix (Pass/Fail/Unknown per control).
+
+Scope a device run with `--device-phase-1` (surface only), `--device-phase-2` (auth flow, the default behaviour), or `--device-phase-3` (authenticated mapping, requires creds). In the Web UI, choose the **Device** profile radio instead of typing flags: it enforces single-host targets, greys out `--recon`/`--dns-enum`, shows the phase radios, and enables `--firmware` intake from the `firmware/` dropdown.
 
 ### `--firmware` / `--creds-file`
 
@@ -630,6 +636,7 @@ The worker is already deployed at `https://noctis-kb-relay.pearcetechnologies1.w
 
 - Sanitizers in `submit_kb.py` / `submit_nuclei_kb.py` extended (IPv6, MAC, session-cookie redaction, firmware/creds paths); tool-KB submitter verified sufficient.
 - Curated NSE policies published to the Tool-Manifest-KB repo; worker + `update.sh` now distribute all three tiers. See `version_history.md`.
+- Web UI: **Device** profile radio with sweep-phase selection and firmware intake, Recon file dropdown with ranked host triage and **⚡ Second Strike** launcher, **Manual** button printing the flag reference. CLI: `--device-phase-1/2/3` sweep scoping and `--man` flag manual. Flag descriptions audited for accuracy.
 
 ### v0.12.0 — Device Mode + Recon Sweep + Abliterated Model
 

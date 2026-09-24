@@ -14,6 +14,12 @@
 - `update.sh`: added pull steps 12b/12c for safe/aggressive policies with the same JSON-validation + keep-existing-copy fallback as the unsafe pull.
 - **Deployment confirmed live:** the worker (including the new `/safe-nse-scripts` and `/aggressive-nse-scripts` endpoints) is deployed and verified — all three tier pulls return the curated policies (unsafe: 79 services; safe: 10; aggressive: 6).
 
+### Web UI device/recon workflow + `--man`
+- **Device** profile radio joins the Standard/Full/OT banner: single-host enforcement (400 on CIDR), `--recon`/`--dns-enum` greyed out, sweep-phase radios (All/1/2/3 → `--device-phase-N`), `--firmware` checkbox gating a server-side `firmware/` dropdown, creds-file input, and `--input` checkbox on the recon dropdown. Mutual-exclusion and file-existence guards mirror the CLI in `/api/start`.
+- Recon file dropdown (`/api/recon-files`) with ranked host checkboxes (`/api/recon-hosts`: likelihood, family, recommended profile, second-sweep command) and a **⚡ Second Strike** launcher that prints picked commands to the terminal and starts the top pick. Firmware listing via `/api/firmware-files`.
+- CLI `--device-phase-1/2/3` scoping (phase 1 disables `--cve-test`; phase 3 requires creds) and `--man` 20-entry flag manual exiting before setup; Web UI **Manual** button prints the same reference into the terminal.
+- Flag descriptions audited: `--nse-aggressive` drops the gobuster claim (present in the image, never driven); `--cve-nse` documents its `--cve-test` prerequisite.
+
 ---
 
 ## v0.12.0 — Device Mode + Recon Sweep + Abliterated Model
