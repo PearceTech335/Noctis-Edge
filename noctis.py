@@ -283,6 +283,7 @@ UNATTENDED      = False  # set via --unattended; auto-approves all prompts (no u
 UNSAFE_VERIFY   = False  # set via --unsafe; opt-in intrusive verifier tier; requires typed UNSAFE prompt
 CVE_NSE         = False  # set via --cve-nse; opt-in CVE-targeted NSE escalation; requires explicit acknowledgment
 DEVICE_MODE     = False  # set via --device; single-host embedded/IoT assessment (implies aggressive-but-safe)
+DEVICE_PHASE    = 0      # set via --device-phase-{1,2,3}; 0 = all phases
 RECON_MODE      = False  # set via --recon; subnet discovery sweep producing recon.json for triage
 FIRMWARE_PATH   = None   # set via --firmware <path>; offline stdlib-only firmware string scan
 RECON_INPUT     = None   # set via --input <recon.json>; second-sweep host selection file
@@ -5245,6 +5246,37 @@ async def _run_recon_sweep(scope: str, session_dir: str) -> str:
     with open(out, "w", encoding="utf-8") as fh:
         json.dump(recon, fh, indent=2)
     return out
+
+
+_FLAG_MANUAL: list[tuple[str, str]] = [
+    ("<target>", "IP, hostname, or host:port to scan. CIDR/range only with --recon."),
+    ("[profile]", "standard (default), full, or ot. Multiple profiles merge tool lists."),
+    ("--nse-aggressive", "Disable safe mode: aggressive NSE tier; ffuf / hydra run without approval."),
+    ("--dns-enum", "Enable DNS enumeration tools (amass, dnsenum, dnsrecon). Needs internet."),
+    ("--msf-validate", "Safe Metasploit 'check' probes per matched CVE; post-positive corroboration with --cve-test."),
+    ("--cve-test", "LLM generates and runs up to 5 probe scripts per CVE (30s each), then 5 verifiers needing 2 confirmations."),
+    ("--cve-nse", "CVE-targeted NSE escalation. Requires --cve-test plus explicit operator confirmation."),
+    ("--unsafe", "Intrusive verifier tier. Requires typing the exact token UNSAFE at the legal-notice prompt (no unattended bypass)."),
+    ("--device", "Single-host embedded/IoT assessment (IP, DHCP hostname, or FQDN — no CIDR). Implies aggressive-but-safe NSE; with --unsafe adds the unsafe tier."),
+    ("--device-phase-1", "Device surface harvest only (discovery, forms, scripts, cookies). Disables --cve-test for the run."),
+    ("--device-phase-2", "Device auth-flow assistant (HAR/JS ingest, state machine, one targeted probe)."),
+    ("--device-phase-3", "Device authenticated mapping. Requires --creds-file (or session cookie at the Phase-3 gate)."),
+    ("--recon", "Discovery-only subnet sweep (CIDR/range) writing recon.json triage. Refuses --unsafe/--cve-test."),
+    ("--input <recon.json>", "Second-sweep host selection from a recon file."),
+    ("--firmware <path>", "Offline stdlib-only firmware string scan. Operator supplies the image; runs in Phase 1 only with --unsafe."),
+    ("--creds-file <path>", "Cookies-only JSON for device Phase-3 replay (0600 recommended; secrets redacted everywhere)."),
+    ("--unattended", "Auto-approve all interactive prompts."),
+    ("--resume / --session-dir", "Resume the most recent session, or a specific session directory."),
+    ("--report <json>", "Render HTML from an existing report JSON."),
+    ("--man", "Print this manual and exit."),
+]
+
+
+def _print_flag_manual() -> None:
+    """Print the --man operator reference (mirrors the Web UI flag manual)."""
+    print(f"Noctis Edge {VERSION} — flag manual")
+    for flag, tip in _FLAG_MANUAL:
+        print(f"  {flag}\n    {tip}")
 
 
 def run_nmap_discovery(target: str, pinned_ports: str | None = None, tool_kb: dict | None = None) -> tuple:
@@ -15879,8 +15911,12 @@ def _prompt_cve_nse_acknowledgment(target: str, session_dir: str, session_id: st
 
 async def main_async():
     global SAFE_MODE, AIRGAP_MODE, MSF_VALIDATE, CVE_TEST, UNATTENDED, UNSAFE_VERIFY, CVE_NSE, SESSION_FILE
-    global DEVICE_MODE, RECON_MODE, FIRMWARE_PATH, RECON_INPUT
+    global DEVICE_MODE, DEVICE_PHASE, RECON_MODE, FIRMWARE_PATH, RECON_INPUT
     scan_start = datetime.now()
+
+    if "--man" in sys.argv[1:]:
+        _print_flag_manual()
+        sys.exit(0)
 
     if len(sys.argv) < 2:
         print("Usage: python3 noctis.py <target> [profile ...] [--resume] [--session-dir <path>] [--nse-aggressive] [--dns-enum] [--msf-validate] [--cve-test] [--cve-nse] [--unattended] [--unsafe] [--device] [--recon] [--input <recon.json>] [--firmware <path>] [--creds-file <path>]")
@@ -15888,6 +15924,7 @@ async def main_async():
         print("       python3 noctis.py --report <json_file>")
         print("       python3 noctis.py --recon 192.168.1.0/24   (discovery sweep -> recon.json)")
         print("       python3 noctis.py --device 192.168.1.50    (single-host embedded assessment)")
+        print("       python3 noctis.py --man                    (flag manual)")
         print("Profiles (one or more):", ", ".join(PROFILES))
         sys.exit(1)
 
@@ -15934,6 +15971,15 @@ async def main_async():
             UNSAFE_VERIFY = True
         elif arg == "--device":
             DEVICE_MODE = True
+        elif arg == "--device-phase-1":
+            DEVICE_MODE = True
+            DEVICE_PHASE = 1
+        elif arg == "--device-phase-2":
+            DEVICE_MODE = True
+            DEVICE_PHASE = 2
+        elif arg == "--device-phase-3":
+            DEVICE_MODE = True
+            DEVICE_PHASE = 3
         elif arg == "--recon":
             RECON_MODE = True
         elif arg == "--input":
@@ -15959,6 +16005,13 @@ async def main_async():
         # --device implies aggressive-but-safe; --unsafe adds the unsafe tier.
         if not UNSAFE_VERIFY:
             SAFE_MODE = False
+        if DEVICE_PHASE == 1 and CVE_TEST:
+            print("[*] --device-phase-1 is surface harvest only; disabling --cve-test for this run.")
+            CVE_TEST = False
+        if DEVICE_PHASE == 3 and not os.environ.get("NOCTIS_CREDS_FILE"):
+            print("[!] --device-phase-3 is authenticated mapping and needs --creds-file "
+                  "(or a pasted session cookie at the Phase-3 gate). Aborting.")
+            sys.exit(2)
     if RECON_MODE and (UNSAFE_VERIFY or CVE_TEST):
         print("[!] --recon is discovery-only; refusing --unsafe/--cve-test in recon mode.")
         sys.exit(2)

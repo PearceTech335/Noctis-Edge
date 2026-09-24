@@ -81,11 +81,11 @@ PROFILE_DESCRIPTIONS = {
 _ANSI_RE = re.compile(r'\x1b(?:\[[0-9;]*[mGKHFABCDJr]|\([AB]|[^[\(])')
 
 FLAGS = [
-  ("--nse-aggressive",   "Disable safe-mode: enables aggressive NSE script tier (gobuster / ffuf / hydra without approval)"),
+  ("--nse-aggressive",   "Disable safe-mode: enables aggressive NSE script tier (ffuf / hydra run without approval)"),
   ("--dns-enum",     "Enable DNS enumeration tools — requires internet"),
   ("--msf-validate", "Run safe Metasploit 'check' probes for each matched CVE"),
   ("--cve-test",     "Ask the LLM to generate & execute probe scripts per CVE"),
-  ("--cve-nse",      "\u26a0\ufe0f  Enables CVE-targeted NSE escalation. Requires explicit operator confirmation. Runs active NSE checks tied to matched CVEs."),
+  ("--cve-nse",      "\u26a0\ufe0f  Enables CVE-targeted NSE escalation. Requires --cve-test plus explicit operator confirmation. Runs active NSE checks tied to matched CVEs."),
   ("--unsafe",       "\u26a0\ufe0f  Enables intrusive/unsafe verifier and exploit checks. You must have explicit authorisation. Operator confirmation required. Results are flagged as unsafe in reports."),
   ("--device",       "Single-host embedded/IoT assessment (IP, DHCP hostname, or FQDN — no subnets). Implies aggressive-but-safe NSE; combine with --unsafe for the full tier."),
   ("--recon",        "Discovery-only subnet sweep (CIDR/range) producing recon.json triage. Refuses --unsafe/--cve-test. Second-sweep hosts via --input."),
@@ -252,6 +252,9 @@ def api_start():
 
     profiles   = [p for p in data.get("profiles", []) if p in PROFILES] or ["standard"]
     flags      = [f for f, _ in FLAGS if f in data.get("flags", [])]
+    for _pf in ("--device-phase-1", "--device-phase-2", "--device-phase-3"):
+      if _pf in data.get("flags", []) and _pf not in flags:
+        flags.append(_pf)
     session_dir = (data.get("session_dir") or "").strip()
 
     # --device / --recon mutual exclusion + scope guards (mirror CLI).
@@ -1069,6 +1072,18 @@ button:disabled { opacity: .45; cursor: not-allowed; }
         <span class="tip">{{ profile_descriptions[p] }}</span>
       </label>
       {% endfor %}
+      <label title="Single-host embedded/IoT assessment. Only one IP, DHCP hostname, or FQDN — no CIDR. Alters the kickoff: aggressive-but-safe NSE, device sweep phases, firmware intake." style="font-weight:bold; color:#29b6f6;">
+        <input type="radio" class="profile-rb" id="profile-device-rb" name="profile" value="__device">
+        Device
+        <span class="tip">Embedded / IoT / camera assessment. Single host only; unlocks sweep phases and firmware intake below, greys out inapplicable flags.</span>
+      </label>
+    </div>
+    <div class="cb-row" id="dphase-row" style="display:none; margin-top:6px;">
+      <span style="font-size:11px; color:#888;">Device sweep phase:</span>
+      <label><input type="radio" class="dphase-rb" name="dphase" value="0" checked> All</label>
+      <label title="Surface + client harvest only (discovery, forms, scripts, cookies). CVE probing disabled."><input type="radio" class="dphase-rb" name="dphase" value="1"> 1 · Surface</label>
+      <label title="Auth-flow assistant: HAR/JS ingest, state machine, one targeted probe."><input type="radio" class="dphase-rb" name="dphase" value="2"> 2 · Auth flow</label>
+      <label title="Authenticated mapping — requires creds file or session cookie."><input type="radio" class="dphase-rb" name="dphase" value="3"> 3 · Authenticated</label>
     </div>
   </fieldset>
 
@@ -1077,7 +1092,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
     <legend>Scan Flags</legend>
     <div class="cb-row" id="flags-row">
       {% for flag, tip in flags %}
-        {% if flag != '--unsafe' and flag != '--cve-nse' %}
+        {% if flag not in ('--unsafe', '--cve-nse', '--device') %}
         <label>
           <input type="checkbox" class="flag-cb" value="{{ flag }}">
           {{ flag }}
@@ -1108,10 +1123,16 @@ button:disabled { opacity: .45; cursor: not-allowed; }
         <select id="recon-select"><option value="">— none —</option></select>
       </label>
       <button type="button" onclick="loadReconHosts()">Load hosts</button>
-      <label>Firmware:
-        <select id="firmware-select"><option value="">— none —</option></select>
+      <label title="Offline firmware string scan (stdlib only, --unsafe only). Drop images into firmware/ on the server.">
+        <input type="checkbox" id="firmware-flag-cb"> --firmware
+      </label>
+      <label>Firmware file:
+        <select id="firmware-select" disabled><option value="">— none —</option></select>
       </label>
       <button type="button" onclick="loadFirmwareFiles()" title="Refresh firmware/ listing">&#8635;</button>
+      <label title="Use the selected recon file as second-sweep input (--input)">
+        <input type="checkbox" id="recon-input-cb"> --input
+      </label>
       <label title="Cookies-only JSON for device Phase-3 (0600 recommended)">Creds file:
         <input id="creds-input" type="text" placeholder="path/to/creds.json" size="22" autocomplete="off" spellcheck="false">
       </label>
@@ -1130,6 +1151,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
     <button id="btn-resume" onclick="openResumeModal()">&#9166; Resume</button>
     <button id="btn-clear" onclick="clearTerm()">Clear</button>
     <button id="btn-report" onclick="openReportModal()">Report</button>
+    <button id="btn-man" onclick="printFlagsMan()" title="Print flag manual to terminal (same as noctis.py --man)">Manual</button>
     <span id="cmd-label"></span>
     <button id="btn-update" onclick="runUpdate()">&#8635;  Update</button>
     <button id="btn-settings" onclick="openSettingsModal()" title="Community KB &amp; Settings">&#9881;</button>
@@ -1307,9 +1329,26 @@ function updateModeBanners() {
     unsafeBanner.style.display = 'none';
   }
 }
+/* ── Flag manual (mirrors `noctis.py --man`) ─────────────────────────── */
+function printFlagsMan() {
+  appendLine('Noctis Edge — flag manual (same as `noctis.py --man`):');
+  [...document.querySelectorAll('#flags-row .flag-cb')].forEach(cb => {
+    const tip = cb.closest('label').querySelector('.tip');
+    appendLine('  ' + cb.value + ' — ' + (tip ? tip.textContent.trim() : ''));
+  });
+  const dev = document.getElementById('profile-device-rb');
+  if (dev) appendLine('  [profile] Device — single-host embedded/IoT assessment; unlocks sweep phases + firmware intake, greys out --recon/--dns-enum.');
+  appendLine('  --device-phase-1/2/3 — Device sweep phase: 1 surface only (disables --cve-test), 2 auth flow (default behaviour), 3 authenticated mapping (needs creds).');
+  appendLine('  --firmware (checkbox) + file dropdown — offline firmware string scan; files live in firmware/ on the server.');
+  appendLine('  --input (checkbox) + recon dropdown — second-sweep host selection from a recon.json file.');
+  appendLine('  Creds file input — cookies-only JSON path sent as --creds-file for device Phase-3.');
+}
 document.addEventListener('DOMContentLoaded', function() {
   loadReconFiles();
   loadFirmwareFiles();
+  updateDeviceUI();
+  document.querySelectorAll('.profile-rb').forEach(rb => rb.addEventListener('change', updateDeviceUI));
+  document.getElementById('firmware-flag-cb').addEventListener('change', updateFirmwareUI);
   const cveNseCb = document.getElementById('cve-nse-flag-cb');
   const unsafeCb = document.getElementById('unsafe-flag-cb');
   if (cveNseCb) {
@@ -1449,12 +1488,63 @@ function startScan() {
   actuallyStartScan();
 }
 
+function deviceModeSelected() {
+  const el = document.querySelector('.profile-rb:checked');
+  return el && el.value === '__device';
+}
+// Flags inapplicable to a single-host device sweep are greyed out while
+// Device is selected (mirrors CLI scope rules; restored on deselect).
+const DEVICE_GREYED_FLAGS = ['--recon', '--dns-enum'];
+function updateDeviceUI() {
+  const dev = deviceModeSelected();
+  document.getElementById('dphase-row').style.display = dev ? 'flex' : 'none';
+  [...document.querySelectorAll('.flag-cb')].forEach(cb => {
+    if (DEVICE_GREYED_FLAGS.includes(cb.value)) {
+      cb.disabled = dev;
+      if (dev) cb.checked = false;
+      cb.closest('label').style.opacity = dev ? '0.35' : '';
+    }
+  });
+  updateFirmwareUI();
+}
+function updateFirmwareUI() {
+  const dev = deviceModeSelected();
+  const fwCb = document.getElementById('firmware-flag-cb');
+  const fwSel = document.getElementById('firmware-select');
+  fwCb.disabled = !dev;
+  if (!dev) fwCb.checked = false;
+  fwCb.closest('label').style.opacity = dev ? '' : '0.35';
+  fwSel.disabled = !(dev && fwCb.checked);
+}
+function deviceFlags() {
+  // Returns array of device-derived flags, or null (with alert) on bad input.
+  if (!deviceModeSelected()) return [];
+  const out = ['--device'];
+  const ph = document.querySelector('.dphase-rb:checked');
+  if (ph && ['1', '2', '3'].includes(ph.value)) out.push('--device-phase-' + ph.value);
+  const fwCb = document.getElementById('firmware-flag-cb');
+  if (fwCb && fwCb.checked && !document.getElementById('firmware-select').value) {
+    alert('Pick a firmware file from the dropdown (--firmware selected).');
+    return null;
+  }
+  return out;
+}
 function scanExtras() {
+  const fwCb = document.getElementById('firmware-flag-cb');
+  const riCb = document.getElementById('recon-input-cb');
   return {
-    recon_input: document.getElementById('recon-select').value,
-    firmware:    document.getElementById('firmware-select').value,
+    recon_input: (riCb && riCb.checked) ? document.getElementById('recon-select').value : '',
+    firmware:    (fwCb && fwCb.checked) ? document.getElementById('firmware-select').value : '',
     creds_file:  document.getElementById('creds-input').value.trim(),
   };
+}
+function collectFlags() {
+  // Returns flag array, or null (with alert) on bad device input.
+  const flags = [...document.querySelectorAll('.flag-cb:checked')].map(cb => cb.value);
+  const dev = deviceFlags();
+  if (dev === null) return null;
+  for (const f of dev) if (!flags.includes(f)) flags.push(f);
+  return flags;
 }
 function actuallyStartScan() {
   const target = document.getElementById('target-input').value.trim();
@@ -1462,8 +1552,9 @@ function actuallyStartScan() {
   if (!deviceReconGuard()) return;
 
   const profileEl = document.querySelector('.profile-rb:checked');
-  const profiles  = profileEl ? [profileEl.value] : ['standard'];
-  const flags     = [...document.querySelectorAll('.flag-cb:checked')].map(cb => cb.value);
+  const profiles  = (profileEl && profileEl.value !== '__device') ? [profileEl.value] : ['standard'];
+  const flags     = collectFlags();
+  if (flags === null) return;
 
   // Always generate a unique session_dir for each scan (timestamp + random)
   const sessionDir = `sessions/webui_${Date.now()}_${Math.floor(Math.random()*1e6)}`;
@@ -1637,8 +1728,9 @@ function startScan() {
   if (!deviceReconGuard()) return;
 
   const profileEl = document.querySelector('.profile-rb:checked');
-  const profiles  = profileEl ? [profileEl.value] : ['standard'];
-  const flags     = [...document.querySelectorAll('.flag-cb:checked')].map(cb => cb.value);
+  const profiles  = (profileEl && profileEl.value !== '__device') ? [profileEl.value] : ['standard'];
+  const flags     = collectFlags();
+  if (flags === null) return;
 
   // Always generate a unique session_dir for each scan (timestamp + random)
   const sessionDir = `sessions/webui_${Date.now()}_${Math.floor(Math.random()*1e6)}`;
@@ -1735,14 +1827,15 @@ function submitResume() {
   closeResumeModal();
   const target   = document.getElementById('target-input').value.trim();
   const profileEl = document.querySelector('.profile-rb:checked');
-  const profiles   = profileEl ? [profileEl.value] : ['standard'];
-  const flags      = [...document.querySelectorAll('.flag-cb:checked')].map(cb => cb.value);
+  const profiles   = (profileEl && profileEl.value !== '__device') ? [profileEl.value] : ['standard'];
+  const flags      = collectFlags();
+  if (flags === null) return;
   // Always inject --resume since the checkbox no longer exists
   const allFlags = flags.includes('--resume') ? flags : ['--resume', ...flags];
   fetch('/api/start', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ target, profiles, flags: allFlags, session_dir: path }),
+    body: JSON.stringify({ target, profiles, flags: allFlags, session_dir: path, ...scanExtras() }),
   }).then(r => r.json()).then(d => {
     if (!d.ok) { status.textContent = 'Error: ' + d.error; alert(d.error); }
   });
