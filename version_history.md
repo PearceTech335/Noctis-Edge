@@ -20,6 +20,23 @@
 - CLI `--device-phase-1/2/3` scoping (phase 1 disables `--cve-test`; phase 3 requires creds) and `--man` 20-entry flag manual exiting before setup; Web UI **Manual** button prints the same reference into the terminal.
 - Flag descriptions audited: `--nse-aggressive` drops the gobuster claim (present in the image, never driven); `--cve-nse` documents its `--cve-test` prerequisite.
 
+### Recon reliability, live feed, client report, `--recon-import`
+- Instrumented sweep: per-stage commands/return codes/error tails recorded in `recon.json`; nmap failures print instead of yielding silent zero-host files; rc=124 timeouts named explicitly.
+- R0b fallback SYN sweep (top-20, `-Pn`) when ping discovery finds nothing; Windows ports (135/445/3389) added to the R0 ping list; `-n` on all stages (reverse-DNS through Docker NAT stalled sweeps); container preflight hint plus zero-host guidance (wrong subnet octet, NAT, privileges).
+- Live terminal feed: `[found]`/`[import]` line per host as triaged, plus per-host progress counters.
+- Client-facing `recon_report.html` (+`recon_report.json`) per sweep: "brief visit, not an assessment" framing, tiles, findings table with likelihood bars, per-family triage cards with second-sweep commands, method + caveats; `--report` detects the recon schema and re-renders.
+- `--recon-import <xml>`: host-produced nmap XML (multi-host parse with IPv4/IPv6) triaged container-side with no network assumptions, running before the Ollama gate. The documented Docker Desktop (Win/Mac) workflow: discover natively, import here.
+
+### Web UI guided workflow (presets, pickers, guards)
+- Recon is the default profile radio; Device defaults to Surface phase; `--recon` checkbox removed (its radio owns it).
+- Profile radios apply flag presets with reset-on-switch and a terminal echo (Full: `--nse-aggressive --dns-enum --msf-validate`; all others safe-baseline; `--unsafe`/`--cve-nse`/`--unattended` never preset). OT mode greys and server-refuses active flags.
+- Resume-style file-picker modals for recon/firmware/creds (`/api/creds-files` added); Second-Sweep Inputs split into per-kind rows that grey out by profile, with disabled controls excluded at collect time; **⚡ Second Strike** fixed to select the Device radio and launch the top pick.
+- Backend mirrors CLI guards (400s for `--cve-nse`∌`--cve-test`, `--unsafe` prerequisites with device-implied-aggressive semantics, OT actives); `--resume` passes through (previously stripped, resuming as a fresh scan); orphan phase flags coerce to device mode; phase-3 without creds and firmware-without-`--unsafe` warn at collect time.
+
+### NetExec install (no PyPI package exists)
+- Verified `netexec` 404s on the PyPI API — PyPI-name attempts could never work. Install is git-only with Rust (`aardwolf`), Python headers (`arc4`), gcc prereqs; Dockerfile removes the toolchain post-build in-layer; failures print tails; success verified by binary. Corrected stale `internal_ad` profile naming.
+- `docker-run.ps1` no longer dies on first run (missing-image probe vs `$ErrorActionPreference = "Stop"`); entrypoint scripts normalized to LF (CRLF shebangs broke the Linux image).
+
 ---
 
 ## v0.12.0 — Device Mode + Recon Sweep + Abliterated Model

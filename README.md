@@ -20,6 +20,10 @@ This architecture makes Noctis Edge particularly suited for regulated environmen
 - **NSE policies actually distributable** — curated policies published to `Noctis-Edge-Tool-Manifest-KB` (upstream unsafe was `{}`); worker serves `/safe-nse-scripts` + `/aggressive-nse-scripts` alongside `/unsafe-nse-scripts`, and `update.sh` pulls all three tiers (steps 12/12b/12c). Endpoints verified live against the deployed relay.
 - **Web UI device/recon workflow** — a **Device** radio joins the profile banner (Standard/Full/OT): selecting it restricts targets to a single host, greys out inapplicable flags (`--recon`, `--dns-enum`), reveals sweep-phase radios (All/1 Surface/2 Auth flow/3 Authenticated, sent as `--device-phase-N`), and enables `--firmware` intake from a server-side `firmware/` dropdown plus a creds-file input. A Recon file dropdown lists `recon.json` triage files with a **⚡ Second Strike** launcher: ranked host checkboxes (likelihood + recommended profile), one click to strike the top pick. A **Manual** toolbar button prints the flag reference into the terminal.
 - **CLI `--man`** — `python3 noctis.py --man` prints the 20-entry operator flag reference (same content as the Web UI manual) and exits before any setup. Flag descriptions audited: `--nse-aggressive` no longer claims gobuster (installed but never driven), `--cve-nse` states its `--cve-test` prerequisite.
+- **Recon that reports and recovers** — every sweep writes a client-facing `recon_report.html` next to `recon.json` ("a brief visit, not an assessment": at-a-glance tiles, findings table, per-family triage cards with second-sweep commands, method + caveats); `--report` re-renders it. Sweeps print each host live to the terminal as it is triaged, record per-stage diagnostics in `recon.json`, and fall back to a bounded SYN sweep when ping discovery finds nothing. All stages pass `-n` (reverse-DNS through Docker NAT was stalling sweeps into timeouts).
+- **`--recon-import` for Docker on Windows/Mac** — container networking has no L2 path to the LAN (no host networking/macvlan on Docker Desktop), so run discovery natively on the host (`nmap -oX lan.xml …`) and triage container-side: `python3 noctis.py --recon-import lan.xml` produces the same `recon.json` + client report with zero network assumptions, before the Ollama gate.
+- **Web UI Guided workflow** — Recon is the default profile radio (soft sweep, all flags greyed); Device defaults to Surface phase; `--recon` left the flags row (its radio owns it). Profile radios apply flag presets with reset-on-switch (Full: `--nse-aggressive --dns-enum --msf-validate`; everything else safe-baseline; `--unsafe`/`--cve-nse` never preset). OT mode greys and refuses active flags server-side. File pickers (recon/firmware/creds, Resume-style) feed three split Second-Sweep rows that grey out by profile. `--resume` actually passes through now (it was silently stripped, running fresh scans in old directories).
+- **NetExec installs reliably** — there is no `netexec` PyPI package (verified 404), so the install is git-only with Rust (`aardwolf`), Python headers (`arc4`), and gcc prereqs in Dockerfile/`setup.sh`/`update.sh`, toolchain removed post-build in the image; failures print tails instead of vanishing. Also fixed: `docker-run.ps1` dying on first run (missing-image probe vs strict error mode) and CRLF entrypoint shebangs breaking the Linux image.
 
 ## What's New in v0.12.0
 
@@ -226,6 +230,7 @@ docker compose run --rm noctis scan 192.168.0.1 --resume
 | `--device-phase-1/2/3` | Device sweep scope: 1 surface harvest only (disables `--cve-test`), 2 auth flow (default behaviour), 3 authenticated mapping (requires creds). Web UI: phase radios under the Device profile |
 | `--recon` | Discovery-only subnet sweep producing versioned `recon.json` triage (refuses `--unsafe`/`--cve-test`). See [Optional Phases](#optional-phases) |
 | `--input <recon.json>` | Second-sweep host selection from a recon file |
+| `--recon-import <xml>` | Triage host-produced nmap XML (native discovery, container-side analysis). Writes `recon.json` + client report; fully offline |
 | `--firmware <path>` | Offline stdlib-only firmware string scan (operator supplies the image; runs in P1 only with `--unsafe`, otherwise deferred) |
 | `--creds-file <path>` | JSON cookies file for device Phase-3 authenticated mapping (0600 recommended; secrets redacted in logs/reports) |
 | `--man` | Print the 20-entry operator flag reference and exit (same content as the Web UI Manual button) |
@@ -369,10 +374,17 @@ Discovery-only subnet sweep for green-field engagements ("I don't know what exis
 ./noctis.py --recon 192.168.1.0/24
 ```
 
-Writes versioned `recon.json` into the session directory: per-host services, deterministic `device_likelihood` score with quoted evidence, family classification (`iot/camera`, `windows`, `linux/server`, `ot`, `unknown`), `recommended_profile`, and a copy-paste `second_sweep_cmd`. Second sweep with host selection:
+Writes versioned `recon.json` into the session directory: per-host services, deterministic `device_likelihood` score with quoted evidence, family classification (`iot/camera`, `windows`, `linux/server`, `ot`, `unknown`), `recommended_profile`, a copy-paste `second_sweep_cmd`, and per-stage diagnostics (commands, return codes, error tails — a zero-host result always explains itself). Hosts print live to the terminal as they are triaged. A client-facing `recon_report.html` is written alongside (at-a-glance tiles, findings, triage cards, caveats) and re-rendered by `--report`. Second sweep with host selection:
 
 ```bash
 ./noctis.py --input sessions/recon_<ts>/recon.json
+```
+
+On Docker Desktop (Windows/Mac) run discovery natively — containers have no L2 path to the LAN — and import the XML:
+
+```bash
+nmap -sn -PR -PE -PS80,443,22,554,445,3389 -oX lan.xml 192.168.0.0/24
+./noctis.py --recon-import lan.xml
 ```
 
 The Web UI offers the same flow: pick a `recon.json` from the Recon dropdown (mirroring the Resume picker) and tick grouped checkboxes ordered by triage priority. Suggested mapping: `iot/camera` high → `--device`; `windows` → `full --cve-test`; `linux/server` → `standard --cve-test`; `ot` → `ot` profile only; printers explicitly never get `--device`.
