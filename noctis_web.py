@@ -645,6 +645,26 @@ def api_firmware_files():
     return jsonify(out)
 
 
+@app.route("/api/creds-files")
+def api_creds_files():
+    """List likely creds JSON files (names containing 'cred') under sessions/."""
+    out = []
+    sessions_dir = os.path.join(BASE_DIR, "sessions")
+    if os.path.isdir(sessions_dir):
+        for root, _dirs, files in os.walk(sessions_dir):
+            for fn in files:
+                if "cred" in fn.lower() and fn.endswith(".json"):
+                    full = os.path.join(root, fn)
+                    out.append({"path": os.path.relpath(full, BASE_DIR),
+                                "label": os.path.relpath(full, sessions_dir)})
+                    if len(out) >= 100:
+                        break
+            if len(out) >= 100:
+                break
+    out.sort(key=lambda r: r["label"], reverse=True)
+    return jsonify(out)
+
+
 @sock.route("/ws")
 def ws_endpoint(ws):
     """WebSocket endpoint — client connects here to receive live output."""
@@ -926,7 +946,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 }
 
 /* ── Report / Resume modals ──────────────────────────────────────────── */
-#resume-modal-overlay {
+#resume-modal-overlay, #filepicker-modal-overlay {
   display: none;
   position: fixed;
   inset: 0;
@@ -935,8 +955,8 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   align-items: center;
   justify-content: center;
 }
-#resume-modal-overlay.open { display: flex; }
-#resume-modal {
+#resume-modal-overlay.open, #filepicker-modal-overlay.open { display: flex; }
+#resume-modal, #filepicker-modal {
   background: var(--bg-panel);
   border: 1px solid #555;
   border-radius: 5px;
@@ -947,9 +967,9 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   flex-direction: column;
   gap: 12px;
 }
-#resume-modal h2 { font-size: 13px; color: #ff9800; }
-#resume-modal label { font-size: 10px; color: var(--fg-dim); display: block; margin-bottom: 4px; }
-#resume-modal select {
+#resume-modal h2, #filepicker-modal h2 { font-size: 13px; color: #ff9800; }
+#resume-modal label, #filepicker-modal label { font-size: 10px; color: var(--fg-dim); display: block; margin-bottom: 4px; }
+#resume-modal select, #filepicker-modal select {
   width: 100%;
   background: var(--bg-input);
   color: var(--fg);
@@ -959,9 +979,9 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   font-family: inherit;
   font-size: 10px;
 }
-#resume-modal-footer { display: flex; gap: 8px; justify-content: flex-end; }
-#resume-modal-ok     { background: #e65100; color: var(--btn-fg); }
-#resume-modal-cancel { background: var(--bg-input); color: var(--fg); }
+#resume-modal-footer, #filepicker-modal-footer { display: flex; gap: 8px; justify-content: flex-end; }
+#resume-modal-ok, #filepicker-modal-ok     { background: #e65100; color: var(--btn-fg); }
+#resume-modal-cancel, #filepicker-modal-cancel { background: var(--bg-input); color: var(--fg); }
 
 #modal-overlay {
   display: none;
@@ -1065,9 +1085,14 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   <fieldset class="group">
     <legend>Assessment Profile</legend>
     <div class="cb-row" id="profiles-row">
+      <label title="Soft initial sweep first: discovery-only subnet triage into recon.json, then Second Strike the interesting hosts. The default kickoff point." style="font-weight:bold; color:#7fd67f;">
+        <input type="radio" class="profile-rb" id="profile-recon-rb" name="profile" value="__recon" checked>
+        Recon
+        <span class="tip">Default kickoff: discovery-only sweep (no intrusive flags), triage hosts, then second-sweep from the recon file.</span>
+      </label>
       {% for p in profiles %}
       <label title="{{ profile_descriptions[p] }}">
-        <input type="radio" class="profile-rb" name="profile" value="{{ p }}"{% if p == 'standard' %} checked{% endif %}>
+        <input type="radio" class="profile-rb" name="profile" value="{{ p }}">
         {{ profiles_display[p] }}
         <span class="tip">{{ profile_descriptions[p] }}</span>
       </label>
@@ -1080,8 +1105,8 @@ button:disabled { opacity: .45; cursor: not-allowed; }
     </div>
     <div class="cb-row" id="dphase-row" style="display:none; margin-top:6px;">
       <span style="font-size:11px; color:#888;">Device sweep phase:</span>
-      <label><input type="radio" class="dphase-rb" name="dphase" value="0" checked> All</label>
-      <label title="Surface + client harvest only (discovery, forms, scripts, cookies). CVE probing disabled."><input type="radio" class="dphase-rb" name="dphase" value="1"> 1 · Surface</label>
+      <label><input type="radio" class="dphase-rb" name="dphase" value="0"> All</label>
+      <label title="Surface + client harvest only (discovery, forms, scripts, cookies). CVE probing disabled."><input type="radio" class="dphase-rb" name="dphase" value="1" checked> 1 · Surface</label>
       <label title="Auth-flow assistant: HAR/JS ingest, state machine, one targeted probe."><input type="radio" class="dphase-rb" name="dphase" value="2"> 2 · Auth flow</label>
       <label title="Authenticated mapping — requires creds file or session cookie."><input type="radio" class="dphase-rb" name="dphase" value="3"> 3 · Authenticated</label>
     </div>
@@ -1122,6 +1147,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
       <label>Recon file:
         <select id="recon-select"><option value="">— none —</option></select>
       </label>
+      <button type="button" onclick="openFilePicker('recon')" title="Browse recon.json from any previous session">&#128193;</button>
       <button type="button" onclick="loadReconHosts()">Load hosts</button>
       <label title="Offline firmware string scan (stdlib only, --unsafe only). Drop images into firmware/ on the server.">
         <input type="checkbox" id="firmware-flag-cb"> --firmware
@@ -1129,6 +1155,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
       <label>Firmware file:
         <select id="firmware-select" disabled><option value="">— none —</option></select>
       </label>
+      <button type="button" onclick="openFilePicker('firmware')" title="Browse firmware images">&#128193;</button>
       <button type="button" onclick="loadFirmwareFiles()" title="Refresh firmware/ listing">&#8635;</button>
       <label title="Use the selected recon file as second-sweep input (--input)">
         <input type="checkbox" id="recon-input-cb"> --input
@@ -1136,6 +1163,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
       <label title="Cookies-only JSON for device Phase-3 (0600 recommended)">Creds file:
         <input id="creds-input" type="text" placeholder="path/to/creds.json" size="22" autocomplete="off" spellcheck="false">
       </label>
+      <button type="button" onclick="openFilePicker('creds')" title="Browse saved creds files">&#128193;</button>
     </div>
     <div id="recon-hosts" style="margin-top:8px; max-height:180px; overflow-y:auto; font-size:11px;"></div>
     <div style="margin-top:6px;">
@@ -1258,6 +1286,21 @@ Noctis Edge, its authors, contributors, and distributors provide this software "
 </div>
 
 
+<!-- File picker modal (recon / firmware / creds — Resume-style) -->
+<div id="filepicker-modal-overlay">
+  <div id="filepicker-modal">
+    <h2 id="filepicker-title">&#128193; Select file</h2>
+    <div>
+      <label for="filepicker-select" id="filepicker-label">File:</label>
+      <select id="filepicker-select"><option value="">— loading… —</option></select>
+    </div>
+    <div id="filepicker-modal-footer">
+      <button id="filepicker-modal-cancel" onclick="closeFilePicker()">Cancel</button>
+      <button id="filepicker-modal-ok" onclick="submitFilePicker()">Select</button>
+    </div>
+  </div>
+</div>
+
 <!-- Report modal -->
 <div id="modal-overlay">
   <div id="modal">
@@ -1346,8 +1389,8 @@ function printFlagsMan() {
 document.addEventListener('DOMContentLoaded', function() {
   loadReconFiles();
   loadFirmwareFiles();
-  updateDeviceUI();
-  document.querySelectorAll('.profile-rb').forEach(rb => rb.addEventListener('change', updateDeviceUI));
+  updateModeUI();
+  document.querySelectorAll('.profile-rb').forEach(rb => rb.addEventListener('change', updateModeUI));
   document.getElementById('firmware-flag-cb').addEventListener('change', updateFirmwareUI);
   const cveNseCb = document.getElementById('cve-nse-flag-cb');
   const unsafeCb = document.getElementById('unsafe-flag-cb');
@@ -1388,7 +1431,7 @@ function confirmUnsafeAndStartScan() {
 }
 
 /* ── Device / Recon file dropdowns + host triage ────────────────────── */
-function loadReconFiles() {
+function loadReconFiles(then) {
   fetch('/api/recon-files').then(r => r.json()).then(list => {
     const sel = document.getElementById('recon-select');
     sel.innerHTML = '<option value="">— none —</option>';
@@ -1399,9 +1442,10 @@ function loadReconFiles() {
       opt.textContent = `${item.scope} — ${item.alive} alive${fams ? ' (' + fams + ')' : ''}`;
       sel.appendChild(opt);
     });
+    if (then) then();
   });
 }
-function loadFirmwareFiles() {
+function loadFirmwareFiles(then) {
   fetch('/api/firmware-files').then(r => r.json()).then(list => {
     const sel = document.getElementById('firmware-select');
     sel.innerHTML = '<option value="">— none —</option>';
@@ -1411,6 +1455,7 @@ function loadFirmwareFiles() {
       opt.textContent = item.label;
       sel.appendChild(opt);
     });
+    if (then) then();
   });
 }
 function loadReconHosts() {
@@ -1462,10 +1507,64 @@ function secondStrike() {
   appendLine('[*] Launching top pick: ' + first.dataset.ip + ' — stop it before striking the next host (one scan at a time).');
   startScan();
 }
+/* ── Resume-style file picker (recon / firmware / creds) ────────────── */
+let filePickerKind = null;
+const FILEPICKER_SRC = {
+  recon:    { url: '/api/recon-files',    title: 'Select recon file — any previous recon session',
+              label: 'recon.json files found:', fmt: (it) => it.label + '  [' + (it.scope || '?') + ']' },
+  firmware: { url: '/api/firmware-files', title: 'Select firmware image — drop images into firmware/ on the server',
+              label: 'firmware/ contents:', fmt: (it) => it.label },
+  creds:    { url: '/api/creds-files',    title: 'Select creds file — cookies-only JSON (0600 recommended)',
+              label: '*cred*.json files under sessions/:', fmt: (it) => it.label },
+};
+function openFilePicker(kind) {
+  filePickerKind = kind;
+  const cfg = FILEPICKER_SRC[kind];
+  document.getElementById('filepicker-title').textContent = cfg.title;
+  document.getElementById('filepicker-label').textContent = cfg.label;
+  const sel = document.getElementById('filepicker-select');
+  sel.innerHTML = '<option value="">— loading… —</option>';
+  document.getElementById('filepicker-modal-overlay').classList.add('open');
+  fetch(cfg.url).then(r => r.json()).then(list => {
+    sel.innerHTML = '<option value="">— select a file —</option>';
+    list.forEach(item => {
+      const opt = document.createElement('option');
+      opt.value = item.path;
+      opt.textContent = cfg.fmt(item);
+      sel.appendChild(opt);
+    });
+    if (!list.length) sel.innerHTML = '<option value="">(no files found)</option>';
+  });
+}
+function closeFilePicker() {
+  document.getElementById('filepicker-modal-overlay').classList.remove('open');
+  filePickerKind = null;
+}
+function submitFilePicker() {
+  const path = document.getElementById('filepicker-select').value;
+  if (!path) { alert('Please select a file.'); return; }
+  const kind = filePickerKind;
+  closeFilePicker();
+  if (kind === 'recon') {
+    loadReconFiles(() => {
+      document.getElementById('recon-select').value = path;
+      const riCb = document.getElementById('recon-input-cb');
+      if (riCb) riCb.checked = true;
+      loadReconHosts();
+    });
+  } else if (kind === 'firmware') {
+    loadFirmwareFiles(() => {
+      document.getElementById('firmware-select').value = path;
+    });
+  } else if (kind === 'creds') {
+    document.getElementById('creds-input').value = path;
+  }
+}
 // --device and --recon are mutually exclusive (mirrors CLI exit 2)
 function deviceReconGuard() {
-  const vals = [...document.querySelectorAll('.flag-cb:checked')].map(cb => cb.value);
-  if (vals.includes('--device') && vals.includes('--recon')) {
+  const vals = [...document.querySelectorAll('.flag-cb:checked')]
+    .filter(cb => !cb.disabled).map(cb => cb.value);
+  if (deviceModeSelected() && vals.includes('--recon')) {
     alert('--device and --recon are mutually exclusive. Uncheck one.');
     return false;
   }
@@ -1488,33 +1587,43 @@ function startScan() {
   actuallyStartScan();
 }
 
-function deviceModeSelected() {
+function selectedProfile() {
   const el = document.querySelector('.profile-rb:checked');
-  return el && el.value === '__device';
+  return el ? el.value : 'standard';
+}
+function deviceModeSelected() {
+  return selectedProfile() === '__device';
+}
+function reconModeSelected() {
+  return selectedProfile() === '__recon';
 }
 // Flags inapplicable to a single-host device sweep are greyed out while
-// Device is selected (mirrors CLI scope rules; restored on deselect).
+// Device is selected (mirrors CLI scope rules). Recon is the soft initial
+// sweep: every flag is greyed out. Selections are preserved (disabled boxes
+// are skipped at collect time) so toggling modes never loses your setup.
 const DEVICE_GREYED_FLAGS = ['--recon', '--dns-enum'];
-function updateDeviceUI() {
+function updateModeUI() {
   const dev = deviceModeSelected();
+  const rec = reconModeSelected();
   document.getElementById('dphase-row').style.display = dev ? 'flex' : 'none';
   [...document.querySelectorAll('.flag-cb')].forEach(cb => {
-    if (DEVICE_GREYED_FLAGS.includes(cb.value)) {
-      cb.disabled = dev;
-      if (dev) cb.checked = false;
-      cb.closest('label').style.opacity = dev ? '0.35' : '';
-    }
+    const off = rec || (dev && DEVICE_GREYED_FLAGS.includes(cb.value));
+    cb.disabled = off;
+    cb.closest('label').style.opacity = off ? '0.35' : '';
   });
   updateFirmwareUI();
 }
 function updateFirmwareUI() {
   const dev = deviceModeSelected();
+  const rec = reconModeSelected();
   const fwCb = document.getElementById('firmware-flag-cb');
   const fwSel = document.getElementById('firmware-select');
+  const creds = document.getElementById('creds-input');
   fwCb.disabled = !dev;
-  if (!dev) fwCb.checked = false;
   fwCb.closest('label').style.opacity = dev ? '' : '0.35';
   fwSel.disabled = !(dev && fwCb.checked);
+  creds.disabled = rec || !dev;
+  creds.closest('label').style.opacity = (rec || !dev) ? '0.35' : '';
 }
 function deviceFlags() {
   // Returns array of device-derived flags, or null (with alert) on bad input.
@@ -1540,7 +1649,13 @@ function scanExtras() {
 }
 function collectFlags() {
   // Returns flag array, or null (with alert) on bad device input.
-  const flags = [...document.querySelectorAll('.flag-cb:checked')].map(cb => cb.value);
+  // Disabled (greyed-out) boxes are skipped so mode toggles never leak flags.
+  const flags = [...document.querySelectorAll('.flag-cb:checked')]
+    .filter(cb => !cb.disabled).map(cb => cb.value);
+  if (reconModeSelected()) {
+    if (!flags.includes('--recon')) flags.push('--recon');
+    return flags;
+  }
   const dev = deviceFlags();
   if (dev === null) return null;
   for (const f of dev) if (!flags.includes(f)) flags.push(f);
@@ -1552,7 +1667,7 @@ function actuallyStartScan() {
   if (!deviceReconGuard()) return;
 
   const profileEl = document.querySelector('.profile-rb:checked');
-  const profiles  = (profileEl && profileEl.value !== '__device') ? [profileEl.value] : ['standard'];
+  const profiles  = (profileEl && !['__device', '__recon'].includes(profileEl.value)) ? [profileEl.value] : ['standard'];
   const flags     = collectFlags();
   if (flags === null) return;
 
@@ -1728,7 +1843,7 @@ function startScan() {
   if (!deviceReconGuard()) return;
 
   const profileEl = document.querySelector('.profile-rb:checked');
-  const profiles  = (profileEl && profileEl.value !== '__device') ? [profileEl.value] : ['standard'];
+  const profiles  = (profileEl && !['__device', '__recon'].includes(profileEl.value)) ? [profileEl.value] : ['standard'];
   const flags     = collectFlags();
   if (flags === null) return;
 
@@ -1843,6 +1958,9 @@ function submitResume() {
 
 document.getElementById('resume-modal-overlay').addEventListener('click', e => {
   if (e.target === document.getElementById('resume-modal-overlay')) closeResumeModal();
+});
+document.getElementById('filepicker-modal-overlay').addEventListener('click', e => {
+  if (e.target === document.getElementById('filepicker-modal-overlay')) closeFilePicker();
 });
 
 
