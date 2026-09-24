@@ -87,6 +87,8 @@ FLAGS = [
   ("--cve-test",     "Ask the LLM to generate & execute probe scripts per CVE"),
   ("--cve-nse",      "\u26a0\ufe0f  Enables CVE-targeted NSE escalation. Requires explicit operator confirmation. Runs active NSE checks tied to matched CVEs."),
   ("--unsafe",       "\u26a0\ufe0f  Enables intrusive/unsafe verifier and exploit checks. You must have explicit authorisation. Operator confirmation required. Results are flagged as unsafe in reports."),
+  ("--device",       "Single-host embedded/IoT assessment (IP, DHCP hostname, or FQDN — no subnets). Implies aggressive-but-safe NSE; combine with --unsafe for the full tier."),
+  ("--recon",        "Discovery-only subnet sweep (CIDR/range) producing recon.json triage. Refuses --unsafe/--cve-test. Second-sweep hosts via --input."),
   ("--unattended",   "Auto-approve all prompts — run to completion without user input"),
 ]
 
@@ -252,6 +254,16 @@ def api_start():
     flags      = [f for f, _ in FLAGS if f in data.get("flags", [])]
     session_dir = (data.get("session_dir") or "").strip()
 
+    # --device / --recon mutual exclusion + scope guards (mirror CLI).
+    if "--device" in flags and "--recon" in flags:
+      return jsonify({"ok": False, "error": "--device and --recon are mutually exclusive"}), 400
+    if "--device" in flags:
+      _host = target.split(":")[0] if not target.startswith("[") else target
+      if any(t in _host for t in ("/", ",", "*", " ")) or ("-" in _host and any(c.isdigit() for c in _host)):
+        return jsonify({"ok": False, "error": "--device accepts exactly one host (IP, DHCP hostname, or FQDN); use --recon for subnets"}), 400
+    if "--recon" in flags and ("--unsafe" in flags or "--cve-test" in flags):
+      return jsonify({"ok": False, "error": "--recon is discovery-only; --unsafe/--cve-test are refused in recon mode"}), 400
+
     cmd = [PYTHON, "-u", NOCTIS, target] + profiles + flags
     if session_dir:
       # Restrict to paths inside BASE_DIR to prevent path traversal
@@ -259,6 +271,20 @@ def api_start():
       if not resolved_sd.startswith(os.path.realpath(BASE_DIR) + os.sep):
         return jsonify({"ok": False, "error": "session_dir outside project directory"}), 403
       cmd += ["--session-dir", resolved_sd]
+    # Optional file-backed modes: paths must exist; recon input must also
+    # live inside BASE_DIR (it is read as structured triage data).
+    for _key, _flag, _inside in (("recon_input", "--input", True),
+                                 ("firmware", "--firmware", False),
+                                 ("creds_file", "--creds-file", False)):
+      _val = (data.get(_key) or "").strip()
+      if not _val:
+        continue
+      _resolved = os.path.realpath(_val if os.path.isabs(_val) else os.path.join(BASE_DIR, _val))
+      if _inside and not _resolved.startswith(os.path.realpath(BASE_DIR) + os.sep):
+        return jsonify({"ok": False, "error": f"{_key} outside project directory"}), 403
+      if not os.path.isfile(_resolved):
+        return jsonify({"ok": False, "error": f"{_key} file not found: {_val}"}), 400
+      cmd += [_flag, _resolved]
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
 
@@ -533,6 +559,87 @@ def api_resume_sessions():
             })
     sessions.sort(key=lambda s: s["label"], reverse=True)
     return jsonify(sessions)
+
+
+@app.route("/api/recon-files")
+def api_recon_files():
+    """List recon.json triage files under sessions/ for the Recon dropdown."""
+    out = []
+    sessions_dir = os.path.join(BASE_DIR, "sessions")
+    if os.path.isdir(sessions_dir):
+        for entry in os.scandir(sessions_dir):
+            if not entry.is_dir():
+                continue
+            rp = os.path.join(entry.path, "recon.json")
+            if not os.path.isfile(rp):
+                continue
+            try:
+                with open(rp, encoding="utf-8") as fh:
+                    import json as _json
+                    recon = _json.load(fh)
+                summary = recon.get("summary", {}) if isinstance(recon, dict) else {}
+                fams = summary.get("families", {}) if isinstance(summary, dict) else {}
+                out.append({
+                    "path":  os.path.relpath(rp, BASE_DIR),
+                    "label": os.path.relpath(entry.path, BASE_DIR),
+                    "scope": recon.get("scope", "?") if isinstance(recon, dict) else "?",
+                    "alive": summary.get("alive", "?") if isinstance(summary, dict) else "?",
+                    "families": fams,
+                })
+            except Exception:
+                out.append({"path": os.path.relpath(rp, BASE_DIR),
+                            "label": os.path.relpath(entry.path, BASE_DIR),
+                            "scope": "?", "alive": "?", "families": {}})
+    out.sort(key=lambda r: r["label"], reverse=True)
+    return jsonify(out)
+
+
+@app.route("/api/recon-hosts")
+def api_recon_hosts():
+    """Return ranked host entries from a recon.json file for checkbox display."""
+    rel = (request.args.get("path") or "").strip()
+    if not rel:
+        return jsonify({"ok": False, "error": "path is required"}), 400
+    resolved = os.path.realpath(os.path.join(BASE_DIR, rel))
+    if not resolved.startswith(os.path.realpath(BASE_DIR) + os.sep):
+        return jsonify({"ok": False, "error": "path outside project directory"}), 403
+    if os.path.basename(resolved) != "recon.json" or not os.path.isfile(resolved):
+        return jsonify({"ok": False, "error": "not a recon.json file"}), 400
+    try:
+        with open(resolved, encoding="utf-8") as fh:
+            import json as _json
+            recon = _json.load(fh)
+        hosts = recon.get("hosts", []) if isinstance(recon, dict) else []
+        rows = []
+        for h in hosts:
+            if not isinstance(h, dict):
+                continue
+            rows.append({
+                "ip": h.get("ip", "?"),
+                "family": h.get("family", "unknown"),
+                "device_likelihood": h.get("device_likelihood", 0),
+                "recommended_profile": h.get("recommended_profile", "standard"),
+                "reason": h.get("reason", ""),
+                "second_sweep_cmd": h.get("second_sweep_cmd", ""),
+            })
+        rows.sort(key=lambda r: (-float(r["device_likelihood"] or 0), r["ip"]))
+        return jsonify({"ok": True, "hosts": rows})
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"could not read recon file: {e}"}), 400
+
+
+@app.route("/api/firmware-files")
+def api_firmware_files():
+    """List operator-supplied firmware images in firmware/ for the Device dropdown."""
+    fw_dir = os.path.join(BASE_DIR, "firmware")
+    out = []
+    if os.path.isdir(fw_dir):
+        for entry in os.scandir(fw_dir):
+            if entry.is_file() and not entry.name.startswith("."):
+                out.append({"path": os.path.relpath(entry.path, BASE_DIR),
+                            "label": f"{entry.name} ({entry.stat().st_size // 1024} KB)"})
+    out.sort(key=lambda r: r["label"])
+    return jsonify(out)
 
 
 @sock.route("/ws")
@@ -948,7 +1055,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   <!-- Target -->
   <div id="target-row">
     <label for="target-input">Target:</label>
-    <input id="target-input" type="text" placeholder="192.168.0.1, hostname, host:port, or host:80,443" autocomplete="off" spellcheck="false">
+    <input id="target-input" type="text" placeholder="192.168.0.1, hostname, host:port, CIDR for --recon, or single host for --device" autocomplete="off" spellcheck="false">
   </div>
 
   <!-- Profiles -->
@@ -990,6 +1097,29 @@ button:disabled { opacity: .45; cursor: not-allowed; }
           <span class="tip" style="color:#c0392b;">Enables intrusive/unsafe verifier and exploit checks. You must have explicit authorisation. Operator confirmation required. Results are flagged as unsafe in reports.</span>
         </label>
       </div>
+    </div>
+  </fieldset>
+
+  <!-- Device / Recon file selection -->
+  <fieldset class="group">
+    <legend>Device / Recon Files</legend>
+    <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; font-size:11px;">
+      <label>Recon file:
+        <select id="recon-select"><option value="">— none —</option></select>
+      </label>
+      <button type="button" onclick="loadReconHosts()">Load hosts</button>
+      <label>Firmware:
+        <select id="firmware-select"><option value="">— none —</option></select>
+      </label>
+      <button type="button" onclick="loadFirmwareFiles()" title="Refresh firmware/ listing">&#8635;</button>
+      <label title="Cookies-only JSON for device Phase-3 (0600 recommended)">Creds file:
+        <input id="creds-input" type="text" placeholder="path/to/creds.json" size="22" autocomplete="off" spellcheck="false">
+      </label>
+    </div>
+    <div id="recon-hosts" style="margin-top:8px; max-height:180px; overflow-y:auto; font-size:11px;"></div>
+    <div style="margin-top:6px;">
+      <button type="button" onclick="secondStrike()" title="Print second-sweep commands for ticked hosts and launch the first one">&#9889; Second Strike</button>
+      <span style="color:#888; font-size:10px;">tick hosts above, then strike — commands print to the terminal and the top pick launches</span>
     </div>
   </fieldset>
 
@@ -1178,6 +1308,8 @@ function updateModeBanners() {
   }
 }
 document.addEventListener('DOMContentLoaded', function() {
+  loadReconFiles();
+  loadFirmwareFiles();
   const cveNseCb = document.getElementById('cve-nse-flag-cb');
   const unsafeCb = document.getElementById('unsafe-flag-cb');
   if (cveNseCb) {
@@ -1216,6 +1348,91 @@ function confirmUnsafeAndStartScan() {
   actuallyStartScan();
 }
 
+/* ── Device / Recon file dropdowns + host triage ────────────────────── */
+function loadReconFiles() {
+  fetch('/api/recon-files').then(r => r.json()).then(list => {
+    const sel = document.getElementById('recon-select');
+    sel.innerHTML = '<option value="">— none —</option>';
+    list.forEach(item => {
+      const opt = document.createElement('option');
+      opt.value = item.path;
+      const fams = Object.entries(item.families || {}).map(([k, v]) => `${v} ${k}`).join(', ');
+      opt.textContent = `${item.scope} — ${item.alive} alive${fams ? ' (' + fams + ')' : ''}`;
+      sel.appendChild(opt);
+    });
+  });
+}
+function loadFirmwareFiles() {
+  fetch('/api/firmware-files').then(r => r.json()).then(list => {
+    const sel = document.getElementById('firmware-select');
+    sel.innerHTML = '<option value="">— none —</option>';
+    list.forEach(item => {
+      const opt = document.createElement('option');
+      opt.value = item.path;
+      opt.textContent = item.label;
+      sel.appendChild(opt);
+    });
+  });
+}
+function loadReconHosts() {
+  const path = document.getElementById('recon-select').value;
+  const box = document.getElementById('recon-hosts');
+  if (!path) { box.innerHTML = '<span style="color:#888;">Select a recon file first.</span>'; return; }
+  fetch('/api/recon-hosts?path=' + encodeURIComponent(path)).then(r => r.json()).then(d => {
+    if (!d.ok) { box.innerHTML = '<span style="color:#c0392b;">Error: ' + d.error + '</span>'; return; }
+    if (!d.hosts.length) { box.innerHTML = '<span style="color:#888;">No hosts in recon file.</span>'; return; }
+    box.innerHTML = '';
+    d.hosts.forEach((h, i) => {
+      const row = document.createElement('div');
+      row.style.cssText = 'padding:3px 6px; border-bottom:1px solid #333; cursor:pointer; display:flex; gap:8px; align-items:center;';
+      row.title = (h.second_sweep_cmd || '') + (h.reason ? '\n' + h.reason : '');
+      const pct = Math.round((h.device_likelihood || 0) * 100);
+      const star = pct >= 65 ? ' ★' : '';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.className = 'recon-host-cb';
+      cb.checked = pct >= 65;
+      cb.dataset.ip = h.ip;
+      cb.dataset.profile = h.recommended_profile || 'standard';
+      cb.dataset.cmd = h.second_sweep_cmd || '';
+      const label = document.createElement('span');
+      label.innerHTML = `<b>#${i + 1}</b> ${h.ip} <span style="color:#888;">[${h.family}]</span> ` +
+        `<span style="color:${pct >= 65 ? '#7fd67f' : pct >= 40 ? '#d68910' : '#888'};">${pct}%${star}</span> ` +
+        `<span style="color:#29b6f6;">→ ${h.recommended_profile}</span>`;
+      row.appendChild(cb);
+      row.appendChild(label);
+      row.onclick = (e) => {
+        if (e.target !== cb) cb.checked = !cb.checked;
+        document.getElementById('target-input').value = h.ip;
+      };
+      box.appendChild(row);
+    });
+  });
+}
+function secondStrike() {
+  const picked = [...document.querySelectorAll('.recon-host-cb:checked')];
+  if (!picked.length) { alert('Tick one or more recon hosts first.'); return; }
+  appendLine('[*] Second Strike — ' + picked.length + ' host(s) selected:');
+  picked.forEach(cb => appendLine('    $ ' + (cb.dataset.cmd || ('python3 noctis.py ' + cb.dataset.ip))));
+  const first = picked[0];
+  document.getElementById('target-input').value = first.dataset.ip;
+  if ((first.dataset.profile || '').includes('--device')) {
+    const dev = [...document.querySelectorAll('.flag-cb')].find(cb => cb.value === '--device');
+    if (dev) dev.checked = true;
+  }
+  appendLine('[*] Launching top pick: ' + first.dataset.ip + ' — stop it before striking the next host (one scan at a time).');
+  startScan();
+}
+// --device and --recon are mutually exclusive (mirrors CLI exit 2)
+function deviceReconGuard() {
+  const vals = [...document.querySelectorAll('.flag-cb:checked')].map(cb => cb.value);
+  if (vals.includes('--device') && vals.includes('--recon')) {
+    alert('--device and --recon are mutually exclusive. Uncheck one.');
+    return false;
+  }
+  return true;
+}
+
 // Patch startScan to require confirmation for --unsafe
 const origStartScan = startScan;
 function startScan() {
@@ -1232,9 +1449,17 @@ function startScan() {
   actuallyStartScan();
 }
 
+function scanExtras() {
+  return {
+    recon_input: document.getElementById('recon-select').value,
+    firmware:    document.getElementById('firmware-select').value,
+    creds_file:  document.getElementById('creds-input').value.trim(),
+  };
+}
 function actuallyStartScan() {
   const target = document.getElementById('target-input').value.trim();
   if (!target) { alert('Please enter a target hostname or IP address.'); return; }
+  if (!deviceReconGuard()) return;
 
   const profileEl = document.querySelector('.profile-rb:checked');
   const profiles  = profileEl ? [profileEl.value] : ['standard'];
@@ -1246,7 +1471,7 @@ function actuallyStartScan() {
   fetch('/api/start', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ target, profiles, flags, session_dir: sessionDir }),
+    body: JSON.stringify({ target, profiles, flags, session_dir: sessionDir, ...scanExtras() }),
   }).then(r => r.json()).then(d => {
     if (!d.ok) { status.textContent = 'Error: ' + d.error; alert(d.error); }
   });
@@ -1409,6 +1634,7 @@ function setRunning(on) {
 function startScan() {
   const target = document.getElementById('target-input').value.trim();
   if (!target) { alert('Please enter a target hostname or IP address.'); return; }
+  if (!deviceReconGuard()) return;
 
   const profileEl = document.querySelector('.profile-rb:checked');
   const profiles  = profileEl ? [profileEl.value] : ['standard'];
@@ -1420,7 +1646,7 @@ function startScan() {
   fetch('/api/start', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ target, profiles, flags, session_dir: sessionDir }),
+    body: JSON.stringify({ target, profiles, flags, session_dir: sessionDir, ...scanExtras() }),
   }).then(r => r.json()).then(d => {
     if (!d.ok) { status.textContent = 'Error: ' + d.error; alert(d.error); }
   });
