@@ -32,6 +32,7 @@ import re
 import select
 import subprocess
 import threading
+from datetime import datetime
 
 from flask import Flask, render_template_string, request, jsonify
 from flask_sock import Sock
@@ -176,6 +177,101 @@ def _pty_reader_thread(proc: subprocess.Popen, master_fd: int):
     if exit_code == 0:
         _broadcast({"type": "restart_pending", "delay": 4})
         threading.Timer(4.0, _self_restart).start()
+
+
+_batch_stop = False  # set by /api/stop to abort a running follow-up batch
+
+
+def _followup_batch_thread(batch_dir: str, specs: list):
+    """Run batch hosts sequentially, one session subfolder + report per host."""
+    global _process, _running, _batch_stop
+    manifest = os.path.join(batch_dir, "batch.json")
+    results = []
+    for n, spec in enumerate(specs, 1):
+        with _lock:
+            if _batch_stop:
+                break
+        ip = spec["ip"]
+        _broadcast({"type": "line",
+                    "text": f"[*] Follow-up batch [{n}/{len(specs)}]: {ip} "
+                            f"({' '.join(spec['profiles'])} {' '.join(spec['flags'])})".strip()})
+        env = os.environ.copy()
+        env["PYTHONUNBUFFERED"] = "1"
+        cmd = [PYTHON, "-u", NOCTIS, ip] + spec["profiles"] + spec["flags"] + \
+              ["--session-dir", spec["session_dir"]]
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                stdin=subprocess.PIPE, bufsize=0, cwd=BASE_DIR, env=env)
+        with _lock:
+            _process = proc
+            _running = True
+        reader = threading.Thread(target=_reader_thread, args=(proc,), daemon=True)
+        reader.start()
+        reader.join()
+        results.append({"ip": ip, "session_dir": os.path.relpath(spec["session_dir"], BASE_DIR),
+                        "returncode": proc.returncode,
+                        "status": "done" if proc.returncode == 0 else "error"})
+        try:
+            with open(manifest, "w", encoding="utf-8") as fh:
+                json.dump({"batch_dir": os.path.relpath(batch_dir, BASE_DIR),
+                           "hosts": results}, fh, indent=2)
+        except Exception:
+            pass
+    with _lock:
+        _batch_stop = False
+        _running = False
+    _broadcast({"type": "line",
+                "text": f"[+] Follow-up batch complete: {len(results)}/{len(specs)} hosts "
+                        f"(manifest: {os.path.relpath(manifest, BASE_DIR)})"})
+
+
+@app.route("/api/followup-batch", methods=["POST"])
+def api_followup_batch():
+    """Queue ticked recon hosts as sequential unattended scans.
+
+    Each host gets sessions/followup_<ts>/<ip>_<ts>/ with its own full
+    report. --unsafe/--cve-nse are refused in batch (automation + intrusive
+    tiers don't mix); --unattended is forced on.
+    """
+    global _process, _running, _batch_stop
+    data = request.get_json(force=True)
+    raw_hosts = data.get("hosts", [])
+    if not isinstance(raw_hosts, list) or not raw_hosts:
+        return jsonify({"ok": False, "error": "hosts[] required"}), 400
+    if len(raw_hosts) > 64:
+        return jsonify({"ok": False, "error": "batch capped at 64 hosts"}), 400
+    with _lock:
+        if _running:
+            return jsonify({"ok": False, "error": "A scan is already running"}), 409
+    _phase_flags = ("--device-phase-1", "--device-phase-2", "--device-phase-3")
+    _allowed_flags = {f for f, _ in FLAGS} | set(_phase_flags)
+    specs = []
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    batch_dir = os.path.join(BASE_DIR, "sessions", f"followup_{ts}")
+    for h in raw_hosts:
+        if not isinstance(h, dict):
+            return jsonify({"ok": False, "error": "bad host entry"}), 400
+        ip = str(h.get("ip", "")).strip()
+        if not re.fullmatch(r"[A-Za-z0-9_.:\-]{1,80}", ip):
+            return jsonify({"ok": False, "error": f"bad host: {ip[:40]}"}), 400
+        profiles = [p for p in (h.get("profiles") or []) if p in PROFILES] or ["standard"]
+        flags = [f for f in (h.get("flags") or []) if f in _allowed_flags]
+        if any(f in flags for f in ("--unsafe", "--cve-nse", "--recon")):
+            return jsonify({"ok": False, "error": f"refused intrusive/recon flag for {ip}"}), 400
+        if "--unattended" not in flags:
+            flags.append("--unattended")
+        safe_ip = re.sub(r"[^a-zA-Z0-9_-]", "_", ip)
+        sdir = os.path.join(batch_dir, f"{safe_ip}_{ts}")
+        os.makedirs(sdir, exist_ok=True)
+        specs.append({"ip": ip, "profiles": profiles, "flags": flags, "session_dir": sdir})
+    os.makedirs(batch_dir, exist_ok=True)
+    with _lock:
+        _batch_stop = False
+        _running = True
+    threading.Thread(target=_followup_batch_thread, args=(batch_dir, specs), daemon=True).start()
+    _broadcast({"type": "started",
+                "cmd": f"followup-batch {len(specs)} hosts -> {os.path.relpath(batch_dir, BASE_DIR)}"})
+    return jsonify({"ok": True, "batch_dir": os.path.relpath(batch_dir, BASE_DIR),
+                    "count": len(specs)})
 
 
 def _reader_thread(proc: subprocess.Popen):
@@ -349,9 +445,10 @@ def api_start():
 
 @app.route("/api/stop", methods=["POST"])
 def api_stop():
-    global _running
+    global _running, _batch_stop
     with _lock:
         proc = _process
+        _batch_stop = True
     if proc and proc.poll() is None:
         proc.terminate()
         _broadcast({"type": "line", "text": "[!] Scan terminated by user."})
@@ -1099,7 +1196,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   <fieldset class="group">
     <legend>Assessment Profile</legend>
     <div class="cb-row" id="profiles-row">
-      <label title="Soft initial sweep first: discovery-only subnet triage into recon.json, then Second Strike the interesting hosts. The default kickoff point." style="font-weight:bold; color:#7fd67f;">
+      <label title="Soft initial sweep first: discovery-only subnet triage into recon.json, then Follow-Up Scan the interesting hosts. The default kickoff point." style="font-weight:bold; color:#7fd67f;">
         <input type="radio" class="profile-rb" id="profile-recon-rb" name="profile" value="__recon" checked>
         Recon
         <span class="tip">Default kickoff: discovery-only sweep (no intrusive flags), triage hosts, then second-sweep from the recon file.</span>
@@ -1170,9 +1267,12 @@ button:disabled { opacity: .45; cursor: not-allowed; }
       </label>
     </div>
     <div id="recon-hosts" style="margin:4px 0 4px 0; max-height:180px; overflow-y:auto; font-size:11px;"></div>
-    <div style="margin:0 0 6px 0;">
-      <button type="button" onclick="secondStrike()" title="Print second-sweep commands for ticked hosts and launch the first one">&#9889; Second Strike</button>
-      <span style="color:#888; font-size:10px;">tick hosts above, then strike — commands print to the terminal and the top pick launches</span>
+    <div style="margin:0 0 6px 0; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+      <button type="button" onclick="followUpScan()" title="Print second-sweep commands for ticked hosts and launch the first one">&#9889; Follow-Up Scan</button>
+      <label title="Scan every ticked host as sequential unattended scans (sessions/followup_<ts>/, one report per host). Intrusive tiers refused in batch.">
+        <input type="checkbox" id="followup-batch-cb"> batch all ticked (--unattended)
+      </label>
+      <span style="color:#888; font-size:10px;">tick hosts above, then scan — commands print to the terminal and the top pick launches</span>
     </div>
     <div id="row-firmware" style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; font-size:11px; padding:4px 0; border-bottom:1px solid #333;">
       <b style="min-width:86px;">Firmware</b>
@@ -1521,10 +1621,30 @@ function loadReconHosts() {
     });
   });
 }
-function secondStrike() {
+function followupSpec(cb) {
+  // Map a recon row's recommended profile to launch {profiles, flags}.
+  const toks = (cb.dataset.profile || 'standard').split(/\s+/);
+  const profiles = toks.filter(t => ['standard', 'full', 'ot'].includes(t));
+  const flags = toks.filter(t => t.startsWith('--'));
+  return { ip: cb.dataset.ip, profiles: profiles.length ? profiles : ['standard'], flags };
+}
+function followUpScan() {
   const picked = [...document.querySelectorAll('.recon-host-cb:checked')];
   if (!picked.length) { alert('Tick one or more recon hosts first.'); return; }
-  appendLine('[*] Second Strike — ' + picked.length + ' host(s) selected:');
+  const batch = document.getElementById('followup-batch-cb');
+  if (batch && batch.checked) {
+    if (!confirm(`Scan ${picked.length} host(s) as sequential unattended scans? Each gets its own session folder and report under sessions/followup_<timestamp>/.`)) return;
+    fetch('/api/followup-batch', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ hosts: picked.map(followupSpec) }),
+    }).then(r => r.json()).then(d => {
+      if (!d.ok) { status.textContent = 'Error: ' + d.error; alert(d.error); }
+      else appendLine(`[*] Follow-up batch queued: ${d.count} host(s) -> ${d.batch_dir}`);
+    });
+    return;
+  }
+  appendLine('[*] Follow-Up Scan — ' + picked.length + ' host(s) selected:');
   picked.forEach(cb => appendLine('    $ ' + (cb.dataset.cmd || ('python3 noctis.py ' + cb.dataset.ip))));
   const first = picked[0];
   document.getElementById('target-input').value = first.dataset.ip;
