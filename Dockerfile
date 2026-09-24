@@ -87,17 +87,21 @@ RUN go install -v github.com/owasp-amass/amass/v4/cmd/amass@latest 2>/dev/null |
 
 # ---------------------------------------------------------------------------
 # 3c. NetExec (nxc) — internal Active Directory enumeration
-#     pipx is the only reliable cross-distro install path; try apt first
-#     (available on Ubuntu 23.04+ / Debian 12+), fall back to pip.
+#     Debian bookworm does not package netexec, so pipx (PyPI, then git HEAD)
+#     with a system-pip last resort. Failures print their tail instead of
+#     vanishing into /dev/null, and success is verified by binary presence.
 # ---------------------------------------------------------------------------
 RUN apt-get install -y --no-install-recommends libkrb5-dev 2>/dev/null || true
 RUN apt-get install -y --no-install-recommends pipx 2>/dev/null || \
     pip3 install pipx --break-system-packages 2>/dev/null || \
     pip3 install pipx 2>/dev/null || true
-RUN pipx ensurepath 2>/dev/null || true && \
-    (pipx install netexec 2>/dev/null || \
-     pipx install "git+https://github.com/Pennyw0rth/NetExec" 2>/dev/null) || \
-    echo "[!] NetExec (nxc) could not be installed — internal_ad profile will not function"
+RUN pipx ensurepath 2>/dev/null || true; \
+    { pipx install netexec || \
+      pipx install "git+https://github.com/Pennyw0rth/NetExec" || \
+      pip3 install --break-system-packages netexec || \
+      pip3 install --break-system-packages "git+https://github.com/Pennyw0rth/NetExec"; } 2>&1 | tail -8; \
+    command -v nxc >/dev/null && echo "[OK] NetExec installed: $(nxc --version 2>/dev/null | head -1)" || \
+    echo "[!] NetExec (nxc) could not be installed — AD enumeration (full profile) will not function"
 
 # ---------------------------------------------------------------------------
 # 3d. Metasploit Framework — mandatory install for offline operation.

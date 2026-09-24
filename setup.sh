@@ -345,11 +345,20 @@ else
         # Ensure ~/.local/bin is on PATH for this session and future shells
         export PATH="$HOME/.local/bin:$PATH"
         pipx ensurepath 2>/dev/null || true
-        # Try PyPI package first, fall back to GitHub source
-        if pipx install netexec 2>/dev/null || pipx install "git+https://github.com/Pennyw0rth/NetExec" 2>/dev/null; then
-            ok "NetExec installed via pipx (~/.local/bin/nxc)"
+        # Try pipx (PyPI, then git HEAD), then system pip as last resort.
+        # Failure tails are shown instead of swallowed so the cause is visible.
+        # Each step is verified by binary presence (pipe exit codes are unreliable).
+        pipx install netexec 2>&1 | tail -5 || true
+        if ! command -v nxc &>/dev/null; then
+            pipx install "git+https://github.com/Pennyw0rth/NetExec" 2>&1 | tail -5 || true
+        fi
+        if command -v nxc &>/dev/null; then
+            ok "NetExec installed via pipx ($(command -v nxc))"
+        elif python3 -m pip install --break-system-packages netexec 2>&1 | tail -5 \
+                && command -v nxc &>/dev/null; then
+            ok "NetExec installed via system pip"
         else
-            fail "NetExec (nxc) could not be installed — internal_ad profile will not function"
+            fail "NetExec (nxc) could not be installed — AD enumeration (full profile) will not function"
         fi
     fi
 fi
