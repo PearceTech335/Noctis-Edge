@@ -94,6 +94,19 @@ def main() -> None:
         print("[submit_nuclei_kb] Local Nuclei KB is empty — skipping submission.")
         sys.exit(0)
 
+    # Drop template keys the relay would 400 on (^[a-z0-9_/-]{3,120}$) so one
+    # bad key cannot nuke the whole submission.
+    _TMPL_KEY_RE = re.compile(r"^[a-z0-9_/-]{3,120}$")
+    _bad_tmpl = [k for k in nkb_data if not _TMPL_KEY_RE.match(str(k))]
+    if _bad_tmpl:
+        print(f"[submit_nuclei_kb] WARNING: Dropping {len(_bad_tmpl)} invalid template "
+              f"key(s) ({', '.join(_bad_tmpl[:3])}) — relay would reject the submission.",
+              file=sys.stderr)
+        nkb_data = {k: v for k, v in nkb_data.items() if _TMPL_KEY_RE.match(str(k))}
+    if not nkb_data:
+        print("[submit_nuclei_kb] No valid template entries left — skipping submission.")
+        sys.exit(0)
+
     nkb_data = _sanitize_nuclei_kb(nkb_data)
 
     payload = json.dumps({"user_id": user_id, "nuclei_kb": nkb_data}).encode()

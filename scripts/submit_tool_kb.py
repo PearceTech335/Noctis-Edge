@@ -122,6 +122,17 @@ def main() -> None:
         print(f"[submit_tool_kb] ERROR: Invalid JSON in {kb_path}: {exc}", file=sys.stderr)
         sys.exit(1)
 
+    # Drop tool names the relay would 400 on (^[a-z_][a-z0-9_-]{0,49}$,
+    # _meta exempt) so one bad name cannot nuke the whole submission.
+    _TOOL_KEY_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,49}$")
+    _bad_tools = [k for k in kb_data if k != "_meta" and not _TOOL_KEY_RE.match(str(k))]
+    if _bad_tools:
+        print(f"[submit_tool_kb] WARNING: Dropping {len(_bad_tools)} invalid tool "
+              f"name(s) ({', '.join(_bad_tools[:3])}) — relay would reject the submission.",
+              file=sys.stderr)
+        kb_data = {k: v for k, v in kb_data.items()
+                   if k == "_meta" or _TOOL_KEY_RE.match(str(k))}
+
     # Strip meta key and check there are real tool entries
     tool_entries = {k: v for k, v in kb_data.items() if k != "_meta"}
     if not tool_entries:

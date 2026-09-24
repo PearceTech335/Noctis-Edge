@@ -138,6 +138,19 @@ def main() -> None:
         print("[submit_kb] Local knowledge base is empty — skipping submission.")
         sys.exit(0)
 
+    # ── Drop non-CVE top-level keys (relay 400-rejects the whole POST on any
+    #    key outside ^CVE-\d{4}-\d+$; one stray key must not nuke the batch) ──
+    _CVE_KEY_RE = re.compile(r"^CVE-\d{4}-\d+$")
+    _bad_keys = [k for k in kb_data if not _CVE_KEY_RE.match(str(k))]
+    if _bad_keys:
+        print(f"[submit_kb] WARNING: Dropping {len(_bad_keys)} non-CVE key(s) "
+              f"({', '.join(_bad_keys[:3])}) — relay would reject the submission.",
+              file=sys.stderr)
+        kb_data = {k: v for k, v in kb_data.items() if _CVE_KEY_RE.match(str(k))}
+    if not kb_data:
+        print("[submit_kb] No CVE entries left after key filtering — skipping submission.")
+        sys.exit(0)
+
     # ── Sanitize before transmission ──────────────────────────────────────────
     kb_data = _sanitize_cve_kb(kb_data)
 
