@@ -1140,35 +1140,43 @@ button:disabled { opacity: .45; cursor: not-allowed; }
     </div>
   </fieldset>
 
-  <!-- Device / Recon file selection -->
+  <!-- Second-sweep inputs: one row per file kind; rows grey out unless
+       relevant to the selected assessment profile (see updateModeUI) -->
   <fieldset class="group">
-    <legend>Device / Recon Files</legend>
-    <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; font-size:11px;">
-      <label>Recon file:
+    <legend>Second-Sweep Inputs</legend>
+    <div id="row-recon" style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; font-size:11px; padding:4px 0; border-bottom:1px solid #333;">
+      <b style="min-width:86px;">Recon file</b>
+      <label>File:
         <select id="recon-select"><option value="">— none —</option></select>
       </label>
       <button type="button" onclick="openFilePicker('recon')" title="Browse recon.json from any previous session">&#128193;</button>
       <button type="button" onclick="loadReconHosts()">Load hosts</button>
+      <label title="Use the selected recon file as second-sweep input (--input)">
+        <input type="checkbox" id="recon-input-cb"> --input
+      </label>
+    </div>
+    <div id="recon-hosts" style="margin:4px 0 4px 0; max-height:180px; overflow-y:auto; font-size:11px;"></div>
+    <div style="margin:0 0 6px 0;">
+      <button type="button" onclick="secondStrike()" title="Print second-sweep commands for ticked hosts and launch the first one">&#9889; Second Strike</button>
+      <span style="color:#888; font-size:10px;">tick hosts above, then strike — commands print to the terminal and the top pick launches</span>
+    </div>
+    <div id="row-firmware" style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; font-size:11px; padding:4px 0; border-bottom:1px solid #333;">
+      <b style="min-width:86px;">Firmware</b>
       <label title="Offline firmware string scan (stdlib only, --unsafe only). Drop images into firmware/ on the server.">
         <input type="checkbox" id="firmware-flag-cb"> --firmware
       </label>
-      <label>Firmware file:
+      <label>File:
         <select id="firmware-select" disabled><option value="">— none —</option></select>
       </label>
       <button type="button" onclick="openFilePicker('firmware')" title="Browse firmware images">&#128193;</button>
       <button type="button" onclick="loadFirmwareFiles()" title="Refresh firmware/ listing">&#8635;</button>
-      <label title="Use the selected recon file as second-sweep input (--input)">
-        <input type="checkbox" id="recon-input-cb"> --input
-      </label>
-      <label title="Cookies-only JSON for device Phase-3 (0600 recommended)">Creds file:
+    </div>
+    <div id="row-creds" style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; font-size:11px; padding:4px 0;">
+      <b style="min-width:86px;">Creds file</b>
+      <label title="Cookies-only JSON for device Phase-3 (0600 recommended)">File:
         <input id="creds-input" type="text" placeholder="path/to/creds.json" size="22" autocomplete="off" spellcheck="false">
       </label>
       <button type="button" onclick="openFilePicker('creds')" title="Browse saved creds files">&#128193;</button>
-    </div>
-    <div id="recon-hosts" style="margin-top:8px; max-height:180px; overflow-y:auto; font-size:11px;"></div>
-    <div style="margin-top:6px;">
-      <button type="button" onclick="secondStrike()" title="Print second-sweep commands for ticked hosts and launch the first one">&#9889; Second Strike</button>
-      <span style="color:#888; font-size:10px;">tick hosts above, then strike — commands print to the terminal and the top pick launches</span>
     </div>
   </fieldset>
 
@@ -1613,17 +1621,23 @@ function updateModeUI() {
   });
   updateFirmwareUI();
 }
+function setRow(rowId, on) {
+  // Grey out a whole Second-Sweep input row so irrelevant controls cannot
+  // be spammed in. Disabled controls are skipped at collect time.
+  const row = document.getElementById(rowId);
+  if (!row) return;
+  row.style.opacity = on ? '' : '0.35';
+  row.querySelectorAll('input, select, button').forEach(el => { el.disabled = !on; });
+}
 function updateFirmwareUI() {
   const dev = deviceModeSelected();
-  const rec = reconModeSelected();
+  setRow('row-firmware', dev);
+  setRow('row-creds', dev);
   const fwCb = document.getElementById('firmware-flag-cb');
   const fwSel = document.getElementById('firmware-select');
-  const creds = document.getElementById('creds-input');
-  fwCb.disabled = !dev;
-  fwCb.closest('label').style.opacity = dev ? '' : '0.35';
-  fwSel.disabled = !(dev && fwCb.checked);
-  creds.disabled = rec || !dev;
-  creds.closest('label').style.opacity = (rec || !dev) ? '0.35' : '';
+  // File dropdown wakes only when its --firmware flag is ticked (stays
+  // disabled otherwise even though the row itself is enabled).
+  fwSel.disabled = !(dev && fwCb && fwCb.checked);
 }
 function deviceFlags() {
   // Returns array of device-derived flags, or null (with alert) on bad input.
@@ -1639,12 +1653,15 @@ function deviceFlags() {
   return out;
 }
 function scanExtras() {
+  // Greyed-out (disabled) controls never contribute, even if still ticked
+  // from an earlier mode — prevents spamming irrelevant inputs per scan.
   const fwCb = document.getElementById('firmware-flag-cb');
   const riCb = document.getElementById('recon-input-cb');
+  const credsEl = document.getElementById('creds-input');
   return {
-    recon_input: (riCb && riCb.checked) ? document.getElementById('recon-select').value : '',
-    firmware:    (fwCb && fwCb.checked) ? document.getElementById('firmware-select').value : '',
-    creds_file:  document.getElementById('creds-input').value.trim(),
+    recon_input: (riCb && riCb.checked && !riCb.disabled) ? document.getElementById('recon-select').value : '',
+    firmware:    (fwCb && fwCb.checked && !fwCb.disabled) ? document.getElementById('firmware-select').value : '',
+    creds_file:  (credsEl && !credsEl.disabled) ? credsEl.value.trim() : '',
   };
 }
 function collectFlags() {

@@ -5194,25 +5194,57 @@ async def _run_recon_sweep(scope: str, session_dir: str) -> str:
     profile, second-sweep commands) for --input triage. Never --unsafe.
     """
     import asyncio as _aio
-    print(f"[*] Recon sweep on {scope} (discovery-only, safe mode)...")
-    r0 = await _aio.to_thread(
-        _nmap_run,
-        ["-sn", "-PR", "-PE", "-PS80,443,22,554,8000,8080,8899,37777",
-         "-PA80,443", "-PU161,40125", "-T4", "-oX", "-", scope], 120)
-    live: list[str] = []
-    try:
-        root = ET.fromstring(r0) if r0.strip().startswith("<") else None
-        if root is not None:
+
+    def _live_hosts(xml_data: str) -> list[str]:
+        found: list[str] = []
+        try:
+            root = ET.fromstring(xml_data) if xml_data.strip().startswith("<") else None
+            if root is None:
+                return found
             for host in root.findall("host"):
                 st = host.find("status")
                 if st is not None and st.attrib.get("state") == "up":
                     addr = host.find("address[@addrtype='ipv4']")
-                    if addr is not None:
-                        live.append(addr.attrib.get("addr", ""))
-    except Exception:
-        pass
-    live = [h for h in live if h]
+                    if addr is not None and addr.attrib.get("addr"):
+                        found.append(addr.attrib.get("addr", ""))
+        except Exception:
+            pass
+        return found
+
+    print(f"[*] Recon sweep on {scope} (discovery-only, safe mode)...")
+    if os.path.exists("/.dockerenv"):
+        print("[*] Container detected: on-link ARP does not cross Docker NAT — "
+              "LAN sweeps from inside Docker Desktop (Win/Mac) undercount. "
+              "For full LAN visibility run recon natively (Linux/venv).")
+    stages: dict = {}
+    r0_args = ["-sn", "-PR", "-PE", "-PS80,443,22,135,445,3389,554,8000,8080,8899,37777",
+               "-PA80,443", "-PU161,40125", "-T4", "-oX", "-", scope]
+    r0, r0_err, r0_code = await _aio.to_thread(_nmap_run_capture, r0_args, 120)
+    live = _live_hosts(r0)
+    stages["r0_ping_sweep"] = {"hosts": len(live),
+                               "stderr_tail": (r0_err or "")[-300:],
+                               "returncode": r0_code}
+    if not r0.strip().startswith("<"):
+        print(f"[!] R0 ping-sweep produced no XML (rc={r0_code}): "
+              f"{(r0_err or 'no stderr').strip()[-200:]}")
+    if not live:
+        # R0b fallback: hosts that ignore ping but leave TCP ports open
+        # (Windows firewall, NAT-masked LAN) still answer SYN.
+        print("[*] R0 found nothing — R0b fallback SYN sweep (top-20, no ping)...")
+        r0b_args = ["-Pn", "-sS", "-T4", "--open", "--top-ports", "20",
+                    "--max-retries", "1", "--host-timeout", "30s",
+                    "-oX", "-", scope]
+        r0b, r0b_err, r0b_code = await _aio.to_thread(_nmap_run_capture, r0b_args, 180)
+        live = _live_hosts(r0b)
+        stages["r0b_syn_fallback"] = {"hosts": len(live),
+                                      "stderr_tail": (r0b_err or "")[-300:],
+                                      "returncode": r0b_code}
     print(f"[*] Recon: {len(live)} live hosts")
+    if not live:
+        print("[!] Zero hosts. Likely causes: wrong subnet (check the Default "
+              "Gateway octet — e.g. 192.168.1.x vs 192.168.0.x), scanning from "
+              "inside Docker NAT instead of natively, or nmap lacking raw-socket "
+              "privileges. Details recorded in recon.json stages.")
     hosts_out: list[dict] = []
     fams: dict[str, int] = {}
     for ip in live[:256]:
@@ -5241,7 +5273,8 @@ async def _run_recon_sweep(scope: str, session_dir: str) -> str:
             "second_sweep_cmd": f"python3 noctis.py {ip} {prof}".strip(),
         })
     recon = {"schema": "noctis-recon/1", "scope": scope,
-             "summary": {"alive": len(live), "families": fams}, "hosts": hosts_out}
+             "summary": {"alive": len(live), "families": fams}, "hosts": hosts_out,
+             "stages": stages}
     out = os.path.join(session_dir, "recon.json")
     with open(out, "w", encoding="utf-8") as fh:
         json.dump(recon, fh, indent=2)
