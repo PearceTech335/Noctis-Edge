@@ -345,29 +345,29 @@ else
         # Ensure ~/.local/bin is on PATH for this session and future shells
         export PATH="$HOME/.local/bin:$PATH"
         pipx ensurepath 2>/dev/null || true
-        # Try pipx (PyPI, then git HEAD), then system pip as last resort.
+        # Upstream publishes NO PyPI package — git+https is the only pip route
+        # (per netexec.wiki), and the build needs Rust (aardwolf) + Python
+        # headers (arc4) + gcc. Install prereqs first, then build.
+        $SUDO apt install -y build-essential python3-dev libffi-dev libssl-dev \
+            pkg-config 2>/dev/null || true
+        if ! command -v rustc &>/dev/null; then
+            info "Installing minimal Rust toolchain (required to build nxc dependencies) ..."
+            export PATH="$HOME/.cargo/bin:$PATH"
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+                | sh -s -- -y --profile minimal 2>&1 | tail -3 || true
+            export PATH="$HOME/.cargo/bin:$PATH"
+        fi
         # Failure tails are shown instead of swallowed so the cause is visible.
         # Each step is verified by binary presence (pipe exit codes are unreliable).
-        pipx install netexec 2>&1 | tail -5 || true
+        pipx install "git+https://github.com/Pennyw0rth/NetExec" 2>&1 | tail -8 || true
         if ! command -v nxc &>/dev/null; then
-            pipx install "git+https://github.com/Pennyw0rth/NetExec" 2>&1 | tail -5 || true
+            python3 -m pip install --break-system-packages \
+                "git+https://github.com/Pennyw0rth/NetExec" 2>&1 | tail -8 || true
         fi
         if command -v nxc &>/dev/null; then
-            ok "NetExec installed via pipx ($(command -v nxc))"
+            ok "NetExec installed ($(command -v nxc))"
         else
-            # NOTE: "(from versions: none)" from pip means the PyPI index is
-            # unreachable (offline/proxy/no-index) — not that netexec is missing.
-            # The git+https fallbacks below only need github.com reachable.
-            python3 -m pip install --break-system-packages netexec 2>&1 | tail -5 || true
-            if ! command -v nxc &>/dev/null; then
-                python3 -m pip install --break-system-packages \
-                    "git+https://github.com/Pennyw0rth/NetExec" 2>&1 | tail -5 || true
-            fi
-            if command -v nxc &>/dev/null; then
-                ok "NetExec installed via system pip ($(command -v nxc))"
-            else
-                fail "NetExec (nxc) could not be installed — AD enumeration (full profile) will not function"
-            fi
+            fail "NetExec (nxc) could not be installed — AD enumeration (full profile) will not function"
         fi
     fi
 fi

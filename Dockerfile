@@ -87,19 +87,27 @@ RUN go install -v github.com/owasp-amass/amass/v4/cmd/amass@latest 2>/dev/null |
 
 # ---------------------------------------------------------------------------
 # 3c. NetExec (nxc) — internal Active Directory enumeration
-#     Debian bookworm does not package netexec, so pipx (PyPI, then git HEAD)
-#     with a system-pip last resort. Failures print their tail instead of
-#     vanishing into /dev/null, and success is verified by binary presence.
+#     Upstream publishes NO PyPI package — the only pip route is
+#     git+https://github.com/Pennyw0rth/NetExec (per netexec.wiki), and the
+#     build needs Rust (aardwolf wheel) + Python headers (arc4) + gcc.
+#     Toolchain is installed, used, then removed in this single layer so the
+#     final image stays lean; failure tails print instead of vanishing.
 # ---------------------------------------------------------------------------
-RUN apt-get install -y --no-install-recommends libkrb5-dev 2>/dev/null || true
-RUN apt-get install -y --no-install-recommends pipx 2>/dev/null || \
-    pip3 install pipx --break-system-packages 2>/dev/null || \
-    pip3 install pipx 2>/dev/null || true
-RUN pipx ensurepath 2>/dev/null || true; \
-    { pipx install netexec || \
-      pipx install "git+https://github.com/Pennyw0rth/NetExec" || \
-      pip3 install --break-system-packages netexec || \
+RUN apt-get update -qq && \
+    apt-get install -y --no-install-recommends \
+        libkrb5-dev pipx build-essential python3-dev libffi-dev libssl-dev \
+        pkg-config curl ca-certificates 2>/dev/null; \
+    pipx ensurepath 2>/dev/null || true; \
+    export PATH="/root/.cargo/bin:$PATH" && \
+    (command -v rustc >/dev/null || \
+     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal) 2>&1 | tail -3; \
+    export PATH="/root/.cargo/bin:$PATH" && \
+    { pipx install "git+https://github.com/Pennyw0rth/NetExec" || \
       pip3 install --break-system-packages "git+https://github.com/Pennyw0rth/NetExec"; } 2>&1 | tail -8; \
+    rustup self uninstall -y >/dev/null 2>&1 || true; \
+    apt-get remove -y build-essential python3-dev pkg-config >/dev/null 2>&1 || true; \
+    apt-get autoremove -y >/dev/null 2>&1 || true; \
+    rm -rf /var/lib/apt/lists/* /root/.cargo /root/.rustup; \
     command -v nxc >/dev/null && echo "[OK] NetExec installed: $(nxc --version 2>/dev/null | head -1)" || \
     echo "[!] NetExec (nxc) could not be installed — AD enumeration (full profile) will not function"
 
