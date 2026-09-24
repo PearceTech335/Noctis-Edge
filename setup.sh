@@ -354,11 +354,20 @@ else
         fi
         if command -v nxc &>/dev/null; then
             ok "NetExec installed via pipx ($(command -v nxc))"
-        elif python3 -m pip install --break-system-packages netexec 2>&1 | tail -5 \
-                && command -v nxc &>/dev/null; then
-            ok "NetExec installed via system pip"
         else
-            fail "NetExec (nxc) could not be installed — AD enumeration (full profile) will not function"
+            # NOTE: "(from versions: none)" from pip means the PyPI index is
+            # unreachable (offline/proxy/no-index) — not that netexec is missing.
+            # The git+https fallbacks below only need github.com reachable.
+            python3 -m pip install --break-system-packages netexec 2>&1 | tail -5 || true
+            if ! command -v nxc &>/dev/null; then
+                python3 -m pip install --break-system-packages \
+                    "git+https://github.com/Pennyw0rth/NetExec" 2>&1 | tail -5 || true
+            fi
+            if command -v nxc &>/dev/null; then
+                ok "NetExec installed via system pip ($(command -v nxc))"
+            else
+                fail "NetExec (nxc) could not be installed — AD enumeration (full profile) will not function"
+            fi
         fi
     fi
 fi
