@@ -1117,7 +1117,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
     <legend>Scan Flags</legend>
     <div class="cb-row" id="flags-row">
       {% for flag, tip in flags %}
-        {% if flag not in ('--unsafe', '--cve-nse', '--device') %}
+        {% if flag not in ('--unsafe', '--cve-nse', '--device', '--recon') %}
         <label>
           <input type="checkbox" class="flag-cb" value="{{ flag }}">
           {{ flag }}
@@ -1387,8 +1387,10 @@ function printFlagsMan() {
     const tip = cb.closest('label').querySelector('.tip');
     appendLine('  ' + cb.value + ' — ' + (tip ? tip.textContent.trim() : ''));
   });
+  const rec = document.getElementById('profile-recon-rb');
+  if (rec) appendLine('  [profile] Recon — default kickoff: discovery-only sweep, all flags greyed out, triage via recon file.');
   const dev = document.getElementById('profile-device-rb');
-  if (dev) appendLine('  [profile] Device — single-host embedded/IoT assessment; unlocks sweep phases + firmware intake, greys out --recon/--dns-enum.');
+  if (dev) appendLine('  [profile] Device — single-host embedded/IoT assessment; unlocks sweep phases + firmware intake, greys out --dns-enum.');
   appendLine('  --device-phase-1/2/3 — Device sweep phase: 1 surface only (disables --cve-test), 2 auth flow (default behaviour), 3 authenticated mapping (needs creds).');
   appendLine('  --firmware (checkbox) + file dropdown — offline firmware string scan; files live in firmware/ on the server.');
   appendLine('  --input (checkbox) + recon dropdown — second-sweep host selection from a recon.json file.');
@@ -1568,16 +1570,9 @@ function submitFilePicker() {
     document.getElementById('creds-input').value = path;
   }
 }
-// --device and --recon are mutually exclusive (mirrors CLI exit 2)
-function deviceReconGuard() {
-  const vals = [...document.querySelectorAll('.flag-cb:checked')]
-    .filter(cb => !cb.disabled).map(cb => cb.value);
-  if (deviceModeSelected() && vals.includes('--recon')) {
-    alert('--device and --recon are mutually exclusive. Uncheck one.');
-    return false;
-  }
-  return true;
-}
+// Structural note: --device/--recon mutual exclusion is enforced by the
+// profile radio group (one selection only) plus the backend 400 guard;
+// no JS guard needed.
 
 // Patch startScan to require confirmation for --unsafe
 const origStartScan = startScan;
@@ -1681,7 +1676,6 @@ function collectFlags() {
 function actuallyStartScan() {
   const target = document.getElementById('target-input').value.trim();
   if (!target) { alert('Please enter a target hostname or IP address.'); return; }
-  if (!deviceReconGuard()) return;
 
   const profileEl = document.querySelector('.profile-rb:checked');
   const profiles  = (profileEl && !['__device', '__recon'].includes(profileEl.value)) ? [profileEl.value] : ['standard'];
@@ -1857,7 +1851,6 @@ function setRunning(on) {
 function startScan() {
   const target = document.getElementById('target-input').value.trim();
   if (!target) { alert('Please enter a target hostname or IP address.'); return; }
-  if (!deviceReconGuard()) return;
 
   const profileEl = document.querySelector('.profile-rb:checked');
   const profiles  = (profileEl && !['__device', '__recon'].includes(profileEl.value)) ? [profileEl.value] : ['standard'];

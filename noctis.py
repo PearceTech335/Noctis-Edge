@@ -285,6 +285,7 @@ CVE_NSE         = False  # set via --cve-nse; opt-in CVE-targeted NSE escalation
 DEVICE_MODE     = False  # set via --device; single-host embedded/IoT assessment (implies aggressive-but-safe)
 DEVICE_PHASE    = 0      # set via --device-phase-{1,2,3}; 0 = all phases
 RECON_MODE      = False  # set via --recon; subnet discovery sweep producing recon.json for triage
+RECON_IMPORT    = None   # set via --recon-import <xml>; triage host-produced nmap XML (Docker Win/Mac story)
 FIRMWARE_PATH   = None   # set via --firmware <path>; offline stdlib-only firmware string scan
 RECON_INPUT     = None   # set via --input <recon.json>; second-sweep host selection file
 
@@ -5196,20 +5197,7 @@ async def _run_recon_sweep(scope: str, session_dir: str) -> str:
     import asyncio as _aio
 
     def _live_hosts(xml_data: str) -> list[str]:
-        found: list[str] = []
-        try:
-            root = ET.fromstring(xml_data) if xml_data.strip().startswith("<") else None
-            if root is None:
-                return found
-            for host in root.findall("host"):
-                st = host.find("status")
-                if st is not None and st.attrib.get("state") == "up":
-                    addr = host.find("address[@addrtype='ipv4']")
-                    if addr is not None and addr.attrib.get("addr"):
-                        found.append(addr.attrib.get("addr", ""))
-        except Exception:
-            pass
-        return found
+        return [h["ip"] for h in _parse_nmap_hosts(xml_data)]
 
     print(f"[*] Recon sweep on {scope} (discovery-only, safe mode)...")
     if os.path.exists("/.dockerenv"):
@@ -5217,28 +5205,33 @@ async def _run_recon_sweep(scope: str, session_dir: str) -> str:
               "LAN sweeps from inside Docker Desktop (Win/Mac) undercount. "
               "For full LAN visibility run recon natively (Linux/venv).")
     stages: dict = {}
-    r0_args = ["-sn", "-PR", "-PE", "-PS80,443,22,135,445,3389,554,8000,8080,8899,37777",
-               "-PA80,443", "-PU161,40125", "-T4", "-oX", "-", scope]
-    r0, r0_err, r0_code = await _aio.to_thread(_nmap_run_capture, r0_args, 120)
+    # -n everywhere: reverse-DNS through Docker NAT is the classic stall
+    # (R0 hanging past its timeout with rc=124 and zero output).
+    r0_args = ["-sn", "-n", "-PR", "-PE", "-PS80,443,22,135,445,3389,554,8000,8080,8899,37777",
+               "-PA80,443", "-PU161,40125", "-T4", "--host-timeout", "60s",
+               "-oX", "-", scope]
+    r0, r0_err, r0_code = await _aio.to_thread(_nmap_run_capture, r0_args, 150)
     live = _live_hosts(r0)
     stages["r0_ping_sweep"] = {"hosts": len(live),
                                "stderr_tail": (r0_err or "")[-300:],
                                "returncode": r0_code}
     if not r0.strip().startswith("<"):
-        print(f"[!] R0 ping-sweep produced no XML (rc={r0_code}): "
-              f"{(r0_err or 'no stderr').strip()[-200:]}")
+        _why = "timed out" if r0_code == 124 else (r0_err or "no stderr").strip()[-200:]
+        print(f"[!] R0 ping-sweep produced no XML (rc={r0_code}): {_why}")
     if not live:
         # R0b fallback: hosts that ignore ping but leave TCP ports open
         # (Windows firewall, NAT-masked LAN) still answer SYN.
         print("[*] R0 found nothing — R0b fallback SYN sweep (top-20, no ping)...")
-        r0b_args = ["-Pn", "-sS", "-T4", "--open", "--top-ports", "20",
+        r0b_args = ["-Pn", "-n", "-sS", "-T4", "--open", "--top-ports", "20",
                     "--max-retries", "1", "--host-timeout", "30s",
                     "-oX", "-", scope]
-        r0b, r0b_err, r0b_code = await _aio.to_thread(_nmap_run_capture, r0b_args, 180)
+        r0b, r0b_err, r0b_code = await _aio.to_thread(_nmap_run_capture, r0b_args, 240)
         live = _live_hosts(r0b)
         stages["r0b_syn_fallback"] = {"hosts": len(live),
                                       "stderr_tail": (r0b_err or "")[-300:],
                                       "returncode": r0b_code}
+        for ip in live:
+            print(f"  [found] {ip} [via SYN fallback — fingerprinting next]")
     print(f"[*] Recon: {len(live)} live hosts")
     if not live:
         print("[!] Zero hosts. Likely causes: wrong subnet (check the Default "
@@ -5247,31 +5240,20 @@ async def _run_recon_sweep(scope: str, session_dir: str) -> str:
               "privileges. Details recorded in recon.json stages.")
     hosts_out: list[dict] = []
     fams: dict[str, int] = {}
-    for ip in live[:256]:
+    for n, ip in enumerate(live[:256], 1):
+        print(f"[*] Fingerprinting {ip} ({n}/{len(live[:256])})...")
         r1 = await _aio.to_thread(
             _nmap_run,
-            ["-Pn", "-sV", "--version-intensity", "5", "-T4", "--open",
+            ["-Pn", "-n", "-sV", "--version-intensity", "5", "-T4", "--open",
              "--top-ports", "100", "-p", RECON_PORT_UNION,
              "--max-retries", "1", "--host-timeout", "90s",
              "--script", "upnp-info,wsdd-discover,smb-os-discovery,ssl-cert,http-title",
              "--script-timeout", "15s", "-oX", "-", ip], 150)
         svcs = _parse_nmap_xml(r1) if r1.strip().startswith("<") else []
-        banner = " ".join(f"{s.get('product','')} {s.get('name','')}" for s in svcs)
-        score, reason, _ev = _device_likelihood(svcs, banner)
-        if score >= 0.65:
-            fam, prof = "iot/camera", "--device"
-        elif "445" in {str(s.get("port")) for s in svcs}:
-            fam, prof = "windows", "full --cve-test"
-        elif any("ssh" in str(s.get("name")) for s in svcs):
-            fam, prof = "linux/server", "standard --cve-test"
-        else:
-            fam, prof = "unknown", "standard"
-        fams[fam] = fams.get(fam, 0) + 1
-        hosts_out.append({
-            "ip": ip, "services": svcs, "device_likelihood": round(score, 2),
-            "family": fam, "recommended_profile": prof, "reason": reason,
-            "second_sweep_cmd": f"python3 noctis.py {ip} {prof}".strip(),
-        })
+        rec = _triage_host(ip, svcs)
+        fams[rec["family"]] = fams.get(rec["family"], 0) + 1
+        hosts_out.append(rec)
+        _print_recon_host(rec)
     recon = {"schema": "noctis-recon/1", "scope": scope,
              "summary": {"alive": len(live), "families": fams}, "hosts": hosts_out,
              "stages": stages}
@@ -5279,6 +5261,220 @@ async def _run_recon_sweep(scope: str, session_dir: str) -> str:
     with open(out, "w", encoding="utf-8") as fh:
         json.dump(recon, fh, indent=2)
     return out
+
+
+def _parse_nmap_hosts(xml_data: str) -> list[dict]:
+    """Parse nmap XML into [{ip, services[]}] for up hosts (multi-host safe)."""
+    hosts: list[dict] = []
+    try:
+        root = ET.fromstring(xml_data) if xml_data.strip().startswith("<") else None
+        if root is None:
+            return hosts
+        for host in root.findall("host"):
+            st = host.find("status")
+            if st is None or st.attrib.get("state") != "up":
+                continue
+            addr = host.find("address[@addrtype='ipv4']")
+            if addr is None or not addr.attrib.get("addr"):
+                addr = host.find("address[@addrtype='ipv6']")
+            if addr is None or not addr.attrib.get("addr"):
+                continue
+            ip = addr.attrib.get("addr", "")
+            svcs = []
+            for port in host.findall(".//port"):
+                state_el = port.find("state")
+                if state_el is not None and state_el.attrib.get("state") != "open":
+                    continue
+                service_el = port.find("service")
+                name = service_el.attrib.get("name", "") if service_el is not None else ""
+                product = service_el.attrib.get("product", "") if service_el is not None else ""
+                version = service_el.attrib.get("version", "") if service_el is not None else ""
+                tunnel = service_el.attrib.get("tunnel", "") if service_el is not None else ""
+                if tunnel in ("ssl", "tls") and name and "ssl" not in name:
+                    name = f"ssl/{name}"
+                svcs.append({"port": port.attrib.get("portid", ""),
+                             "protocol": port.attrib.get("protocol", "tcp"),
+                             "name": name, "product": product, "version": version})
+            hosts.append({"ip": ip, "services": svcs})
+    except Exception:
+        pass
+    return hosts
+
+
+def _triage_host(ip: str, services: list) -> dict:
+    """Deterministic triage record for one host (shared by sweep + import)."""
+    banner = " ".join(f"{s.get('product','')} {s.get('name','')}" for s in services)
+    score, reason, _ev = _device_likelihood(services, banner)
+    ports = {str(s.get("port")) for s in services}
+    if score >= 0.65:
+        fam, prof = "iot/camera", "--device"
+    elif "445" in ports:
+        fam, prof = "windows", "full --cve-test"
+    elif any("ssh" in str(s.get("name")) for s in services):
+        fam, prof = "linux/server", "standard --cve-test"
+    else:
+        fam, prof = "unknown", "standard"
+    return {"ip": ip, "services": services, "device_likelihood": round(score, 2),
+            "family": fam, "recommended_profile": prof, "reason": reason,
+            "second_sweep_cmd": f"python3 noctis.py {ip} {prof}".strip()}
+
+
+def _recon_from_import(xml_path: str, session_dir: str) -> str:
+    """Build recon.json + client report from host-produced nmap XML.
+
+    The Docker-on-Win/Mac story: run discovery natively on the host
+    (on-link ARP works there), e.g.
+      nmap -sn -PR -PE -PS80,443,22,554,445,3389 -oX lan.xml 192.168.0.0/24
+    then:  python3 noctis.py --recon-import lan.xml
+    Triage + reporting run container-side with no network assumptions.
+    """
+    with open(xml_path, encoding="utf-8", errors="replace") as fh:
+        xml_data = fh.read()
+    parsed = _parse_nmap_hosts(xml_data)
+    for h in parsed:
+        _print_recon_host(_triage_host(h["ip"], h["services"]), imported=True)
+    hosts_out = [_triage_host(h["ip"], h["services"]) for h in parsed]
+    fams: dict[str, int] = {}
+    for h in hosts_out:
+        fams[h["family"]] = fams.get(h["family"], 0) + 1
+    recon = {"schema": "noctis-recon/1", "scope": f"import:{os.path.basename(xml_path)}",
+             "summary": {"alive": len(hosts_out), "families": fams}, "hosts": hosts_out,
+             "stages": {"import": {"hosts": len(hosts_out), "source": xml_path}}}
+    out = os.path.join(session_dir, "recon.json")
+    with open(out, "w", encoding="utf-8") as fh:
+        json.dump(recon, fh, indent=2)
+    return out
+
+
+def _print_recon_host(host: dict, imported: bool = False) -> None:
+    """One live terminal line per discovered host (operator progress feed)."""
+    ports = ",".join(str(s.get("port", "?")) for s in host.get("services", [])[:10])
+    pct = int(round(float(host.get("device_likelihood", 0)) * 100))
+    tag = "[import]" if imported else "[found]"
+    print(f"  {tag} {host.get('ip', '?')} [{host.get('family', 'unknown')}] "
+          f"device={pct}% ports={ports or '—'} -> {host.get('recommended_profile', 'standard')}")
+
+
+def _render_recon_html(recon: dict, meta: dict) -> str:
+    """Render a client-facing recon sweep report (standalone, stdlib-only).
+
+    Framing: a brief non-intrusive visit — what was seen, how to triage,
+    what to investigate next. No exploitation is attempted or implied.
+    Shares the main report's dark visual language; no JS, no CDN.
+    """
+    esc = _html.escape
+    scope = str(recon.get("scope", "?"))
+    summary = recon.get("summary", {}) if isinstance(recon.get("summary"), dict) else {}
+    alive = summary.get("alive", 0)
+    families = summary.get("families", {}) if isinstance(summary.get("families"), dict) else {}
+    hosts = [h for h in recon.get("hosts", []) if isinstance(h, dict)]
+    stages = recon.get("stages", {}) if isinstance(recon.get("stages"), dict) else {}
+    generated = str(meta.get("generated_at", "?"))
+    duration = str(meta.get("duration_s", "?"))
+    version = str(meta.get("tool_version", VERSION))
+
+    def _lik_bar(score: float) -> str:
+        pct = max(0, min(100, int(round(float(score or 0) * 100))))
+        col = "#2ed573" if pct >= 65 else ("#ffa502" if pct >= 40 else "#70a1ff")
+        return (f'<div style="background:#0d1117;border-radius:4px;width:110px;height:14px;display:inline-block;vertical-align:middle">'
+                f'<div style="background:{col};width:{pct}%;height:14px;border-radius:4px"></div></div> '
+                f'<span>{pct}%</span>')
+
+    tiles = [f'<div class="box"><div class="num">{alive}</div><div>live hosts</div></div>']
+    for fam, count in sorted(families.items(), key=lambda kv: -kv[1]):
+        tiles.append(f'<div class="box"><div class="num">{count}</div><div>{esc(str(fam))}</div></div>')
+
+    rows = []
+    for i, h in enumerate(hosts, 1):
+        ports = ", ".join(str(s.get("port", "?")) for s in h.get("services", [])[:12])
+        rows.append(
+            "<tr><td>{i}</td><td>{ip}</td><td>{fam}</td><td>{bar}</td>"
+            "<td>{ports}</td><td><span class='tag'>{prof}</span></td>"
+            "<td>{reason}</td></tr>".format(
+                i=i, ip=esc(str(h.get("ip", "?"))),
+                fam=esc(str(h.get("family", "unknown"))),
+                bar=_lik_bar(h.get("device_likelihood", 0)),
+                ports=esc(ports or "—"),
+                prof=esc(str(h.get("recommended_profile", "standard"))),
+                reason=esc(str(h.get("reason", "")))[:220]))
+
+    by_fam: dict[str, list] = {}
+    for h in hosts:
+        by_fam.setdefault(str(h.get("family", "unknown")), []).append(h)
+    triage_cards = []
+    for fam, members in sorted(by_fam.items(), key=lambda kv: -len(kv[1])):
+        cmds = sorted({str(h.get("second_sweep_cmd", "")) for h in members if h.get("second_sweep_cmd")})
+        cmd_html = "".join(f"<div class='ev'>{esc(c)}</div>" for c in cmds[:6])
+        triage_cards.append(
+            f"<h3>{esc(fam)} &times; {len(members)}</h3>{cmd_html}")
+    triage_html = "\n".join(triage_cards) if triage_cards else "<p>No hosts to triage.</p>"
+
+    stage_items = "".join(
+        f"<li><b>{esc(k)}</b>: {esc(str(v.get('hosts', '?')))} hosts "
+        f"(rc={esc(str(v.get('returncode', '?')))},{esc(str(v.get('stderr_tail', ''))[-120:])})</li>"
+        for k, v in stages.items() if isinstance(v, dict))
+    fallback_note = ("<p>SYN fallback sweep ran because ping discovery found nothing — "
+                     "ICMP-shy or NAT-masked hosts are still covered.</p>"
+                     if "r0b_syn_fallback" in stages else "")
+
+    return f"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline';">
+<title>Noctis Edge — Recon Sweep {esc(scope)}</title>
+<style>
+body{{font-family:'Segoe UI',Arial,sans-serif;background:#1a1a2e;color:#e0e0e0;margin:0;padding:24px}}
+h1{{color:#00d4ff;border-bottom:2px solid #00d4ff;padding-bottom:10px}}
+h2{{color:#00d4ff;margin-top:30px}}h3{{color:#90caf9}}
+.grid{{display:grid;grid-template-columns:repeat(4,1fr);gap:15px;margin:20px 0}}
+.box{{background:#16213e;border-radius:8px;padding:15px;text-align:center;border:1px solid #0f3460}}
+.num{{font-size:2.4em;font-weight:bold}}
+table{{width:100%;border-collapse:collapse;margin:15px 0}}
+th{{background:#0f3460;color:#00d4ff;padding:10px;text-align:left}}
+td{{padding:8px 10px;border-bottom:1px solid #0f3460;vertical-align:top}}
+.ev{{font-family:monospace;font-size:.82em;background:#0d1117;padding:8px;border-radius:4px;white-space:pre-wrap;word-break:break-all;margin:6px 0}}
+.tag{{background:#0f3460;color:#00d4ff;padding:1px 6px;border-radius:8px;font-size:.75em}}
+.lede{{background:#16213e;border-left:4px solid #00d4ff;padding:15px 20px;border-radius:0 8px 8px 0;margin:20px 0}}
+.caveat{{background:#2a2100;border:1px solid #ffca28;border-radius:6px;padding:12px 16px;margin:20px 0;color:#ffe0b2}}
+.meta{{color:#aaa;font-size:.9em}}footer{{margin-top:40px;color:#555;font-size:.85em;text-align:center}}
+@media print{{body{{background:#fff!important;color:#000!important}}h1,h2{{color:#000!important}}.box,.lede{{background:#fff!important;color:#000!important;border-color:#ccc!important}}th{{background:#ddd!important;color:#000!important}}td{{color:#000!important}}.caveat{{background:#fffde7!important}}}}
+</style></head><body>
+<h1>Reconnaissance Sweep — {esc(scope)}</h1>
+<p class="meta">Noctis Edge {esc(version)} &middot; {esc(generated)} &middot; sweep took {esc(duration)}s</p>
+<div class="lede"><b>A brief visit, not an assessment.</b> This was a discovery-only sweep:
+no logins attempted, no exploitation, nothing intrusive. What follows is everything
+seen from the outside in a short window, plus how we recommend triaging it next.</div>
+<h2>At a Glance</h2><div class="grid">{"".join(tiles)}</div>
+<h2>What We Found</h2>
+<table><tr><th>#</th><th>Host</th><th>Family</th><th>Device likelihood</th><th>Open ports</th><th>Recommended next step</th><th>Why</th></tr>
+{"".join(rows) if rows else "<tr><td colspan='7'>No live hosts discovered — see caveats below.</td></tr>"}</table>
+<h2>Recommended Triage</h2>
+<p>Highest-likelihood targets first. Each card carries the exact second-sweep command.</p>
+{triage_html}
+<h2>Method &amp; Caveats</h2>
+{fallback_note}
+<ul>{stage_items if stage_items else "<li>Stage detail unavailable (older recon.json).</li>"}</ul>
+<div class="caveat"><b>Read this before acting:</b> absence from this list is not proof of
+absence on the network (quiet hosts, wrong subnet octet, or NAT-masked ranges hide
+devices). Presence here is not a finding of vulnerability — every entry below needs
+a follow-up assessment profile before any conclusion is drawn.</div>
+<footer>Noctis Edge {esc(version)} — recon sweep report. Discovery only; confirm before concluding.</footer>
+</body></html>"""
+
+
+def _write_recon_report(recon: dict, session_dir: str, duration_s: float) -> tuple[str, str]:
+    """Write recon_report.json + client-facing recon_report.html for a sweep."""
+    meta = {"generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "duration_s": round(duration_s, 1),
+            "tool_version": VERSION}
+    report = dict(recon)
+    report["report_meta"] = meta
+    json_path = os.path.join(session_dir, "recon_report.json")
+    html_path = os.path.join(session_dir, "recon_report.html")
+    with open(json_path, "w", encoding="utf-8") as fh:
+        json.dump(report, fh, indent=2)
+    with open(html_path, "w", encoding="utf-8") as fh:
+        fh.write(_render_recon_html(recon, meta))
+    return json_path, html_path
 
 
 _FLAG_MANUAL: list[tuple[str, str]] = [
@@ -5295,6 +5491,7 @@ _FLAG_MANUAL: list[tuple[str, str]] = [
     ("--device-phase-2", "Device auth-flow assistant (HAR/JS ingest, state machine, one targeted probe)."),
     ("--device-phase-3", "Device authenticated mapping. Requires --creds-file (or session cookie at the Phase-3 gate)."),
     ("--recon", "Discovery-only subnet sweep (CIDR/range) writing recon.json triage. Refuses --unsafe/--cve-test."),
+    ("--recon-import <xml>", "Triage host-produced nmap XML (run discovery natively, analyse container-side). Writes recon.json + client report."),
     ("--input <recon.json>", "Second-sweep host selection from a recon file."),
     ("--firmware <path>", "Offline stdlib-only firmware string scan. Operator supplies the image; runs in Phase 1 only with --unsafe."),
     ("--creds-file <path>", "Cookies-only JSON for device Phase-3 replay (0600 recommended; secrets redacted everywhere)."),
@@ -15944,7 +16141,7 @@ def _prompt_cve_nse_acknowledgment(target: str, session_dir: str, session_id: st
 
 async def main_async():
     global SAFE_MODE, AIRGAP_MODE, MSF_VALIDATE, CVE_TEST, UNATTENDED, UNSAFE_VERIFY, CVE_NSE, SESSION_FILE
-    global DEVICE_MODE, DEVICE_PHASE, RECON_MODE, FIRMWARE_PATH, RECON_INPUT
+    global DEVICE_MODE, DEVICE_PHASE, RECON_MODE, FIRMWARE_PATH, RECON_INPUT, RECON_IMPORT
     scan_start = datetime.now()
 
     if "--man" in sys.argv[1:]:
@@ -16015,6 +16212,10 @@ async def main_async():
             DEVICE_PHASE = 3
         elif arg == "--recon":
             RECON_MODE = True
+        elif arg == "--recon-import":
+            if _i + 1 < len(_argv):
+                _i += 1
+                RECON_IMPORT = _argv[_i]
         elif arg == "--input":
             if _i + 1 < len(_argv):
                 _i += 1
@@ -16033,6 +16234,24 @@ async def main_async():
     if DEVICE_MODE and RECON_MODE:
         print("[!] --device and --recon are mutually exclusive. Aborting.")
         sys.exit(2)
+    # --recon-import is fully offline (no nmap, no LLM): run before the
+    # Ollama gate so Docker Win/Mac hosts can triage without a model up.
+    if RECON_IMPORT:
+        if not os.path.isfile(RECON_IMPORT):
+            print(f"[!] --recon-import file not found: {RECON_IMPORT}")
+            sys.exit(2)
+        _safe = re.sub(r"[^a-zA-Z0-9_-]", "_", os.path.basename(RECON_IMPORT))
+        _sdir = os.path.join(BASE_DIR, "sessions", f"import_{_safe}_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+        os.makedirs(_sdir, exist_ok=True)
+        _t0 = datetime.now(timezone.utc)
+        _recon_out = _recon_from_import(RECON_IMPORT, _sdir)
+        _dur = (datetime.now(timezone.utc) - _t0).total_seconds()
+        with open(_recon_out, encoding="utf-8") as _fh:
+            _recon = json.load(_fh)
+        _rjson, _rhtml = _write_recon_report(_recon, _sdir, _dur)
+        print(f"[+] Import triage -> {_recon_out}")
+        print(f"[+] Client report -> {_rhtml} (data: {_rjson})")
+        return
     if DEVICE_MODE:
         target = _validate_device_target(target)
         # --device implies aggressive-but-safe; --unsafe adds the unsafe tier.
@@ -16107,10 +16326,16 @@ async def main_async():
     os.makedirs(session_dir, exist_ok=True)
     SESSION_FILE = os.path.join(session_dir, "session.json")
 
-    # --recon dispatch: discovery-only sweep -> recon.json, then exit.
+    # --recon dispatch: discovery-only sweep -> recon.json + client report.
     if RECON_MODE:
+        _t0 = datetime.now(timezone.utc)
         _recon_out = await _run_recon_sweep(target, session_dir)
+        _dur = (datetime.now(timezone.utc) - _t0).total_seconds()
+        with open(_recon_out, encoding="utf-8") as _fh:
+            _recon = json.load(_fh)
+        _rjson, _rhtml = _write_recon_report(_recon, session_dir, _dur)
         print(f"[+] Recon complete -> {_recon_out}")
+        print(f"[+] Client report  -> {_rhtml} (data: {_rjson})")
         print("[*] Second sweep: python3 noctis.py --input "
               f"{_recon_out}  (or pick it in the Web UI Recon dropdown)")
         return
@@ -16820,6 +17045,22 @@ def _report_from_json(json_path: str):
     print(f"[*] Loading report from: {json_path}")
     with open(json_path, encoding="utf-8") as fh:
         report = json.load(fh)
+
+    # Recon-schema files render the client-facing recon report instead.
+    if isinstance(report, dict) and report.get("schema") == "noctis-recon/1":
+        meta = report.get("report_meta", {}) if isinstance(report.get("report_meta"), dict) else {}
+        if not meta:
+            meta = {"generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "duration_s": "?", "tool_version": VERSION}
+        base = os.path.splitext(os.path.abspath(json_path))[0]
+        html_path = base + ".html" if base.endswith("recon_report") else base + "_recon.html"
+        with open(html_path, "w", encoding="utf-8") as fh:
+            fh.write(_render_recon_html(report, meta))
+        summary = report.get("summary", {})
+        print(f"[+] Recon HTML report → {html_path}")
+        print(f"    Scope: {report.get('scope', '?')} | Alive: {summary.get('alive', '?')} | "
+              f"Families: {summary.get('families', {})}")
+        return
 
     # Back-fill LLM-generated fields from cve_test_results into cve_matches so the
     # CVE Matches cards render the attacker gain block and immediate remediation path
