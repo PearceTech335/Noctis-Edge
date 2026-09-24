@@ -255,11 +255,25 @@ def api_start():
     for _pf in ("--device-phase-1", "--device-phase-2", "--device-phase-3"):
       if _pf in data.get("flags", []) and _pf not in flags:
         flags.append(_pf)
+    if "--resume" in data.get("flags", []) and "--resume" not in flags:
+      flags.append("--resume")
+    # Orphan phase flags imply device mode (CLI coerces the same way).
+    if any(f.startswith("--device-phase-") for f in flags) and "--device" not in flags:
+      flags.append("--device")
     session_dir = (data.get("session_dir") or "").strip()
 
     # --device / --recon mutual exclusion + scope guards (mirror CLI).
+    # Prerequisite mirrors (CLI exits 2 on each): cve-nse/unsafe needs.
+    if "--cve-nse" in flags and "--cve-test" not in flags:
+      return jsonify({"ok": False, "error": "--cve-nse requires --cve-test"}), 400
+    # CLI checks SAFE_MODE state (which --device clears in code), not the flag.
+    _unsafe_aggr = "--nse-aggressive" in flags or "--device" in flags
+    if "--unsafe" in flags and ("--cve-test" not in flags or not _unsafe_aggr):
+      return jsonify({"ok": False, "error": "--unsafe requires --cve-test plus --nse-aggressive (or Device mode, which implies it)"}), 400
     if "--device" in flags and "--recon" in flags:
       return jsonify({"ok": False, "error": "--device and --recon are mutually exclusive"}), 400
+    if "ot" in profiles and any(f in flags for f in ("--unsafe", "--cve-test", "--cve-nse", "--msf-validate", "--nse-aggressive")):
+      return jsonify({"ok": False, "error": "OT profile refuses active flags (--unsafe/--cve-test/--cve-nse/--msf-validate/--nse-aggressive)"}), 400
     if "--device" in flags:
       _host = target.split(":")[0] if not target.startswith("[") else target
       if any(t in _host for t in ("/", ",", "*", " ")) or ("-" in _host and any(c.isdigit() for c in _host)):
@@ -1389,6 +1403,7 @@ function printFlagsMan() {
   });
   const rec = document.getElementById('profile-recon-rb');
   if (rec) appendLine('  [profile] Recon — default kickoff: discovery-only sweep, all flags greyed out, triage via recon file.');
+  appendLine('  Presets — Recon:(none) Standard:(none) Full:(--nse-aggressive --dns-enum --msf-validate) OT:(none) Device:(phase 1, extras off)');
   const dev = document.getElementById('profile-device-rb');
   if (dev) appendLine('  [profile] Device — single-host embedded/IoT assessment; unlocks sweep phases + firmware intake, greys out --dns-enum.');
   appendLine('  --device-phase-1/2/3 — Device sweep phase: 1 surface only (disables --cve-test), 2 auth flow (default behaviour), 3 authenticated mapping (needs creds).');
@@ -1400,7 +1415,10 @@ document.addEventListener('DOMContentLoaded', function() {
   loadReconFiles();
   loadFirmwareFiles();
   updateModeUI();
-  document.querySelectorAll('.profile-rb').forEach(rb => rb.addEventListener('change', updateModeUI));
+  document.querySelectorAll('.profile-rb').forEach(rb => rb.addEventListener('change', () => {
+    updateModeUI();
+    applyPreset(rb.value);
+  }));
   document.getElementById('firmware-flag-cb').addEventListener('change', updateFirmwareUI);
   const cveNseCb = document.getElementById('cve-nse-flag-cb');
   const unsafeCb = document.getElementById('unsafe-flag-cb');
@@ -1511,8 +1529,8 @@ function secondStrike() {
   const first = picked[0];
   document.getElementById('target-input').value = first.dataset.ip;
   if ((first.dataset.profile || '').includes('--device')) {
-    const dev = [...document.querySelectorAll('.flag-cb')].find(cb => cb.value === '--device');
-    if (dev) dev.checked = true;
+    const devRb = document.getElementById('profile-device-rb');
+    if (devRb) { devRb.checked = true; updateModeUI(); }
   }
   appendLine('[*] Launching top pick: ' + first.dataset.ip + ' — stop it before striking the next host (one scan at a time).');
   startScan();
@@ -1605,12 +1623,39 @@ function reconModeSelected() {
 // sweep: every flag is greyed out. Selections are preserved (disabled boxes
 // are skipped at collect time) so toggling modes never loses your setup.
 const DEVICE_GREYED_FLAGS = ['--recon', '--dns-enum'];
+// Active probing has no place near safety systems: OT greys everything
+// intrusive plus anything internet-dependent.
+const OT_GREYED_FLAGS = ['--unsafe', '--cve-test', '--cve-nse', '--msf-validate', '--nse-aggressive', '--dns-enum'];
+// Default flag presets per profile radio. NEVER includes --unsafe/--cve-nse
+// (modal-gated conscious opt-ins) or --unattended (auto-approves everything).
+// Note: Standard is deliberately empty — --cve-test would stall every scan
+// at an approval prompt and raise the intrusiveness floor.
+const PROFILE_PRESETS = {
+  '__recon': [],
+  'standard': [],
+  'full': ['--nse-aggressive', '--dns-enum', '--msf-validate'],
+  'ot': [],
+  '__device': [],
+};
+function applyPreset(profile) {
+  // Reset-to-preset on every radio switch: leaked flags (e.g. aggressive
+  // toggles carried into OT or Device-phase-1) are dangerous or silently
+  // dropped, so the radio is always truthful. Manual ticks stick until the
+  // next switch.
+  const want = PROFILE_PRESETS[profile] || [];
+  [...document.querySelectorAll('.flag-cb')].forEach(cb => {
+    if (!cb.disabled) cb.checked = want.includes(cb.value);
+  });
+  appendLine('[*] Profile preset flags: ' + (want.join(' ') || '(none — safe baseline)'));
+}
 function updateModeUI() {
   const dev = deviceModeSelected();
   const rec = reconModeSelected();
+  const otm = selectedProfile() === 'ot';
   document.getElementById('dphase-row').style.display = dev ? 'flex' : 'none';
   [...document.querySelectorAll('.flag-cb')].forEach(cb => {
-    const off = rec || (dev && DEVICE_GREYED_FLAGS.includes(cb.value));
+    const off = rec || (dev && DEVICE_GREYED_FLAGS.includes(cb.value)) ||
+                (otm && OT_GREYED_FLAGS.includes(cb.value));
     cb.disabled = off;
     cb.closest('label').style.opacity = off ? '0.35' : '';
   });
@@ -1644,6 +1689,14 @@ function deviceFlags() {
   if (fwCb && fwCb.checked && !document.getElementById('firmware-select').value) {
     alert('Pick a firmware file from the dropdown (--firmware selected).');
     return null;
+  }
+  if (ph && ph.value === '3' && !document.getElementById('creds-input').value.trim()) {
+    alert('Phase 3 is authenticated mapping — supply a creds file first.');
+    return null;
+  }
+  const unsafeCb = document.getElementById('unsafe-flag-cb');
+  if (fwCb && fwCb.checked && unsafeCb && !unsafeCb.checked) {
+    appendLine('[!] --firmware without --unsafe is a no-op (scan defers with a resume hint). Tick --unsafe for the P1 string scan.');
   }
   return out;
 }
